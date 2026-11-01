@@ -1,4 +1,5 @@
 {
+  "$schema": "../references/schemas/autoimprove.schema.json",
   "schema_version": 1,
   "status": "approved",
   "skill": "skillz",
@@ -6,10 +7,15 @@
   "kinds": {
     "task": {
       "grader": "judge",
-      "rubric": "Score the response to the task request against `reference`, which holds `expected_output` and a list of `assertions`. Treat `expected_output` and each assertion as one criterion. Give each criterion 100 when the response meets it and 0 when it does not or contradicts it. Score the response as the mean of the criteria, rounded to a whole number. Give 0 when the response is missing, ignores the task request, or acts on a different skill than the request names."
+      "rubric": "Grade the response to the task request on each criterion. `reference` holds `expected_output` and a list of `assertions`, the items that the criteria come from. A response that is missing, ignores the task request, or acts on a different skill than the request names meets no criterion."
     },
     "inspection": {
       "grader": "exact-json"
+    },
+    "journey": {
+      "grader": "journey",
+      "gate": "evals/gates/journey.py",
+      "rubric": "Grade the conversation on each criterion. The agent runs the /skillz autoimprove workflow on a toy skill for a user. `reference.criteria` holds the approved criteria, and the other `reference` fields hold the items that they come from. Judge only what the transcript and the trace show."
     }
   },
   "helper": {

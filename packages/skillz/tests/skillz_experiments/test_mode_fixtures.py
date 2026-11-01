@@ -12,6 +12,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import re
@@ -32,12 +33,14 @@ from skillz_experiments._cases import Case, load_cases, mapping
 from skillz_experiments._cli import main
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments._contract import Contract, parse
+from skillz_experiments._gate_files import expand_gates
 from skillz_experiments._facts import audit_facts
 
 ROOT = Path(__file__).resolve().parents[4]
 SKILL_DIR = ROOT / "skills/skillz"
-PUBLISHED = SKILL_DIR / "evals/mode-fixtures.json"
 FIXTURES = Path(__file__).parent / "fixtures"
+PUBLISHED = FIXTURES / "mode/mode-fixtures.json"
+MODE_GATES = FIXTURES / "mode/evals/gates/mode"
 SELF_UPDATE = FIXTURES / "self-update.json"
 SELF_SKILL = ROOT / ".agents/skills/skillz-self-update/SKILL.md"
 LAYOUT = SKILL_DIR / "references/harness-layout.md"
@@ -53,7 +56,8 @@ def _outputs(path: Path) -> dict[str, dict[str, object]]:
 
 
 def _rules(path: Path) -> Contract:
-    return parse(_document(path)["target"], "manifest")
+    root = path.parent.parent if path.parent.name == "evals" else path.parent
+    return parse(expand_gates(_document(path)["target"], root), "manifest")
 
 
 def _cases(path: Path) -> dict[str, Case]:
@@ -107,13 +111,18 @@ def live(case: Case, written: Mapping[str, str | None]) -> Tree:
 
 
 def grade(path: Path, case: Case, written: Tree) -> float:
-    return _graders.command(Sandbox(), _rules(path).kinds[case.kind].argv, case, live(case, written))
+    return _graders.command(Sandbox(), _rules(path).kinds[case.kind].argv, case, live(case, written))[0]
 
 
 def _script(path: Path, kind: str) -> str:
     argv = _rules(path).kinds[kind].argv
     assert argv[:3] == ("python3", "-I", "-c") and len(argv) == 4
     return argv[3]
+
+
+def _stub_value(script: str, name: str) -> str:
+    line = next(line for line in script.splitlines() if line.startswith(f"{name} = "))
+    return line.removeprefix(f"{name} = ")
 
 
 PUBLISHED_CASES = _cases(PUBLISHED)
@@ -162,13 +171,21 @@ def test_published_manifest_declares_one_kind_per_mode_with_complete_splits() ->
     assert set(PUBLISHED_OUTPUTS) == set(PUBLISHED_CASES)
 
 
+@pytest.mark.ac("gh-367:AC-7")
 @pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
 def test_the_grader_lives_in_the_argv_and_never_in_a_staged_file(path: Path, name: str) -> None:
     case = _cases(path)[name]
     script = _script(path, case.kind)
     assert not any(file.startswith("check") or "'score'" in text for file, text in case.files.items())
-    imported = {alias.name for node in ast.walk(ast.parse(script)) if isinstance(node, ast.Import) for alias in node.names}
-    assert {"json", "pathlib", "re"} <= imported <= {"hashlib", "json", "pathlib", "re"}
+    sources = [script] if "_SIBLINGS" not in script else [text for _, text in cast(
+        list[tuple[str, str]], ast.literal_eval(_stub_value(script, "_SIBLINGS")))] + [
+        cast(str, ast.literal_eval(_stub_value(script, "_MAIN")))]
+    imported = {alias.name for source in sources for node in ast.walk(ast.parse(source))
+                for alias in (node.names if isinstance(node, ast.Import) else [])}
+    imported |= {node.module for source in sources for node in ast.walk(ast.parse(source))
+                 if isinstance(node, ast.ImportFrom) and node.module}
+    assert {"json", "pathlib", "re"} <= imported or "_workspace" in imported
+    assert imported <= {"hashlib", "json", "pathlib", "re", "collections.abc", "typing", "_workspace", "_markdown"}
 
 
 @pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
@@ -187,12 +204,14 @@ def test_self_update_case_stays_out_of_the_published_tree() -> None:
 # Golden accepted, seeded-bad rejected, deterministic
 
 
+@pytest.mark.ac("gh-367:AC-7")
 @pytest.mark.parametrize(("path", "name"), _matrix(), ids=[name for _, name in _matrix()])
 def test_golden_output_is_accepted_by_the_mode_grader(path: Path, name: str) -> None:
     cases = _cases(path)
     assert grade(path, cases[name], _golden(path, name)) == 1.0
 
 
+@pytest.mark.ac("gh-367:AC-7")
 @pytest.mark.parametrize(("path", "name", "variant"), BAD_CASES, ids=[f"{n}:{v}" for _, n, v in BAD_CASES])
 def test_seeded_bad_output_is_rejected_by_the_mode_grader(path: Path, name: str, variant: str) -> None:
     bad = _variants(_recorded(path, name), "bad")[variant]
@@ -286,22 +305,21 @@ PARITY_INPUTS = {
 }
 
 
-def _grader_longest(source: str) -> object:
-    match = re.search(r"^MARKER = .*?^    return best$", source, re.M | re.S)
-    assert match is not None
-    scope: dict[str, object] = {"re": re}
-    exec(match[0], scope)  # noqa: S102 - the grader source from the repository manifest
-    return scope["longest"]
+def _grader_longest() -> Callable[[str], int]:
+    spec = importlib.util.spec_from_file_location("_markdown", MODE_GATES / "_markdown.py")
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return cast(Callable[[str], int], getattr(module, "longest"))
 
 
 def _inspector() -> ModuleType:
     return importlib.import_module("skillz_inspect._inspect")
 
 
-@pytest.mark.parametrize("kind", ["add", "improve"])
 @pytest.mark.parametrize("name", list(PARITY_INPUTS))
-def test_grader_longest_sentence_matches_the_inspector(kind: str, name: str) -> None:
-    longest = cast(Callable[[str], int], _grader_longest(_script(PUBLISHED, kind)))
+def test_grader_longest_sentence_matches_the_inspector(name: str) -> None:
+    longest = _grader_longest()
     inspector = _inspector()
     prose = cast(Callable[[list[str], int], list[dict[str, int]]], inspector.prose_sentences)
     advisory = cast(int, inspector.ADVISORY_WORDS)
@@ -326,7 +344,7 @@ def test_improve_starting_tree_holds_the_seeded_defects(tmp_path: Path) -> None:
 PROPOSE = ["mode-improve-usage", "mode-improve-reuse", "mode-improve-stale"]
 
 
-PACKAGE_ID = "git ls-files -z -co --exclude-standard skills/demo | LC_ALL=C sort -z | xargs -0 git hash-object | git hash-object --stdin"
+PACKAGE_ID = "o=$(git ls-files -z -co --exclude-standard skills/demo | LC_ALL=C sort -z | xargs -0 sh -c 'for f; do b=$(git hash-object -- \"$f\") || exit 1; printf \"%s %s\\n\" \"$b\" \"$f\"; done' sh) && [ -n \"$o\" ] && printf '%s\\n' \"$o\" | git hash-object --stdin"
 
 
 def _content_id(tmp_path: Path, files: dict[str, str]) -> str:
@@ -383,7 +401,7 @@ def test_propose_cases_declare_a_tool_that_only_usage_data_shows_unused(tmp_path
 
 
 def _template_fields() -> list[str]:
-    text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+    text = WEDGE_BRIEF.read_text(encoding="utf-8")
     line = next(row for row in text.splitlines() if row.startswith("**Inputs**"))
     return re.findall(r"\*\*([^*]+)\*\*", line)
 
@@ -425,8 +443,9 @@ def _target_with_contract(tmp_path: Path, status: str) -> tuple[Path, dict[str, 
 
 def _draft(out: Path) -> None:
     cases = [{"id": f"c{family}-{index}", "family": f"f{family}", "kind": "task", "request": "Rewrite the note.",
-              "files": {"note.txt": "hello\n"}, "expected": {"text": "hello"}, "source": "skill"}
-             for family in range(5) for index in range(2)]
+              "files": {"note.txt": "hello\n"}, "expected": {"text": "hello", "criteria": [{"id": "text", "text": "THE answer SHALL be hello."}]},
+               "source": "skill"}
+             for family in range(6) for index in range(2)]
     out.mkdir(mode=0o700, parents=True)
     _ = (out / "cases.draft.json").write_text(json.dumps(cases), encoding="utf-8")
 
@@ -478,6 +497,7 @@ def _part(path: Path, heading: str | None) -> str:
 
 SKILL = SKILL_DIR / "SKILL.md"
 OFFLOAD = SKILL_DIR / "references/offload.md"
+WEDGE_BRIEF = SKILL_DIR / "references/wedge-brief.md"
 EXPERIMENTS = SKILL_DIR / "references/experiments.md"
 ADD_NAME = ("1. Confirm the name: kebab-case, ≤64 chars, directory name equals `name:`, "
             "and no collision in `skills/`, `~/.claude/skills`, `~/.agents/skills`.")
@@ -531,7 +551,7 @@ STEPS: list[tuple[str, Path, str | None, str]] = [
     ("wedge", OFFLOAD, "2. Contract",
      "command, inputs, output shape, ordering with tie-breaks, empty result, errors, and side effects"),
     ("wedge", SKILL, "Mode: wedge", "report `No offload candidates` and stop"),
-    ("wedge", SKILL, None, "| # | Step (line) | Transformation | Command | Delivery | Stays in prose |"),
+    ("wedge", WEDGE_BRIEF, None, "| # | Step (line) | Transformation | Command | Delivery | Stays in prose |"),
     ("wedge", SKILL, "Mode: wedge", "every candidate cites a line and has all seven contract fields"),
     ("contract", EXPERIMENTS, "The autoimprove contract", "It stops with `contract-unapproved` when `status` is `draft`."),
     ("contract", EXPERIMENTS, "No contract", "Save every drafted contract with `\"status\": \"draft\"`, for both choices."),

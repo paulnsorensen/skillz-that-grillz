@@ -24,8 +24,12 @@ The package merges two engines. One is the engine that `skillz` bundled from
 with its own reports and docs. The package ships engine primitives only: `ingest`,
 `db-path`, `sql`, and `schema`. It has no canned reports.
 
-The package keeps the shared `dotfiles/session-analytics/sessions.duckdb` cache
-path, the `SESSIONS_DB` override, and the one-hour freshness window. The database
+The package defaults to the `<cache>/agent-session-analytics/sessions.duckdb` cache
+path. A public default must not carry a personal `dotfiles` name. If that file is
+absent and the legacy `<cache>/dotfiles/session-analytics/sessions.duckdb` exists,
+the package uses the legacy file. It never moves, copies, or deletes the legacy
+file, because another tool can share it. The package keeps the `SESSIONS_DB`
+override and the one-hour freshness window. The database
 stores a schema version in the one-row `schema_info` table. A database with
 another version is stale. `ingest` rebuilds it inside the freshness window.
 

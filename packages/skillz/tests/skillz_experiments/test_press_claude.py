@@ -106,7 +106,9 @@ def assert_floor(call: dict[str, object]) -> None:
     assert "--strict-mcp-config" in argv
     settings = cast(dict[str, dict[str, object]], json.loads(cast(str, call["settings"])))
     assert {key: settings["sandbox"][key] for key in FLOOR} == FLOOR
-    assert cast(dict[str, dict[str, object]], settings["sandbox"])["filesystem"]["denyRead"] == ["/"]
+    denied = cast(dict[str, dict[str, list[str]]], settings["sandbox"])["filesystem"]["denyRead"]
+    # macOS denies a root list instead of `/` (gh-131).
+    assert denied == ["/"] if sys.platform != "darwin" else {"/Users", "/var/folders"} <= set(denied)
 
 
 @pytest.mark.parametrize("schema", [None, {"type": "object"}])
@@ -135,7 +137,7 @@ def test_every_role_and_every_preflight_call_keeps_the_sandbox_floor(tmp_path: P
     finally:
         session.close()
     logged = calls(executable)
-    assert len(logged) == 5
+    assert len(logged) == 8
     for call in logged:
         assert_floor(call)
 
@@ -165,10 +167,12 @@ def test_the_claude_child_environment_holds_only_the_allowed_names(
     environment = cast(dict[str, str], calls(executable)[0]["environment"])
     # On macOS, the OS adds `__CF_USER_TEXT_ENCODING` to every process.
     # The Xcode `python3` shim that runs the fake adds the build-path names.
-    host: set[str] = {"__CF_USER_TEXT_ENCODING", "SDKROOT", "CPATH", "LIBRARY_PATH", "MANPATH"} if sys.platform == "darwin" else set()
+    # The macOS child keeps the real home and user name, so Claude Code finds the Keychain login (gh-131).
+    host: set[str] = ({"__CF_USER_TEXT_ENCODING", "SDKROOT", "CPATH", "LIBRARY_PATH", "MANPATH", "USER", "LOGNAME"}
+                      if sys.platform == "darwin" else set())
     assert set(environment) - {"LC_CTYPE"} - host <= {"PATH", "HOME", "TMPDIR", "LANG", "CLAUDE_CODE_SUBPROCESS_ENV_SCRUB",
                                                       "CLAUDE_CODE_DISABLE_BUNDLED_SKILLS", "CLAUDE_CONFIG_DIR"}
-    assert environment["HOME"] != str(Path.home())
+    assert (environment["HOME"] == str(Path.home())) == (sys.platform == "darwin")
 
 
 def test_claude_role_rejects_a_shell_string_a_second_argument_and_an_unknown_field(tmp_path: Path) -> None:
@@ -209,7 +213,7 @@ def test_preflight_stops_on_every_isolation_failure_with_one_restricted_call_and
     finally:
         session.close()
     logged = calls(executable)
-    assert len(logged) == 1 and "--restricted" not in cast(list[str], logged[0]["argv"])
+    assert len(logged) == 2 and not any("--restricted" in cast(list[str], call["argv"]) for call in logged)
     assert not any("--dangerously-skip-permissions" in cast(list[str], call["argv"]) for call in logged)
 
 
@@ -334,7 +338,7 @@ def test_a_failed_preflight_leaves_no_partial_pass_in_a_second_attempt(tmp_path:
                 _ = session.preflight()
     finally:
         session.close()
-    assert len(calls(executable)) == 2
+    assert len(calls(executable)) == 4
 
 
 def test_preflight_budget_exhaustion_stops_before_the_live_call(tmp_path: Path, probes: list[list[str]]) -> None:
@@ -490,9 +494,9 @@ def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
     elif change == "settings":
         original = _settings.settings
 
-        def weaker(workspace: Path, out: Path | None = None, *, overrides: Collection[str] = (),
-                   unix_sockets: bool = False) -> dict[str, object]:
-            document = original(workspace, out, overrides=overrides, unix_sockets=unix_sockets)
+        def weaker(workspace: Path, out: Path | None = None, *, config: Path | None = None,
+                   overrides: Collection[str] = (), unix_sockets: bool = False) -> dict[str, object]:
+            document = original(workspace, out, config=config, overrides=overrides, unix_sockets=unix_sockets)
             cast(dict[str, object], document["sandbox"])["allowUnsandboxedCommands"] = True
             return document
         monkeypatch.setattr(_transport, "settings", weaker)
@@ -581,8 +585,8 @@ def test_a_tampered_record_never_grants_a_reuse_pass_and_runs_the_live_probe_aga
         evidence = session.preflight(recorded)
     finally:
         session.close()
-    assert len(calls(executable)) == logged + len(session.transports)
-    assert cast(int, evidence["live_calls"]) == len(session.transports)
+    assert len(calls(executable)) == logged + 2 * len(session.transports)
+    assert cast(int, evidence["live_calls"]) == 2 * len(session.transports)
 
 
 def test_reuse_with_a_failing_sandbox_probe_stops_and_makes_no_live_call(

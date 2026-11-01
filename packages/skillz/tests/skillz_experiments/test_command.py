@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import shutil
 import subprocess
 from pathlib import Path
@@ -109,10 +110,17 @@ def test_resume_rejects_each_frozen_role_or_command_file(tmp_path: Path, change:
 
 
 @pytest.mark.parametrize("mode", ["timeout", "slow-start"])
-def test_timeout_claims_shared_budget_and_stops_process(tmp_path: Path, mode: str) -> None:
+def test_timeout_claims_shared_budget_and_stops_process(tmp_path: Path, mode: str, monkeypatch: pytest.MonkeyPatch) -> None:
     config, _, log = configured(tmp_path, mode)
     budget = Budget(20, 0.5)
     adapter = Configuration.load(config, "offline").create("offline", budget, lambda: None)
+    claim = budget.claim
+
+    def start_window_then_claim(*, holdout: bool = False, role: str = "task") -> None:
+        budget.started = time.monotonic()  # the deadline window opens at the claim, so host load before it cannot spend it
+        claim(holdout=holdout, role=role)
+
+    monkeypatch.setattr(budget, "claim", start_window_then_claim)
     try:
         with pytest.raises(BudgetExhausted, match="deadline"):
             _ = adapter.invoke("reflection", schema={"type": "object", "properties": {"x": {"type": "string"}},
@@ -176,14 +184,14 @@ def test_selected_judge_model_reaches_the_judge_calls_of_an_intake_run(tmp_path:
 def models_by_schema(log: Path) -> dict[str, set[str]]:
     """Group the models of the `infer` requests by the role that makes them.
 
-    A reply with `score_percent` is a judge call, a reply with `result_json` or `matches` is a task call,
+    A reply with `criteria` is a judge call, a reply with `result_json` or `matches` is a task call,
     and any other reply schema is a reflection call.
     """
     groups: dict[str, set[str]] = {"judge": set(), "task": set(), "reflection": set()}
     for item in requests(log):
         if item["operation"] == "infer":
             required = cast(list[str], cast(dict[str, object], item["response_schema"])["required"])
-            role = ("judge" if "score_percent" in required else
+            role = ("judge" if "criteria" in required else
                     "task" if {"result_json", "matches"} & set(required) else "reflection")
             groups[role].add(str(item["model"]))
     return groups
@@ -326,7 +334,7 @@ def test_contract_skill_name_reaches_discover_and_infer(tmp_path: Path) -> None:
     adapter = Configuration.load(config, "offline").create("offline", Budget(10, 60, 0), lambda: None)
     candidate = echo_candidate(tmp_path)
     try:
-        assert adapter.transports["task"].check_candidate(candidate)
+        assert adapter.transports["task"].check_candidate(candidate).passed
         result = adapter.transports["task"].invoke("Echo hello", candidate)
     finally:
         adapter.close()
@@ -349,7 +357,7 @@ def test_nested_helper_fixture_runs_through_command_adapter(tmp_path: Path) -> N
     candidate = Candidate(files, ("SKILL.md", "scripts/echo.py"), contract)
     adapter = Configuration.load(config, "offline").create("offline", Budget(10, 60, 0), lambda: None)
     try:
-        assert adapter.transports["task"].check_candidate(candidate)
+        assert adapter.transports["task"].check_candidate(candidate).passed
     finally:
         adapter.close()
 

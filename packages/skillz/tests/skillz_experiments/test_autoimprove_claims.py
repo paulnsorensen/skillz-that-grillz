@@ -18,9 +18,12 @@ from skillz_experiments._cli import main
 from skillz_experiments._contract import Grader
 from skillz_experiments._graders import judge
 from skillz_experiments._records import read, write
-from skillz_experiments.run import Stop, _export, _patch, _session, export, run, summary
+from skillz_experiments.run import Stop, _export, _patch, _replay_phase, _session, export, run, summary
+from skillz_experiments.run._open import engine_hash
+from skillz_experiments.run._patch import Patch
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
-from skillz_experiments.run._replay import drift
+from skillz_experiments.run._ports import Ports
+from skillz_experiments.run._replay import apply_patches, drift, prepare_copy
 from test_run_search import MODEL, Provider, Search
 
 if TYPE_CHECKING:
@@ -36,12 +39,13 @@ STATUSES = {"supported", "refuted", "inconclusive"}
 
 
 def _finished(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, suffix: str = "",
-              ) -> tuple[Path, Path, Search, int, dict[str, object]]:
+              scores: Callable[[str, str], float | None] | None = None) -> tuple[Path, Path, Search, int, dict[str, object]]:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
     state = Search(target)
     state.suffix = suffix
+    state.score_of = scores
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert result["phase"] == "complete"
     return target, out, state, calls, read(out / "run.json")
@@ -64,8 +68,8 @@ def _rewind(out: Path, record: dict[str, object], keep: int = 0) -> dict[str, ob
     return record
 
 
-def _resume(target: Path, out: Path, state: Search) -> dict[str, object]:
-    _ = run(target, out, MODEL, live=True, factory=state.factory)
+def _resume(target: Path, out: Path, state: Search, ports: Ports | None = None) -> dict[str, object]:
+    _ = run(target, out, MODEL, live=True, factory=state.factory, ports=ports)
     return read(out / "run.json")
 
 
@@ -94,6 +98,42 @@ def test_export_and_replay_share_one_patch_builder_and_export_refuses_another_di
     with pytest.raises(ValueError, match="export differs from the replayed patch; create a new run"):
         _ = export(out, other)
     assert not other.exists()
+
+
+# A digest that no engine build produces: it stands for the engine hash of an earlier build.
+EARLIER_ENGINE = "0" * 64
+
+
+@pytest.mark.ac("gh-508:AC-1")
+def test_a_completed_run_from_an_earlier_engine_exports_when_its_replay_digest_matches(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
+    built = _patch.build_patch(record["seed"], record["winner"], target)
+    assert built.files and _replay_of(record)["patch_digest"] == built.digest
+    assert record["engine_hash"] == engine_hash() != EARLIER_ENGINE
+    write(out / "run.json", record | {"engine_hash": EARLIER_ENGINE})
+    destination = tmp_path / "exported"
+    assert export(out, destination)["patches"] == list(built.files)
+    assert (destination / "candidate.patch").read_text() == built.skill
+    assert (destination / "report.json").is_file()
+
+
+@pytest.mark.ac("gh-508:AC-2")
+@pytest.mark.parametrize("replay", ["no-replay", "no-digest", "other-digest"])
+def test_a_completed_run_from_an_earlier_engine_without_a_matching_replay_digest_is_refused_with_a_code(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, replay: str) -> None:
+    _target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
+    if replay == "no-replay":
+        del record["replay"]
+    else:
+        record["replay"] = {**_replay_of(record), "patch_digest": None if replay == "no-digest" else "1" * 64}
+    write(out / "run.json", record | {"engine_hash": EARLIER_ENGINE})
+    destination = tmp_path / "refused"
+    with pytest.raises(CodedError) as refused:
+        _ = export(out, destination)
+    assert refused.value.code == "export-engine-unverified"
+    assert str(refused.value) == "evaluator differs from the frozen record; create a new run"
+    assert not destination.exists()
 
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-2")
@@ -137,16 +177,25 @@ def _overwrite(copy: Path, text: str) -> None:
     _ = (copy / "skill" / "SKILL.md").write_text(text)
 
 
-def _tamper_copy(monkeypatch: pytest.MonkeyPatch, step: str, change: Callable[[Path], None]) -> None:
-    """Run the real replay helper `step`, then change the clean copy, as a stale or corrupt copy would be."""
-    real = cast(Callable[..., object], getattr(_session, step))
+def _tamper_copy(monkeypatch: pytest.MonkeyPatch, change: Callable[[Path], None]) -> None:
+    """Run the real `prepare_copy`, then change the clean copy, as a stale or corrupt copy would be."""
 
-    def wrapped(*args: object, **kwargs: object) -> object:
-        found = real(*args, **kwargs)
-        change(cast(Path, args[0]) if step == "apply_patches" else cast(Path, found))
-        return found
+    def wrapped(directory: Path, seed: Candidate, patch: Patch) -> Path:
+        copy = prepare_copy(directory, seed, patch)
+        change(copy)
+        return copy
 
-    monkeypatch.setattr(_session, step, wrapped)
+    monkeypatch.setattr(_replay_phase, "prepare_copy", wrapped)
+
+
+def _tampering_ports(change: Callable[[Path], None]) -> Ports:
+    """Ports whose applier runs the real `git apply`, then changes the patched copy."""
+    def tampering(directory: Path, patch: Patch) -> str | None:
+        failure = apply_patches(directory, patch)
+        change(directory)
+        return failure
+
+    return Ports(patches=tampering)
 
 
 @pytest.mark.parametrize("fault", ["patch-apply-failed", "patch-bytes-differ", "replay-identity-differs"])
@@ -156,15 +205,16 @@ def test_a_patch_that_fails_differs_or_rebuilds_another_identity_refutes_the_exp
         monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
     record = _rewind(out, record)
+    ports: Ports | None = None
     if fault == "patch-apply-failed":
-        _tamper_copy(monkeypatch, "prepare_copy", lambda copy: _overwrite(copy, "another seed\n"))
+        _tamper_copy(monkeypatch, lambda copy: _overwrite(copy, "another seed\n"))
     elif fault == "patch-bytes-differ":
-        _tamper_copy(monkeypatch, "apply_patches", lambda copy: _overwrite(copy, "patched, then edited\n"))
+        ports = _tampering_ports(lambda copy: _overwrite(copy, "patched, then edited\n"))
     else:
         record["winner_hash"] = "f" * 64
         write(out / "run.json", record)
     state = Search(target)
-    after = _resume(target, out, state)
+    after = _resume(target, out, state, ports)
     assert after["phase"] == "complete" and state.holdout_calls == 0
     assert _replay_of(after)["reasons"] == [fault]
     claim = cast(dict[str, object], summary(after, out)["claims"])
@@ -175,8 +225,9 @@ def test_a_patch_that_fails_differs_or_rebuilds_another_identity_refutes_the_exp
 
 
 def _gated(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, keep: int = 0,
-           suffix: str = "") -> tuple[Path, Path, dict[str, object], dict[str, object]]:
-    target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals, suffix)
+           suffix: str = "", scores: Callable[[str, str], float | None] | None = None,
+           ) -> tuple[Path, Path, dict[str, object], dict[str, object]]:
+    target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals, suffix, scores)
     done = cast(dict[str, object], json.loads(json.dumps(record)))
     return target, out, done, _rewind(out, record, keep)
 
@@ -246,7 +297,7 @@ def test_a_resume_in_the_replay_phase_does_not_repeat_a_scored_replay_outcome(
 def test_the_plan_counts_replay_calls_in_the_estimate_the_approval_and_the_holdout_reserve(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     plan = _plan(6, 6, 6, 1, 3)
-    without = estimate(preflight_calls=3, holdout=12, repeats=3, search_calls=plan.metric_calls,
+    without = estimate(preflight_calls=6, holdout=12, repeats=3, search_calls=plan.metric_calls,
                        retry_calls=plan.retry_calls, reflection_calls=plan.reflection_calls)
     assert plan.replay_calls == 6 and plan.headroom_calls == 6
     assert plan.sized.calls == without.calls + plan.replay_calls + plan.headroom_calls
@@ -377,16 +428,17 @@ class _Recorder:
     def invoke(self, prompt: str, *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
         del holdout, schema
         self.prompts.append(prompt)
-        return {"answer": {"score_percent": 80}}
+        return {"answer": {"criteria": {"echo": {"level": 3, "reason": "echoes the request"}}}}
 
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-12")
 def test_the_judge_prompt_names_no_arm_and_no_candidate_identity() -> None:
-    case = Case("case-1", "family-1", "holdout", "Echo this request.", {"input.txt": "hello"}, "hello", "synthetic", True)
+    case = Case("case-1", "family-1", "holdout", "Echo this request.", {"input.txt": "hello"},
+                {"criteria": [{"id": "echo", "text": "THE answer SHALL echo the request."}]}, "synthetic", True)
     recorder = _Recorder()
-    score, _pillars, _result = judge(recorder, Grader("judge", rubric="Rate the echo."), case, {"text": "hello"}, None,
+    score, _verdicts, _result = judge(recorder, Grader("judge", rubric="Rate the echo."), case, {"text": "hello"}, None,
                                      holdout=True)
-    assert score == 0.8 and len(recorder.prompts) == 1
+    assert score == pytest.approx(2 / 3) and len(recorder.prompts) == 1
     prompt = recorder.prompts[0]
     data = cast(dict[str, object], json.loads(prompt.split("UNTRUSTED DATA (JSON):\n", 1)[1]))
     assert set(data) == {"request", "files", "answer", "output_files", "reference"}
@@ -400,7 +452,7 @@ def test_no_judge_prompt_of_a_real_run_holds_an_arm_name_or_a_candidate_hash(jud
     assert result["phase"] == "complete" and record["winner_hash"] and record["seed_hash"]
     requests = [cast(dict[str, object], json.loads(line)) for line in judged.log.read_text().splitlines()]
     prompts = [str(item["prompt"]) for item in requests if item["operation"] == "infer"
-               and "score_percent" in cast(list[str], cast(dict[str, object], item["response_schema"])["required"])]
+               and "criteria" in cast(list[str], cast(dict[str, object], item["response_schema"])["required"])]
     assert prompts
     forbidden = (cast(str, record["winner_hash"]), cast(str, record["seed_hash"]), "baseline", "winner", "replay")
     for prompt in prompts:
@@ -442,14 +494,14 @@ def test_the_rerun_candidate_comes_from_the_patched_copy_not_from_the_recorded_w
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals)
-    real = cast(Callable[..., list[str]], getattr(_session, "differences"))
+    real = cast(Callable[..., list[str]], getattr(_replay_phase, "differences"))
 
     def edited_after_the_check(copy: Path, seed: Candidate, patch: object) -> list[str]:
         _ = real(copy, seed, patch)
         _overwrite(copy, "edited after the byte check\n")
         return []
 
-    monkeypatch.setattr(_session, "differences", edited_after_the_check)
+    monkeypatch.setattr(_replay_phase, "differences", edited_after_the_check)
     state = Search(target)
     after = _resume(target, out, state)
     replay = _replay_of(after)
@@ -686,10 +738,10 @@ def test_a_tie_run_replays_nothing_and_never_applies(
     assert record["phase"] == "complete" and record["winner_hash"] == record["seed_hash"]
     replay = _replay_of(record)
     assert _export_status(record, out) == "inconclusive" and replay["reasons"] == ["winner-equals-baseline"]
-    assert replay["patch_digest"] is None and not _replays(record) and state.holdout_calls == 0
+    assert replay["patch_digest"] is None and not _replays(record) and state.holdout_calls > 0
     claims = _claims(record, out)
     assert claims["export"]["status"] == "inconclusive" and claims["improvement"]["status"] == "inconclusive"
-    assert claims["runner"]["checks"]["holdout-coverage"] == "unknown" and claims["runner"]["status"] == "inconclusive"
+    assert claims["runner"]["checks"]["holdout-coverage"] == "pass" and claims["runner"]["status"] == "supported"
     assert claims["apply"] is False
 
 
@@ -728,7 +780,9 @@ def test_a_winner_with_crlf_line_endings_replays_to_the_same_identity(
 def test_a_user_git_attributes_file_does_not_change_the_replayed_bytes(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
-    target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals, suffix="\nsecond line\n")
+    # Fixed scores make the search pick the suffixed winner, whatever the split.
+    target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals, suffix="\nsecond line\n",
+                                          scores=lambda text, _split: 0.9 if "improved" in text else 0.2)
     config = tmp_path / "user-config"
     (config / "git").mkdir(parents=True)
     _ = (config / "git" / "attributes").write_text("* text eol=crlf\n")
@@ -742,7 +796,7 @@ def test_the_report_omits_the_replay_detail_that_holds_git_stderr(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, _done, _rewound = _gated(tmp_path, make_target, write_draft, approvals)
-    _tamper_copy(monkeypatch, "prepare_copy", lambda copy: _overwrite(copy, "another seed\n"))
+    _tamper_copy(monkeypatch, lambda copy: _overwrite(copy, "another seed\n"))
     after = _resume(target, out, Search(target))
     stderr = cast(str, _replay_of(after)["detail"]["stderr"])
     assert stderr

@@ -227,14 +227,15 @@ def test_every_adapter_is_a_transport() -> None:
     assert [type(item) for item in _as_transports(*adapters)] == [ClaudeCode, Codex, Command]
 
 
+@pytest.mark.ac("gh-312:AC-1")
 def test_the_barrels_export_exactly_the_contract_names() -> None:
     assert set(harness_barrel.__all__) == {
         "Configuration", "Harness", "EnvironmentDiffers", "BUILTIN_ADAPTERS", "CONFIGURED_SELECTIONS", "doctor",
         "host_report", "ClaudeOptions", "Effort", "NONO_REMOVED", "check_selection", "command_profile",
-        "configured_selection", "has_claude_sandbox", "refuses_claude_options", "stop_kind"}
+        "configured_selection", "has_claude_sandbox", "refuses_claude_options", "seatbelt_environment", "stop_kind"}
     assert set(wrapper_barrel.__all__) == {"register"}
     assert set(evaluation_barrel.__all__) == {
-        "CheckMemo", "Reply", "Transcript", "answer_schema", "evaluate", "task_tokens"}
+        "CheckMemo", "CheckResult", "Reply", "Transcript", "answer_schema", "evaluate", "helper_failure", "task_tokens", "usage"}
 
 
 @pytest.mark.parametrize(("code", "kind"), [

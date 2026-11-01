@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+import tempfile
+from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import cast
 
 import pytest
@@ -24,6 +26,17 @@ def _single_json_line(err: str) -> dict[str, object]:
 def single_json_line() -> JsonLine:
     """Checker: ``err`` is exactly one ADR-001 JSON error envelope; returns it."""
     return _single_json_line
+
+
+@pytest.fixture(autouse=True)
+def _isolated_temp_root(tmp_path: Path) -> Iterator[None]:
+    """Point the temp root at ``tmp_path`` so traceback files never reach the shared temp directory."""
+    saved = tempfile.tempdir
+    tempfile.tempdir = str(tmp_path)
+    try:
+        yield
+    finally:
+        tempfile.tempdir = saved
 
 
 AC_MARKER = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*:[A-Z]+-[A-Z]*[0-9]+")

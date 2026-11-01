@@ -11,6 +11,8 @@ from typing import cast
 import pytest
 from skillz_experiments._cases import CodedError
 from skillz_experiments._contract import LOCATION, parse
+from skillz_experiments._gate_files import expand_gates
+from skillz_experiments._journey_gate import agent_turn
 from skillz_experiments._scaffold import scaffold
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -52,15 +54,28 @@ def test_the_built_bundle_scaffolds_a_draft_contract_that_loads_once_approved(tm
     data = cast(dict[str, object], json.loads(written.read_text(encoding="utf-8")))
     assert data["schema_version"] == 1 and data["status"] == "draft" and data["skill"] == "toy-skill"
     journey = cast(dict[str, object], cast(dict[str, object], data["kinds"])["journey"])
-    assert journey["grader"] == "journey"
-    assert journey["argv"] == ["python3", "-I", "-c", GATE_SOURCE]
+    assert journey["grader"] == "journey" and journey["gate"] == "evals/gates/journey.py" and "argv" not in journey
+    assert (skill / "evals/gates/journey.py").read_text(encoding="utf-8") == GATE_SOURCE
+    assert parse(expand_gates(data | {"status": "approved"}, skill), "skill").grader("journey").argv == (
+        "python3", "-I", "-c", GATE_SOURCE)
     assert "reference.must" in cast(str, journey["rubric"]) and "reference.must_not" in cast(str, journey["rubric"])
     with pytest.raises(CodedError) as caught:
         _ = parse(data, "skill")
     assert caught.value.code == "contract-unapproved"
-    contract = parse(data | {"status": "approved"}, "skill")
+    contract = parse(expand_gates(data | {"status": "approved"}, skill), "skill")
     assert contract.skill == "toy-skill" and list(contract.kinds) == ["journey"]
     assert json.loads(done.stdout)["status"] == "draft"
+    assert "$schema" not in data
+
+
+def test_scaffold_writes_the_schema_key_only_when_the_skill_ships_the_schema(tmp_path: Path) -> None:
+    skill = _skill(tmp_path)
+    (skill / "references/schemas").mkdir(parents=True)
+    _ = (skill / "references/schemas/autoimprove.schema.json").write_text("{}\n", encoding="utf-8")
+    _ = scaffold(skill)
+    data = cast(dict[str, object], json.loads((skill / LOCATION).read_text(encoding="utf-8")))
+    assert data["$schema"] == "../references/schemas/autoimprove.schema.json"
+    assert (skill / "evals" / cast(str, data["$schema"])).resolve().is_file()
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-7")
@@ -125,6 +140,41 @@ def test_the_gate_scores_0_when_no_event_is_an_agent_turn(tmp_path: Path) -> Non
 def test_the_gate_scores_1_with_an_agent_turn(tmp_path: Path) -> None:
     _trace(tmp_path, ['{"type": "user"}', '{"type": "assistant"}'])
     assert _gate(tmp_path) == {"score": 1, "failed": []}
+
+
+@pytest.mark.ac("autoimprove-authoring-headroom:AC-8")
+def test_the_gate_requires_a_completed_codex_agent_message(tmp_path: Path) -> None:
+    command = {"method": "item/completed", "params": {"item": {"type": "commandExecution"}}}
+    _trace(tmp_path, [json.dumps(command)])
+    assert _gate(tmp_path) == {"score": 0, "failed": ["no-agent-turn"]}
+    started = {"method": "item/started", "params": {"item": {"type": "agentMessage", "text": "Draft."}}}
+    _ = (tmp_path / "trace/events.jsonl").write_text(json.dumps(started) + "\n")
+    assert _gate(tmp_path) == {"score": 0, "failed": ["no-agent-turn"]}
+    message = {"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "Done."}}}
+    _ = (tmp_path / "trace/events.jsonl").write_text(json.dumps(command) + "\n" + json.dumps(message) + "\n")
+    assert _gate(tmp_path) == {"score": 1, "failed": []}
+
+
+@pytest.mark.ac("autoimprove-authoring-headroom:AC-8")
+@pytest.mark.parametrize(
+    ("line", "accepted"),
+    [
+        ('{"type": "assistant"}', True),
+        ('{"method": "item/completed", "params": {"item": {"type": "agentMessage"}}}', True),
+        ("not json", False),
+        ("[1]", False),
+        ('{"type": "user"}', False),
+        ('{"method": "item/started", "params": {"item": {"type": "agentMessage"}}}', False),
+        ('{"method": "item/completed", "params": []}', False),
+        ('{"method": "item/completed", "params": {"item": []}}', False),
+        ('{"method": "item/completed", "params": {"item": {"type": "commandExecution"}}}', False),
+        ('{"method": "item/completed", "params": {"item": {}}}', False),
+    ],
+    ids=["claude-assistant", "completed-codex-message", "invalid-json", "non-object", "wrong-event-type",
+         "incomplete-item", "wrong-params-shape", "wrong-item-shape", "completed-command", "missing-item-type"],
+)
+def test_agent_turn_accepts_only_assistant_or_completed_agent_message(line: str, accepted: bool) -> None:
+    assert agent_turn(line) is accepted
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-9")

@@ -21,8 +21,7 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._resume import resolve_statistics
-from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 MODEL = "local-test"
 SPREAD = [1.0, 2.0, 3.0]
@@ -36,15 +35,11 @@ def _document(**extra: object) -> dict[str, object]:
 
 
 @final
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     """A fake provider. The seed scores 0 and a proposal that says `improved` scores 1."""
 
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
-        pass
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
+        super().__init__()
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -204,15 +199,18 @@ def test_a_frozen_floor_beats_a_later_contract_edit(
     assert read(out / "run.json")["statistics"] == Statistics(min_gain=0.5).data()
 
 
-def test_a_tampered_frozen_floor_is_the_one_the_gate_uses(
+def test_a_tampered_frozen_floor_is_the_one_the_incumbent_rule_and_the_gate_use(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _prepare_only(target, out, write_draft, approvals)
     _tamper(out, Statistics(min_gain=5.0).data())
     result = run(target, out, MODEL, live=True, factory=_Provider)
+    # The incumbent rule applies the frozen floor too (gh-500), so the seed stays the winner and the gate sees no change.
+    comparisons = cast(list[dict[str, object]], cast(dict[str, object], result["search"])["comparisons"])
+    assert comparisons and all((item["verdict"], item["reasons"]) == ("inconclusive", ["min-gain"]) for item in comparisons)
     gate = cast(dict[str, object], result["gate"])
-    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["min-gain"])
+    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
 
 
 @pytest.mark.parametrize("shape", [
@@ -324,7 +322,7 @@ def test_cli_accepts_zero_and_exponent_forms(tmp_path: Path, monkeypatch: pytest
         seen.update(options)
         return {}
 
-    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    monkeypatch.setattr("skillz_experiments.run.run", fake)
     base = ["run", "--target", str(tmp_path), "--out", str(tmp_path / "run"), "--model", MODEL]
     assert main([*base, "--min-gain", "0", "--min-lower-bound", "1e-3"]) == 0
     assert seen["statistics"] == {"min_gain": 0.0, "min_lower_bound": 0.001}

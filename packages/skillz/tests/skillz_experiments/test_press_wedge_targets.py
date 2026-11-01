@@ -31,10 +31,9 @@ from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
-from skillz_experiments._wedge_targets import Rebuilder, plan_targets
+from skillz_experiments.run._wedge_targets import Rebuilder, plan_targets
 from skillz_experiments.run import Stop, export, run
-from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -132,15 +131,12 @@ class Recorder:
 
 
 @final
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        super().__init__()
         self.recorder: Recorder = recorder
         self.budget: Budget = budget
         self.checkpoint: Callable[[], None] = checkpoint
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -185,7 +181,8 @@ def open_session(out: Path, recorder: Recorder) -> Session:
 def score(session: Session, components: dict[str, str]) -> tuple[float, dict[str, object]]:
     cases = cast(dict[str, Case], getattr(session, "_search_cases"))
     method = cast(Callable[[dict[str, str], str], tuple[float, dict[str, object]]], getattr(session, "_evaluate_example"))
-    return method(components, next(iter(cases)))
+    # A train case runs once. A validation case would run once per repeat (gh-500).
+    return method(components, next(name for name, case in cases.items() if case.split == "train"))
 
 
 def evaluate(out: Path, recorder: Recorder, change: Callable[[dict[str, str]], None]) -> tuple[float, dict[str, object]]:
@@ -234,7 +231,7 @@ def count_builds(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         calls.append(target.name)
         return real(layer, tree, target, out_dir)
 
-    monkeypatch.setattr("skillz_experiments._wedge_targets.build_from_layer", counted)
+    monkeypatch.setattr("skillz_experiments.run._wedge_targets.build_from_layer", counted)
     return calls
 
 
@@ -596,7 +593,7 @@ def test_a_failed_build_is_cached_and_raised_again_without_a_second_build(
             raise subprocess.CalledProcessError(1, ["shiv"], stderr="boom é".encode())
         return real(layer, tree, target, out_dir)
 
-    monkeypatch.setattr("skillz_experiments._wedge_targets.build_from_layer", flaky)
+    monkeypatch.setattr("skillz_experiments.run._wedge_targets.build_from_layer", flaky)
     recorder = Recorder()
     session = open_session(out, recorder)
     try:
@@ -623,7 +620,7 @@ def test_a_non_subprocess_build_error_is_also_build_failed(
     def broken(*_args: object, **_kwargs: object) -> Path:
         raise OSError("disk full")
 
-    monkeypatch.setattr("skillz_experiments._wedge_targets.build_from_layer", broken)
+    monkeypatch.setattr("skillz_experiments.run._wedge_targets.build_from_layer", broken)
     recorder = Recorder()
     result, feedback = evaluate(out, recorder, lambda c: c.update({BETA: BETA_SOURCE + "#\n"}))
     assert result == 0.0 and feedback["reason"] == "build-failed" and "disk full" in str(feedback["rejected"])
@@ -639,7 +636,7 @@ def test_a_build_failure_message_is_bounded(
     def broken(*_args: object, **_kwargs: object) -> Path:
         raise subprocess.CalledProcessError(1, ["shiv"], stderr="x" * 1_000_000)
 
-    monkeypatch.setattr("skillz_experiments._wedge_targets.build_from_layer", broken)
+    monkeypatch.setattr("skillz_experiments.run._wedge_targets.build_from_layer", broken)
     _, feedback = evaluate(Path(out), Recorder(), lambda c: c.update({BETA: BETA_SOURCE + "#\n"}))
     assert len(str(feedback["rejected"])) < 2_000
 

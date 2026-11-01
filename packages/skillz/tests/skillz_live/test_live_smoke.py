@@ -23,8 +23,11 @@ from typing import cast
 
 import pytest
 
+import changelog_proof
+from fromargs_benefit import TOKEN_RULE, author, build_target, check_cli, cli_verdict, reference_draft, strong_model
 from skillz_experiments._cli import main
 from skillz_experiments._records import read
+from skillz_experiments.run import _run as run_module
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[3]
@@ -35,9 +38,10 @@ FLAWED_ECHO = ("---\nname: echo-skill\ndescription: Echo a request back as JSON.
 RECORDS = ROOT / ".live-smoke/runs.jsonl"
 ANALYTICS = ROOT / "skills/skillz/scripts/agent-session-analytics.pyz"
 PACKS = ("skill-usage", "agent-orchestration", "drift-regression")
-FAMILIES = {"f0": 3, "f1": 3, "f2": 6}
-"""Two search families of three cases and one holdout family of six. The search share holds about three reflections."""
-PREFLIGHT_CALLS = 3
+FAMILIES = {"f0": 2, "f1": 2, "f2": 2, "f3": 6}
+"""Train holds two families of two cases, validation one family of two, and the holdout one family of six."""
+PREFLIGHT_CALLS = 6
+"""Three roles, each with a Bash sandbox call and a Read file-access call."""
 INTERRUPT_AFTER = 3
 """The resume scenario stops its first process with SIGINT after this many recorded outcomes."""
 COPY_CHECK = ("import json, pathlib\nout = pathlib.Path('output/result.txt')\n"
@@ -59,12 +63,19 @@ class Setup:
 
 @dataclass(frozen=True)
 class Scenario:
-    """One run scenario. `cap` is the largest run estimate that it approves. `bridge` needs Codex for the command bridge."""
+    """One run scenario. `cap` is the largest run estimate that it approves. `bridge` needs Codex for the command bridge.
+
+    `author` writes the case draft with a live agent on the scenario harness in place of `Setup.draft`; a dry run keeps
+    `Setup.draft`. `check` adds record fields after the export. A scenario with `verdict` passes only by that rule.
+    """
 
     build: Callable[[Path, str, str], Setup]
     cap: int
     bridge: bool = False
     resume: bool = False
+    author: Callable[[Path, Path, str, str], tuple[list[dict[str, object]] | None, dict[str, object]]] | None = None
+    check: Callable[[Path, Path, list[dict[str, object]]], dict[str, object]] | None = None
+    verdict: Callable[[dict[str, object]], tuple[bool, str]] | None = None
 
 
 def _cases(case: Callable[[str], dict[str, object]]) -> list[dict[str, object]]:
@@ -95,7 +106,11 @@ def _echo(work: Path) -> tuple[Path, list[dict[str, object]]]:
 
     def case(name: str) -> dict[str, object]:
         request = f"Echo the text `{name}`."
-        return {"kind": "task", "request": request, "files": {"fixture.md": f"{name}\n"}, "expected": {"request": request}}
+        criteria = [{"id": "verbatim", "text": f"THE skill SHALL return `{name}` unchanged, in its original letter order.",
+                     "must": True},
+                    {"id": "json", "text": "THE skill SHALL reply with one JSON value."}]
+        return {"kind": "task", "request": request, "files": {"fixture.md": f"{name}\n"},
+                "expected": {"request": request, "criteria": criteria}}
     return target, _cases(case)
 
 
@@ -161,6 +176,10 @@ def _hybrid_mixed(work: Path, harness: str, model: str) -> Setup:
     document["statistics"] = {"min_gain": 0, "min_lower_bound": 0, "family_budget": 0.2, "family_budgets": {"f2": 0.3},
                               "min_coverage": 0.5}
     _ = contract.write_text(json.dumps(document), encoding="utf-8")
+    for case in draft:
+        expected = cast(dict[str, object], case["expected"])
+        expected["criteria"] = [{"id": "exact-copy", "must": True, "from": "expected_output",
+                                 "text": f"THE skill SHALL write `{expected['text']}` to `result.txt` with no change of case."}]
     config: dict[str, object] = {"schema_version": 1, "adapter": "codex", "roles": {"judge": _command_role(work)}}
     path = work / "harness.json"
     _ = path.write_text(json.dumps(config), encoding="utf-8")
@@ -189,7 +208,7 @@ def _prose_cli(work: Path, harness: str, model: str) -> Setup:
 
 
 def _journey(work: Path, harness: str, model: str) -> Setup:
-    """Run journey cases. Only the claude task transport holds a conversation, so another harness stops with a code."""
+    """Run journey cases through a persistent task conversation."""
     del model
     kind = {"grader": "journey", "argv": ["/usr/bin/python3", "-I", "-c", "import json; print(json.dumps({'score': 1}))"],
             "rubric": "Pass only when the agent echoed the brief's text back as JSON."}
@@ -197,21 +216,71 @@ def _journey(work: Path, harness: str, model: str) -> Setup:
 
     def case(name: str) -> dict[str, object]:
         return {"kind": "journey", "request": "Echo what I tell you.", "brief": f"Say `{name}` once, then stop.",
-                "max_turns": 2, "files": {"fixture.md": f"{name}\n"}, "expected": {"request": name}}
+                "max_turns": 2, "files": {"fixture.md": f"{name}\n"},
+                "expected": {"must": [name], "criteria": [{"id": "says-text", "from": "must:0", "must": True,
+                                                         "text": f"THE agent SHALL say `{name}` once."}]}}
     return Setup(target, _cases(case), _builtin(harness), ("--harness", harness, "--edit", "prose"),
-                 expect=None if harness == "claude" else "journey-unsupported")
+                 expect=None if harness in {"claude", "codex"} else "journey-unsupported")
+
+
+def _stronger(work: Path, harness: str, model: str) -> tuple[Path, dict[str, object]]:
+    """Write a harness config whose reflection and judge roles run `model`. Return its path and its content."""
+    stronger = {"model": model}
+    config: dict[str, object] = {"schema_version": 1, "adapter": harness,
+                                 "roles": {"reflection": stronger, "judge": stronger}}
+    path = work / "harness.json"
+    _ = path.write_text(json.dumps(config), encoding="utf-8")
+    return path, config
+
+
+def _fromargs_benefit(work: Path, harness: str, model: str) -> Setup:
+    """Search a skill that applies version rules by hand. The task role runs `model`; reflection and judge run stronger.
+
+    The token rule lets a CLI that keeps the score and cuts the task tokens promote, so a strong seed does not stop
+    the run with `cases-too-easy`.
+    """
+    del model
+    path, config = _stronger(work, harness, strong_model(harness))
+    return Setup(build_target(work), reference_draft(), config, ("--harness-config", str(path)),
+                 ("--edit", "prose+cli", *TOKEN_RULE))
+
+
+def _fromargs_author(target: Path, work: Path, harness: str,
+                     model: str) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
+    """The `fromargs-benefit` author stage runs in `claude -p` on every harness."""
+    del harness
+    return author(target, work, model)
+
+
+def _changelog_proof(work: Path, harness: str, model: str) -> Setup:
+    """Search a skill with one wrong format rule. The task role runs `model`; reflection and judge run stronger.
+
+    The token rule lets a CLI that ties a prose fix and cuts the task tokens replace it in the search. The holdout
+    gate against the seed still needs a quality `promote`.
+    """
+    del model
+    path, config = _stronger(work, harness, strong_model(harness))
+    return Setup(changelog_proof.build(work), changelog_proof.reference_draft(), config,
+                 ("--harness-config", str(path)), ("--edit", "prose+cli", *changelog_proof.TOKEN_RULE))
 
 
 SCENARIOS: dict[str, Scenario] = {
-    "basic": Scenario(_basic, 97),
-    "command-harness": Scenario(_command_harness, 97, bridge=True),
-    "command-grader": Scenario(_command_grader, 53),
-    "hybrid-mixed": Scenario(_hybrid_mixed, 97, bridge=True),
-    "prose-cli": Scenario(_prose_cli, 53),
-    "journey": Scenario(_journey, 229),
-    "resume": Scenario(_basic, 97, resume=True),
+    "basic": Scenario(_basic, 126),
+    "command-harness": Scenario(_command_harness, 126, bridge=True),
+    "command-grader": Scenario(_command_grader, 70),
+    "hybrid-mixed": Scenario(_hybrid_mixed, 126, bridge=True),
+    "prose-cli": Scenario(_prose_cli, 70),
+    "journey": Scenario(_journey, 609),
+    "resume": Scenario(_basic, 126, resume=True),
+    "fromargs-benefit": Scenario(_fromargs_benefit, 170, author=_fromargs_author, check=check_cli,
+                                 verdict=cli_verdict),
+    "changelog-proof": Scenario(_changelog_proof, 122, author=changelog_proof.author, check=changelog_proof.check,
+                                verdict=changelog_proof.proof_verdict),
 }
-"""Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it)."""
+"""Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it).
+
+The run estimate includes the run's own `PREFLIGHT_CALLS`, so the two-call preflight (gh-176) adds 3 to each cap.
+"""
 NAMES = (*SCENARIOS, "analytics")
 
 
@@ -276,13 +345,20 @@ def _run(scenario: Scenario, harness: str, model: str, work: Path, capsys: pytes
         if code:
             return fields | _stopped("preflight", error)
         fields["preflight_calls"] = preflight.get("live_calls")
+    draft = setup.draft
+    if scenario.author is not None and not dry:
+        authored, notes = scenario.author(setup.target, work, harness, model)
+        fields |= notes
+        if authored is None:
+            return fields | _stopped("author", notes)
+        draft = authored
     out = work / "run"
     run = ("run", "--target", str(setup.target), "--out", str(out), "--model", model, *setup.harness, "--live",
            "--repeats", "1", *setup.flags)
     _, stop, error = _call(capsys, *run)
     if error.get("code") != "cases-missing":
         return fields | _stopped("cases", error)
-    _ = Path(cast(str, stop["draft"])).write_text(json.dumps(setup.draft), encoding="utf-8")
+    _ = Path(cast(str, stop["draft"])).write_text(json.dumps(draft), encoding="utf-8")
     _, stop, error = _call(capsys, *run)
     if error.get("code") != "cases-unapproved":
         return fields | _stopped("cases", error)
@@ -306,9 +382,10 @@ def _run(scenario: Scenario, harness: str, model: str, work: Path, capsys: pytes
     if code:
         return fields | _stopped("export", error)
     gate = cast(dict[str, object], result.get("gate")) if isinstance(result.get("gate"), dict) else {}
-    return fields | {"verdict": gate.get("verdict"), "stage": "complete", "phase": result.get("phase"),
-                     "gate_reasons": gate.get("reasons"), "holdout_scored": gate.get("n_shared"),
-                     "patch": str(work / "export/candidate.patch")}
+    fields |= {"verdict": gate.get("verdict"), "stage": "complete", "phase": result.get("phase"),
+               "gate_reasons": gate.get("reasons"), "holdout_scored": gate.get("n_shared"), "delta": gate.get("delta"),
+               "se": gate.get("se"), "patch": str(work / "export/candidate.patch")}
+    return fields | ({} if scenario.check is None else scenario.check(setup.target, work, draft))
 
 
 def _analytics(work: Path) -> dict[str, object]:
@@ -354,6 +431,22 @@ def _revision() -> str:
     return found.stdout.strip()
 
 
+def _dry_verdict(entry: dict[str, object], scenario: Scenario) -> tuple[bool, str]:
+    """Return whether a dry record passes, and the reason.
+
+    A dry run passes when it stops with the code that the scenario expects, or when it reaches the budget question
+    with an estimate at most the cap. An earlier stop, or an estimate over the cap, fails, so that a live run does not.
+    """
+    code, expect, estimate = entry.get("code"), entry.get("expect"), entry.get("estimate")
+    if expect is not None and code == expect:
+        return True, f"the run stopped with the expected code {expect}"
+    if entry.get("verdict") != "dry":
+        return False, f"the dry run stopped at stage {entry.get('stage')} with code {code} before the budget question"
+    if not isinstance(estimate, int) or estimate > scenario.cap:
+        return False, f"the run needs {estimate} calls; the stated cap is {scenario.cap}"
+    return True, f"the estimate of {estimate} calls is at most the cap of {scenario.cap}"
+
+
 def _verdict(entry: dict[str, object], scenario: Scenario) -> tuple[bool, str]:
     """Return whether a run record passes, and the reason.
 
@@ -370,6 +463,8 @@ def _verdict(entry: dict[str, object], scenario: Scenario) -> tuple[bool, str]:
         return code == expect, f"{stop}; the scenario expects {expect}"
     if stage == "preflight":
         return False, f"{stop}; the scenario does not expect a preflight stop, so the run made no task call"
+    if scenario.verdict is not None:
+        return scenario.verdict(entry)
     if scenario.resume and interrupted and (entry["interrupted_exit"] == 0 or entry.get("interrupted_phase") == "complete"):
         return False, (f"the run was not interrupted: the first process exited {entry['interrupted_exit']} "
                        f"in phase {entry.get('interrupted_phase')}")
@@ -412,7 +507,11 @@ def test_a_live_scenario_completes_and_exports_or_stops_with_a_code(name: str, t
         RECORDS.parent.mkdir(exist_ok=True)
         with RECORDS.open("a", encoding="utf-8") as stream:
             _ = stream.write(json.dumps(entry) + "\n")
-    if scenario is None or entry["verdict"] == "dry":
+    if scenario is None:
+        return
+    if dry:
+        passed, reason = _dry_verdict(entry, scenario)
+        assert passed, f"{reason}: {entry}"
         return
     spent = [value for value in (entry.get("preflight_calls"), entry.get("calls")) if isinstance(value, int)]
     assert sum(spent) <= scenario.cap + PREFLIGHT_CALLS, entry
@@ -508,3 +607,73 @@ def test_a_resume_that_reaches_the_interrupt_must_leave_a_nonzero_exit_and_an_un
     passed, reason = _verdict(entry, RESUME)
     assert passed is passes, reason
     assert passes or "not interrupted" in reason, reason
+
+
+@pytest.mark.ac("fromargs-benefit-smoke:AC-4")
+@pytest.mark.parametrize("entry", [{"stage": "run", "code": "cases-too-easy", "expect": None}, None])
+def test_the_fromargs_benefit_scenario_fails_a_record_that_the_shared_rule_passes(entry: dict[str, object] | None,
+                                                                                  tmp_path: Path) -> None:
+    record = entry or _complete(tmp_path, 6)
+    assert _verdict(record, BASIC)[0], "the shared rule passes a coded stop and a completed run"
+    passed, reason = _verdict(record, SCENARIOS["fromargs-benefit"])
+    assert not passed and ("cli=None" in reason or "cases-too-easy" in reason), reason
+
+
+@pytest.mark.parametrize(("entry", "passes", "phrase"), [
+    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 126}, True, "at most the cap"),
+    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 127}, False, "the stated cap is 126"),
+    ({"verdict": "stopped", "stage": "cases", "expect": None, "code": "case-criteria-missing"}, False,
+     "stage cases with code case-criteria-missing"),
+    ({"verdict": "stopped", "stage": "cases", "expect": "journey-unsupported", "code": "journey-unsupported"}, True,
+     "expected code")])
+def test_a_dry_run_passes_only_at_the_budget_question_within_the_cap(entry: dict[str, object], passes: bool,
+                                                                     phrase: str) -> None:
+    passed, reason = _dry_verdict(entry, BASIC)
+    assert passed is passes and phrase in reason, reason
+
+
+@pytest.mark.ac("autoimprove-live-proof:AC-9")
+def test_the_changelog_proof_scenario_fails_a_completed_run_that_the_shared_rule_passes(tmp_path: Path) -> None:
+    record = _complete(tmp_path, 6) | {"verdict": "promote-cheaper"}
+    assert _verdict(record, BASIC)[0], "the shared rule passes a completed run with a patch and a scored holdout"
+    passed, reason = _verdict(record, SCENARIOS["changelog-proof"])
+    assert not passed and "claims.apply is None" in reason and "cli=None" in reason, reason
+
+
+@pytest.mark.ac("autoimprove-live-proof:AC-14")
+def test_the_changelog_proof_run_sets_the_token_rule(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def build(work: Path) -> Path:
+        return work / "changelog-entry"
+
+    monkeypatch.setattr(changelog_proof, "build", build)
+    flags = _changelog_proof(tmp_path, "claude", "sonnet").flags
+    assert flags == ("--edit", "prose+cli", "--min-token-saving", "0.1", "--max-quality-loss", "0.05"), flags
+
+
+def test_every_scenario_with_a_record_check_has_its_own_pass_rule() -> None:
+    """A scenario with `check` and no `verdict` passes by the shared rule, even when `check` records a failed CLI."""
+    unpaired = [name for name, scenario in SCENARIOS.items() if scenario.check is not None and scenario.verdict is None]
+    assert unpaired == [], unpaired
+
+
+@pytest.mark.ac("gh-300:AC-5")
+@pytest.mark.parametrize("name", list(SCENARIOS))
+def test_each_scenario_splits_its_draft_and_its_cap_equals_the_dry_estimate(
+        name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """Run the dry path offline. A stub host report and stub `claude` and `codex` paths stand in for the host checks only."""
+    def ready(selections: list[tuple[str, str | None]]) -> dict[str, object]:
+        return {"ok": True, "harness": "+".join(harness for harness, _ in selections), "checks": [], "live_calls": 0}
+    found = shutil.which
+    stubs = {"claude": "/usr/bin/claude", "codex": "/usr/bin/codex"}
+
+    def which(command: str, mode: int = os.F_OK | os.X_OK, path: str | None = None) -> str | None:
+        return stubs.get(command) or found(command, mode, path)
+    monkeypatch.setattr(run_module, "host_report", ready)
+    monkeypatch.setattr(shutil, "which", which)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+    scenario = SCENARIOS[name]
+    work = tmp_path / "work"
+    work.mkdir()
+    entry = _run(scenario, "codex" if scenario.bridge else "claude", "sonnet", work, capsys, dry=True)
+    assert entry.get("code") != "cases-too-few", entry
+    assert entry.get("estimate") == scenario.cap, entry

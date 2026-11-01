@@ -8,8 +8,9 @@ commands that build run the skills in parallel.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, cast
 
 import fromargs
 
@@ -20,6 +21,21 @@ DEFAULT_ROOT = "skills"
 T = TypeVar("T")
 
 app = fromargs.App("wedge", help="Shiv a fromargs CLI into a skill as a content-addressed .pyz.")
+
+
+_BUILD_EXPORTS = frozenset({
+    "SiteLayer", "build_from_layer", "layer_import_names", "open_site_layer",
+    "populate_site_layer", "resolve_target", "stage_sources",
+})
+
+
+def public_export(name: str) -> object:
+    """Resolve build exports only when a caller requests them."""
+    if name in _BUILD_EXPORTS:
+        return cast(object, getattr(importlib.import_module("wedge._build"), name))
+    if name == "bundle_path":
+        return cast(object, getattr(importlib.import_module("wedge._bundle"), name))
+    raise AttributeError(f"module 'wedge' has no attribute {name!r}")
 
 
 def _dedupe_dirs(dirs: list[Path]) -> list[Path]:

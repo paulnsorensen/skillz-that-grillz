@@ -14,6 +14,8 @@ DATA_MARKER = "\nUNTRUSTED DATA (JSON):\n"
 # The nullable schema keys that the proposer fills with its own text, not with a component.
 FREE_TEXT = ("@hypothesis", "@notes")
 PROBE_PHRASES = ("read isolation failed", "network isolation failed")
+# The harness text that `leak-harness` proposals copy into the skill, by the count of earlier reflections.
+HARNESS_LEAKS = {"0": "Write the plan to output/plan.json.", "1": "Do not run git or gh."}
 
 
 class PromptFormatError(ValueError):
@@ -98,6 +100,9 @@ def propose(prompt: str, fields: list[str], mode: str = "normal", observed: str 
         propose_target(candidate, fields, answer)
     elif mode == "leak-answer" and observed:
         answer["SKILL.md"] += "\n" + observed.upper()
+    elif mode == "leak-harness" and observed in HARNESS_LEAKS:
+        # `observed` is the count of earlier reflections. The first proposals copy harness text; later ones stay clean.
+        answer["SKILL.md"] += "\n" + HARNESS_LEAKS[observed]
     elif mode == "bad-helper" and "scripts/transform.py" in answer:
         answer["scripts/transform.py"] = candidate["scripts/transform.py"].replace("text = text", "raise RuntimeError('bad helper')")
     return {name: None if name in FREE_TEXT else answer[name] for name in fields}
@@ -139,9 +144,15 @@ def task(workspace: Path, skill_name: str, mode: str = "normal") -> tuple[dict[s
     return {"result_json": json.dumps({"text": value}), "load_marker": marker}, trace
 
 
-def judge(prompt: str, fields: list[str]) -> dict[str, int]:
+def verdicts(reference: dict[str, object], level: int) -> dict[str, object]:
+    criteria = cast(list[dict[str, str]], reference["criteria"])
+    return {"criteria": {item["id"]: {"level": level, "reason": "fake judge"} for item in criteria}}
+
+
+def judge(prompt: str, fields: list[str]) -> dict[str, object]:
+    del fields
     payload = untrusted_payload(prompt)
     answer = cast(str, payload["answer"])
-    reference = payload["reference"]
-    score = 100 if json.loads(answer) == reference else 0
-    return {name: score for name in fields}
+    reference = cast(dict[str, object], payload["reference"])
+    expected = {key: value for key, value in reference.items() if key != "criteria"}
+    return verdicts(reference, 4 if json.loads(answer) == expected else 1)

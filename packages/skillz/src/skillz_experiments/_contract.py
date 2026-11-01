@@ -8,17 +8,30 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Literal, cast
 
-from skillz_experiments._cases import CodedError, digest, mapping, relative, string
+from skillz_experiments._cases import JOURNEY_EXPECTED_FIELDS, CodedError, digest, mapping, relative, string
+from skillz_experiments._gate_files import expand_gates
 from skillz_experiments.gate import Statistics
 
 LOCATION = "evals/autoimprove.json"
 GraderType = Literal["exact-json", "judge", "command", "hybrid", "audit", "journey"]
 GRADERS = ("exact-json", "judge", "command", "hybrid", "audit", "journey")
 JUDGED = ("audit", "judge", "hybrid", "journey")
-_SKILL = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
-_PILLAR = re.compile(r"[a-z][a-z0-9_]{0,31}")
-_TOOL = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,127}")
-PILLAR_LIMIT = 8
+ARGV_GRADERS = ("command", "hybrid", "journey")
+RUBRIC_GRADERS = ("judge", "hybrid", "journey")
+SKILL_PATTERN = r"[a-z0-9][a-z0-9-]{0,63}"
+TOOL_PATTERN = r"[A-Za-z][A-Za-z0-9_]{0,127}"
+_SKILL = re.compile(SKILL_PATTERN)
+_TOOL = re.compile(TOOL_PATTERN)
+# Two words: a word character, then whitespace, then a word character. The JSON schema takes the same pattern, and its `\w`
+# is ASCII, so the parser matches ASCII too.
+HARNESS_PHRASE_PATTERN = r"\w[\s\S]*\s[\s\S]*\w"
+_HARNESS_PHRASE = re.compile(HARNESS_PHRASE_PATTERN, re.ASCII)
+CONTRACT_FIELDS = ("schema_version", "status", "skill", "invocation", "kinds", "helper", "editable", "surface", "statistics",
+                   "harness_phrases")
+GRADER_FIELDS = ("grader", "argv", "gate", "rubric", "capture")
+HELPER_FIELDS = ("path", "input", "fixtures")
+SURFACE_FIELDS = ("tools", "mcp_config", "agents", "companions")
+SCHEMA_KEY = "$schema"
 
 
 @dataclass(frozen=True)
@@ -26,14 +39,13 @@ class Grader:
     """One kind's grader.
 
     `capture` is an argv that runs after the task, in the command grader workspace, and saves files under
-    `capture/` for the judge to view. `pillars` names the judge scores; the kind score is their mean.
+    `capture/` for the judge to view.
     """
 
     type: GraderType
     argv: tuple[str, ...] = ()
     rubric: str = ""
     capture: tuple[str, ...] = ()
-    pillars: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -79,6 +91,8 @@ class Contract:
     source: str = "skill"
     surface: Surface | None = None
     statistics: Mapping[str, object] | None = None
+    # Sandbox-only phrases of the eval requests. A proposal that adds one is a leak.
+    harness_phrases: tuple[str, ...] = ()
 
     def in_companion(self, name: str) -> bool:
         """Return True when `name` is a companion directory or a file under one."""
@@ -104,6 +118,9 @@ class Contract:
     def grader_types(self) -> dict[str, str]:
         return {kind: grader.type for kind, grader in self.kinds.items()}
 
+    def journey_kinds(self) -> tuple[str, ...]:
+        return tuple(kind for kind, grader in self.kinds.items() if grader.type == "journey")
+
     def judged(self, kind: str) -> bool:
         return self.grader(kind).type in JUDGED
 
@@ -126,8 +143,6 @@ class Contract:
                 entry["rubric"] = grader.rubric
             if grader.capture:
                 entry["capture"] = list(grader.capture)
-            if grader.pillars:
-                entry["pillars"] = list(grader.pillars)
             kinds[kind] = entry
         document: dict[str, object] = {"schema_version": 1, "status": "approved", "skill": self.skill,
                                        "invocation": self.invocation, "kinds": kinds,
@@ -139,6 +154,8 @@ class Contract:
             document["surface"] = self.surface.data()
         if self.statistics:
             document["statistics"] = dict(self.statistics)
+        if self.harness_phrases:
+            document["harness_phrases"] = list(self.harness_phrases)
         return document
 
     @property
@@ -181,43 +198,35 @@ def _argv(raw: object, name: str) -> tuple[str, ...]:
     return tuple(string(part, "argv entry") for part in cast(list[object], raw))
 
 
-def _pillars(raw: object, kind: str) -> tuple[str, ...]:
-    if not isinstance(raw, list) or not 1 <= len(cast(list[object], raw)) <= PILLAR_LIMIT:
-        raise ValueError(f"kind {kind} pillars must be a list of 1 to {PILLAR_LIMIT} names")
-    names = cast(list[object], raw)
-    if not all(isinstance(name, str) and _PILLAR.fullmatch(name) for name in names) or len(set(cast(list[str], names))) != len(names):
-        raise ValueError(f"kind {kind} pillars must be unique lowercase names of letters, digits, and underscores; each starts with a letter and has at most 32 characters")
-    return tuple(cast(list[str], names))
-
-
 def _grader(value: object, kind: str) -> Grader:
     item = mapping(value)
-    _fields(item, {"grader", "argv", "rubric", "capture", "pillars"}, f"kind {kind}")
+    if "pillars" in item:
+        raise CodedError("contract-pillars-removed", f"kind {kind} declares pillars, which the contract no longer takes; "
+                         + "move each pillar into case criteria (expected.criteria) and remove pillars")
+    _fields(item, set[str](GRADER_FIELDS) - {"gate"}, f"kind {kind}")
     kind_type = item.get("grader")
     if kind_type not in GRADERS:
         raise ValueError(f"kind {kind} needs a grader: {', '.join(GRADERS)}")
     argv: tuple[str, ...] = ()
-    if kind_type in ("command", "hybrid", "journey"):
+    if kind_type in ARGV_GRADERS:
         argv = _argv(item.get("argv"), f"kind {kind}")
     elif "argv" in item:
         raise ValueError(f"kind {kind} grader does not take argv")
     rubric = ""
     capture: tuple[str, ...] = ()
-    pillars: tuple[str, ...] = ()
-    if kind_type in ("judge", "hybrid", "journey"):
+    if kind_type in RUBRIC_GRADERS:
         rubric = string(item.get("rubric"), f"kind {kind} rubric")
         capture = _argv(item["capture"], f"kind {kind} capture") if "capture" in item else ()
-        pillars = _pillars(item["pillars"], kind) if "pillars" in item else ()
     else:
-        for field in ("rubric", "capture", "pillars"):
+        for field in ("rubric", "capture"):
             if field in item:
                 raise ValueError(f"kind {kind} grader does not take {field}")
-    return Grader(cast(GraderType, item["grader"]), argv, rubric, capture, pillars)
+    return Grader(cast(GraderType, item["grader"]), argv, rubric, capture)
 
 
 def _helper(value: object) -> Helper:
     item = mapping(value)
-    _fields(item, {"path", "input", "fixtures"}, "helper")
+    _fields(item, set(HELPER_FIELDS), "helper")
     fixtures: list[dict[str, object]] = []
     raw = item.get("fixtures", [])
     if not isinstance(raw, list):
@@ -242,6 +251,16 @@ def _statistics(value: object) -> dict[str, object]:
         return Statistics.declared(value)
     except ValueError as error:
         raise CodedError("contract-statistics-invalid", f"contract {error}") from None
+
+
+def _harness_phrases(value: object) -> tuple[str, ...]:
+    """Return the declared harness phrases. Each phrase needs at least two words, so a common word never becomes a leak."""
+    if not isinstance(value, list):
+        raise CodedError("contract-harness-phrases", "contract harness_phrases must be a list of phrases")
+    phrases = cast(list[object], value)
+    if not all(isinstance(phrase, str) and _HARNESS_PHRASE.search(phrase) for phrase in phrases):
+        raise CodedError("contract-harness-phrases", "each contract harness_phrases entry must be text of at least two words")
+    return tuple(cast(list[str], phrases))
 
 
 def _surface_error(message: str) -> CodedError:
@@ -277,7 +296,7 @@ def _surface(value: object) -> Surface:
     if not isinstance(value, dict):
         raise _surface_error("must be an object")
     item = mapping(cast(object, value))
-    unknown = set(item) - {"tools", "mcp_config", "agents", "companions"}
+    unknown = set(item) - set(SURFACE_FIELDS)
     if unknown:
         raise _surface_error(f"has unknown fields: {', '.join(sorted(unknown))}")
     tools = _surface_list(item, "tools")
@@ -304,7 +323,7 @@ def parse(value: object, source: str) -> Contract:
         raise CodedError("contract-unapproved", "contract has status draft; approve it before a run")
     if item.get("status") != "approved":
         raise ValueError("contract status must be approved or draft")
-    _fields(item, {"schema_version", "status", "skill", "invocation", "kinds", "helper", "editable", "surface", "statistics"}, "contract")
+    _fields(item, {SCHEMA_KEY, *CONTRACT_FIELDS}, "contract")
     if type(item.get("schema_version")) is not int or item["schema_version"] != 1:
         raise ValueError("contract needs schema_version 1")
     skill = string(item.get("skill"), "contract skill")
@@ -320,13 +339,20 @@ def parse(value: object, source: str) -> Contract:
     helper = _helper(item["helper"]) if "helper" in item else None
     surface = _surface(item["surface"]) if "surface" in item else None
     thresholds = _statistics(item["statistics"]) if "statistics" in item else None
+    phrases = _harness_phrases(item["harness_phrases"]) if "harness_phrases" in item else ()
     contract = Contract(skill, string(item.get("invocation"), "contract invocation"),
                         {kind: _grader(entry, kind) for kind, entry in kinds.items()}, helper, editable, source, surface,
-                        thresholds)
+                        thresholds, phrases)
     for kind, grader in contract.kinds.items():
-        if (kind == "journey") != (grader.type == "journey"):
-            raise CodedError("contract-kinds", f"kind {kind} and the journey grader go together: the kind named "
-                             + "journey takes the journey grader, and no other kind does")
+        if kind == "journey" and grader.type != "journey":
+            raise CodedError("contract-kinds", "the kind named journey takes the journey grader; "
+                             + "name another kind to use a different grader")
+    for kind, grader in contract.kinds.items():
+        if grader.type == "journey":
+            unknown = sorted(set(re.findall(r"reference\.([a-z_]+)", grader.rubric)) - set(JOURNEY_EXPECTED_FIELDS))
+            if unknown:
+                raise CodedError("contract-rubric-field", f"kind {kind} rubric names reference.{unknown[0]}, which is not a "
+                                 + f"journey expected field; allowed fields: {', '.join(JOURNEY_EXPECTED_FIELDS)}")
     for label, names in ("editable", editable), ("helper", (helper.path,) if helper is not None else ()):
         for name in names:
             if contract.read_only(name):
@@ -341,4 +367,4 @@ def load_contract(target: Path) -> Contract:
         raise CodedError("contract-missing", f"no autoimprove contract: create {path}")
     if path.is_symlink() or not path.is_file() or path.stat().st_size > 1_000_000:
         raise CodedError("contract-unreadable", f"{path} must be a bounded regular file, not a symlink or directory")
-    return parse(cast(object, json.loads(path.read_text(encoding="utf-8"))), "skill")
+    return parse(expand_gates(cast(object, json.loads(path.read_text(encoding="utf-8"))), target), "skill")

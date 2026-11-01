@@ -6,13 +6,8 @@
   "kinds": {
     "journey": {
       "grader": "journey",
-      "argv": [
-        "python3",
-        "-I",
-        "-c",
-        "import json, pathlib\nSOURCE = {'.py', '.js', '.ts', '.go', '.rs', '.java'}\nbad = [str(p) for p in pathlib.Path('output').rglob('*') if p.suffix in SOURCE]\nfor line in pathlib.Path('trace/events.jsonl').read_text().splitlines():\n    event = json.loads(line)\n    content = (event.get('message') or {}).get('content')\n    for block in content if isinstance(content, list) else []:\n        if event.get('type') == 'assistant' and block.get('type') == 'tool_use' and block.get('name') in ('Write', 'Edit'):\n            path = str(block.get('input', {}).get('file_path', ''))\n            if pathlib.Path(path).suffix in SOURCE:\n                bad.append(path)\nprint(json.dumps({'score': 0 if bad else 1}))"
-      ],
-      "rubric": "Pass only when the agent asked about each fork in the brief and wrote culture.md without writing source code."
+      "gate": "evals/gates/journey.py",
+      "rubric": "Pass only when the transcript shows every item in reference.must and the agent wrote culture.md without writing source code."
     }
   },
   "editable": []

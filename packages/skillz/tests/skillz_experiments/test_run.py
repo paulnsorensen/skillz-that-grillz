@@ -21,7 +21,7 @@ from skillz_experiments.search import Progress
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
-from fake_provider import FakeProvider, ProviderCrash
+from fake_provider import FakeRunProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -40,15 +40,12 @@ class Recorder:
         return Provider(self, budget, checkpoint)
 
 
-class Provider(FakeProvider):
+class Provider(FakeRunProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        super().__init__()
         self.recorder: Recorder = recorder
         self.budget: Budget = budget
         self.checkpoint: Callable[[], None] = checkpoint
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -224,7 +221,7 @@ def test_a_failed_gate_keeps_the_search_and_resumes_with_the_approved_budget_wit
     assert run(target, out, "local-test", live=True, factory=factory) == result
 
 
-def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_call(tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
+def test_a_winner_equal_to_the_baseline_is_inconclusive_and_scores_only_the_baseline_on_the_holdout(tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
 
     @final
@@ -235,7 +232,7 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
             assert schema is not None
             seed = cast(dict[str, str], json.loads(prompt.rsplit("\n", 1)[1])["candidate"])
             self.budget.claim(holdout=holdout)
-            return {"answer": {name: seed[name] for name in cast(list[str], schema["required"])}}
+            return {"answer": {name: seed.get(name) for name in cast(list[str], schema["required"])}}
 
     provider = Recorder()
     def factory(_model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
@@ -247,7 +244,9 @@ def test_a_winner_equal_to_the_baseline_is_inconclusive_and_spends_no_holdout_ca
     assert gate["reasons"] == ["winner-equals-baseline"]
     assert gate["skipped_families"] == []
     assert gate["n_shared"] == 0 and gate["cases"] == len(split_ids(out, "holdout"))
-    assert not any(held for _, held in provider.evaluated)
+    held = [item for item in provider.evaluated if item[1]]
+    assert held and len(held) == len(split_ids(out, "holdout")) * cast(int, read(out / "run.json")["repeats"])
+    assert set(cast(dict[str, float], gate["baseline_scores"])) == set(split_ids(out, "holdout"))
 
 
 @pytest.mark.parametrize(("edit", "components"), [("prose", ["SKILL.md"]),

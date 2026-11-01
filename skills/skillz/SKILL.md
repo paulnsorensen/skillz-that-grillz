@@ -46,13 +46,8 @@ Ask for a target when the mode requires one.
 `references/analytics-ceremony.md` has the details. Skip Usage and the raw-log fallback write no cache.
 
 For `autoimprove`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
-The agent drafts the cases. The user needs no contract and no case manifest.
-Run `scripts/skillz-experiment.pyz run`, answer each coded stop, and then run `export`.
-Ask at most three questions: harness and model, case approval, and budget approval.
-Report the `runner`, `export`, and `improvement` claims, each with its status and evidence. Apply a winner only when `claims.apply` is true.
-When the user selects the `claude` adapter or a custom command check, also read `references/experiment-harness.md`.
-For Gemini CLI, Copilot CLI, Cursor CLI, OpenCode, or Pi, also read `references/harness-recipes.md`.
-Use the installed `scripts/skillz-experiment.pyz`. Do not require a source checkout.
+Before you write or check `evals/evals.json`, `evals/journeys.json`, or `evals/autoimprove.json`, read `references/eval-formats.md`.
+Read `references/autoimprove-run.md` before you run `autoimprove`; it has the run, question, and report steps.
 
 ## Shared protocol
 
@@ -66,7 +61,7 @@ Use both JSON outputs as objective package facts, not a fitness score. An agent 
 Read `references/experiments.md § Audit facts contract` for the check ids and statuses.
 Report a helper error without treating it as a successful audit.
 Classify it as **agent** (`tools:` / `disallowedTools:` or an `agents/registry.yaml` entry) or **skill** (`name:` + `description:`).
-For a skill, run `git ls-files -z -co --exclude-standard <skill-dir> | LC_ALL=C sort -z | xargs -0 git hash-object | git hash-object --stdin`.
+For a skill, run `o=$(git ls-files -z -co --exclude-standard <skill-dir> | LC_ALL=C sort -z | xargs -0 sh -c 'for f; do b=$(git hash-object -- "$f") || exit 1; printf "%s %s\n" "$b" "$f"; done' sh) && [ -n "$o" ] && printf '%s\n' "$o" | git hash-object --stdin`.
 Its output is the content id. It covers every package file, so a sidecar or reference edit changes it.
 For an agent file, run `git hash-object <target>`. Its output is the content id.
 When a command fails, the content id is `unavailable`.
@@ -190,7 +185,7 @@ Follow `references/offload.md`; its steps are Find, Contract, Implement, Deliver
 2. Run Find and Contract for each candidate. Cite each candidate's line.
    Rank candidates by how often a run repeats the work, then by target line, ascending.
    With zero candidates, report `No offload candidates` and stop.
-3. Emit the brief below.
+3. Emit the brief in `references/wedge-brief.md`.
    Ask the user which candidates to implement, with your recommendation.
    Ask in the same question whether the user declines fromargs or wedging.
    Name each dependency write in that question.
@@ -204,16 +199,6 @@ Follow `references/offload.md`; its steps are Find, Contract, Implement, Deliver
 Done means: every candidate cites a line and has all seven contract fields.
 Each selected CLI passes its contract tests through its invocation line.
 Each CLI that is not wedged states the reason.
-
-```markdown
-## skillz wedge: <name>
-
-| # | Step (line) | Transformation | Command | Delivery | Stays in prose |
-|---|---|---|---|---|---|
-
-### Candidate <n>: <command>
-**Inputs** · **Output** · **Ordering** · **Empty** · **Errors** · **Side effects** · **Caller line**
-```
 
 ## Report
 
@@ -258,12 +243,12 @@ N findings were `<don't know>` or trivial (not shown).
 
 Read on demand:
 
-- `references/harness-layout.md` — Portability lens fires or `add` (global or repo-local); the frontmatter matrix, rules, template, evals, sidecar, and sources.
-- `references/analytics-ceremony.md` — `audit`, or `improve` without a reusable audit; use `scripts/agent-session-analytics.pyz` for best-effort per-pack analytics.
-- `references/raw-log-fallback.md` — DuckDB is absent; the user installs it, opts into a sampled, read-only Usage scan, or skips.
+- `references/harness-layout.md` — Portability lens fires or `add` (global or repo-local).
+- `references/analytics-ceremony.md` — `audit`, or `improve` without a reusable audit; use `scripts/agent-session-analytics.pyz` (`ingest`, `db-path`, `sql`, `schema`).
+- `references/raw-log-fallback.md` — DuckDB is absent.
 - `references/anti-patterns.md` — a finding needs the expanded failure mode.
-- `references/offload.md` — when `wedge` runs, or when `improve` implements an approved offload; the shared procedure.
-- `references/fromargs.md` — when an offload writes a fromargs CLI.
+- `references/offload.md` — `wedge` runs, or `improve` implements an approved offload.
+- `references/fromargs.md` — an offload writes a fromargs CLI.
 - `references/wedge-packaging.md` — before an offload wedges a CLI; the builder is `scripts/wedge.pyz`.
 - `assets/records.py`, `assets/wedge.toml` — the CLI and manifest templates that an offload copies.
 - `evals/evals.json` — pressure scenarios; use them when you change the offload procedure.
@@ -271,13 +256,13 @@ Read on demand:
 - `references/description-optimization.md` — Invocation fires.
 - `references/decision-frameworks.md` — Prompt quality flags rigid rules on a judgment task.
 - `references/hooks-catalog.md` — a finding needs 100%-of-the-time enforcement, or Invocation recommends a forced-evaluation hook (§1).
-- `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs. For the analytics ceremony, pass each pack path and the target kind to its pack context. Read a pack only when the host has no sub-agents.
-- `scripts/agent-session-analytics.pyz` — the analytics CLI: `ingest`, `db-path`, `sql`, and `schema`.
-- `references/canonical-schema.md` — the pack input `schema`; read it when you write or check pack SQL.
-- `references/query-conventions.md` — the pack input `conventions`; read it when you write a pack or run its queries.
-- `references/harness-coverage.md` — the pack input `coverage`; read it before cross-harness comparisons and in the raw-log fallback.
-- In the analytics ceremony, pass these three paths to each pack context as `schema`, `conventions`, and `coverage`.
-- `references/calibration.md` — when you tag a finding's severity and confidence; the confidence × severity kernel.
-- `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id; the run flow, case draft, gate verdict, export, optional contract, graders, isolation, and the helper contracts.
+- `references/skill-usage.md`, `references/agent-orchestration.md`, `references/drift-regression.md` — the analytics packs. Pass each pack path and the target kind to its pack context. Read a pack only when the host has no sub-agents.
+- `references/canonical-schema.md` — pack input `schema`; read it when you write or check pack SQL.
+- `references/query-conventions.md` — pack input `conventions`; read it when you write a pack or run its queries.
+- `references/harness-coverage.md` — pack input `coverage`; read it before cross-harness comparisons and in the raw-log fallback.
+- `references/calibration.md` — you tag a finding's severity and confidence.
+- `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id.
+- `references/criteria-drafting.md` — `autoimprove` case drafting.
+- `references/eval-formats.md` — you write or check an eval file.
 - `references/experiment-harness.md` — the user selects the `claude` adapter, or checks a custom command or role files.
 - `references/harness-recipes.md` — the user wants to run experiments through Gemini CLI, Copilot CLI, Cursor CLI, OpenCode, or Pi.

@@ -15,12 +15,17 @@ import pytest
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
+from skillz_experiments._records import read, write
+from skillz_experiments.run._outcomes import feedback_for
+from skillz_experiments.search import HarnessText, Progress
+from skillz_experiments.search import request as reflection_request
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments.harness._roles import Role
 from skillz_experiments._budget import Budget
 from fake_provider import FakeProvider
 
 RUBRIC = "RUBRIC_SENTINEL: rate how readable the rewrite is."
+INVALID_STDOUT = "grader stdout lacks a JSON object with a numeric score from 0 to 1"
 GATE_SCRIPT = {
     "pass": 'import json;print(json.dumps({"score": 1}))',
     "fail": 'import json;print(json.dumps({"score": 1}));raise SystemExit(1)',
@@ -31,15 +36,17 @@ GATE_SCRIPT = {
                 "print(json.dumps({'score': 0 if leaks else 1}))"),
 }
 TOKENS = {"input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 2}
+CRITERIA = [{"id": "readable", "text": "THE rewrite SHALL be readable."}]
 
 
-def contract(script: str = GATE_SCRIPT["pass"], flags: tuple[str, ...] = ("-I",)) -> Contract:
+def contract(script: str = GATE_SCRIPT["pass"], flags: tuple[str, ...] = ("-I",), helper: dict[str, object] | None = None) -> Contract:
     argv = [sys.executable, *flags, "-c", script]
     return parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
                   "kinds": {"echo": {"grader": "exact-json"},
                             "gate": {"grader": "command", "argv": argv},
                             "style": {"grader": "judge", "rubric": RUBRIC},
-                            "rewrite": {"grader": "hybrid", "argv": argv, "rubric": RUBRIC}}}, "skill")
+                            "rewrite": {"grader": "hybrid", "argv": argv, "rubric": RUBRIC}},
+                  **({"helper": helper} if helper else {})}, "skill")
 
 
 class FakeTask(FakeProvider):
@@ -75,28 +82,30 @@ class SandboxedTask(FakeTask):
 
 
 class FakeJudge(FakeProvider):
-    def __init__(self, percent: object = 70, answer: dict[str, object] | None = None) -> None:
+    def __init__(self, level: object = 3, answer: dict[str, object] | None = None) -> None:
         self.budget: Budget = Budget(40, 2400, reserve=0)
-        self.percent: object = percent
+        self.level: object = level
         self.answer: dict[str, object] | None = answer
         self.prompts: list[str] = []
         self.schemas: list[dict[str, object] | None] = []
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
-        assert candidate is None and case is None
+        assert candidate is None and case is None and schema is not None
         self.budget.claim(holdout=holdout)
         self.prompts.append(prompt)
         self.schemas.append(schema)
-        answer = {"score_percent": self.percent} if self.answer is None else self.answer
+        ids = cast(list[str], cast(dict[str, dict[str, object]], schema["properties"])["criteria"]["required"])
+        answer = ({"criteria": {name: {"level": self.level, "reason": "ok"} for name in ids}} if self.answer is None
+                  else self.answer)
         return {"answer": answer, "usage": TOKENS.copy(), "latency_seconds": 0.1}
 
 
 class FakeViewer(FakeJudge):
     """A judge transport with the optional Viewer capability."""
 
-    def __init__(self, percent: object = 70, answer: dict[str, object] | None = None) -> None:
-        super().__init__(percent, answer)
+    def __init__(self, level: object = 3, answer: dict[str, object] | None = None) -> None:
+        super().__init__(level, answer)
         self.attachments: list[dict[str, bytes]] = []
 
     def view(self, prompt: str, attachments: Mapping[str, bytes], *, holdout: bool = False,
@@ -120,11 +129,13 @@ def harness(monkeypatch: pytest.MonkeyPatch, task: FakeTask, judge: FakeJudge) -
     return Harness(Configuration(roles), Budget(40, 2400, reserve=0), lambda: None)
 
 
-def case_and_candidate(tmp_path: Path, kind: str, rules: Contract,
-                       files: dict[str, str] | None = None) -> tuple[Case, Candidate]:
-    item = {"id": "one", "family": "one", "split": "train", "kind": kind, "request": "Rewrite input.txt.",
+def case_and_candidate(tmp_path: Path, kind: str, rules: Contract, files: dict[str, str] | None = None,
+                       criteria: list[dict[str, object]] | None = None) -> tuple[Case, Candidate]:
+    item: dict[str, object] = {"id": "one", "family": "one", "split": "train", "kind": kind, "request": "Rewrite input.txt.",
             "files": {"input.txt": "hello\n"} | (files or {}), "expected": {"echo": "hello", "secret": "EXPECTED_SENTINEL"},
             "provenance": "test", "provider_approved": True}
+    if kind in {"style", "rewrite", "look"}:
+        item["expected"] = {"expected_output": "EXPECTED_SENTINEL", "criteria": CRITERIA if criteria is None else criteria}
     path = tmp_path / "cases.json"
     _ = path.write_text(json.dumps({"schema_version": 1, "cases": [item]}))
     return load_cases(path, rules.grader_types())[0], Candidate({"SKILL.md": "seed"}, ("SKILL.md",), contract=rules)
@@ -223,32 +234,164 @@ def test_hybrid_gate_failure_skips_the_judge(tmp_path: Path, monkeypatch: pytest
 def test_hybrid_gate_pass_uses_the_judge_score(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract(GATE_SCRIPT["pass"])
     case, candidate = case_and_candidate(tmp_path, "rewrite", rules)
-    judge = FakeJudge(70)
+    judge = FakeJudge(3)
     result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case, checks=CheckMemo())
     assert len(judge.prompts) == 1
-    assert result["score"] == 0.7 and result["scores"] == {"command": 1.0, "judge": 0.7}
+    assert result["score"] == 2 / 3 and result["scores"] == {"command": 1.0, "judge": 2 / 3}
     assert result["usage"] == {"input_tokens": 20, "cached_input_tokens": 0, "output_tokens": 4}
     assert result["task_usage"] == TOKENS and result["judge_usage"] == TOKENS
 
 
 def test_judge_grader_uses_a_separate_invocation_and_hides_the_rubric(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract()
-    task, judge = FakeTask(), FakeJudge(85)
+    task, judge = FakeTask(), FakeJudge(4)
     case, candidate = case_and_candidate(tmp_path, "style", rules)
     result = harness(monkeypatch, task, judge).evaluate(candidate, case, checks=CheckMemo())
     assert "RUBRIC_SENTINEL" not in task.prompts[0] and "EXPECTED_SENTINEL" not in task.prompts[0]
     assert "RUBRIC_SENTINEL" in judge.prompts[0] and "rewritten" in judge.prompts[0]
-    assert judge.schemas[0] is not None and "score_percent" in cast(dict[str, object], judge.schemas[0]["properties"])
-    assert result["score"] == 0.85 and result["scores"] == {"judge": 0.85}
+    assert judge.schemas[0] is not None and "criteria" in cast(dict[str, object], judge.schemas[0]["properties"])
+    assert result["score"] == 1.0 and result["scores"] == {"judge": 1.0}
 
 
-@pytest.mark.parametrize("percent", [101, -1, 7.5, True, "70"])
-def test_judge_grader_rejects_an_out_of_range_score(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, percent: object) -> None:
+@pytest.mark.ac("judge-criteria-verdicts:AC-19")
+@pytest.mark.parametrize(("kind", "scores"), [("style", {"judge": 1.0}), ("rewrite", {"command": 1.0, "judge": 1.0}),
+                                              ("journey", {"command": 1.0, "judge": 1.0})])
+def test_judged_outcome_stores_the_verdicts_under_criteria_outside_scores(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, scores: dict[str, float]) -> None:
+    judge = FakeJudge(4)
+    if kind == "journey":
+        case, candidate = journey_case(tmp_path, journey_contract(JOURNEY_GATE))
+        task: FakeTask | SandboxedTask = JourneyTask()
+    else:
+        case, candidate = case_and_candidate(tmp_path, kind, contract(GATE_SCRIPT["pass"]) if kind == "rewrite" else contract())
+        task = SandboxedTask() if kind == "rewrite" else FakeTask()
+    result = harness(monkeypatch, task, judge).evaluate(candidate, case, checks=CheckMemo())
+    sent = judge.schemas[0]
+    assert sent is not None
+    ids = cast(list[str], cast(dict[str, dict[str, object]], sent["properties"])["criteria"]["required"])
+    assert ids and result["criteria"] == {name: {"level": 4, "reason": "ok", "met": True} for name in ids}
+    assert result["scores"] == scores
+
+
+@pytest.mark.ac("gh-501:AC-1")
+def test_the_feedback_of_a_judged_outcome_lists_each_criterion_below_level_4_with_its_judge_reason(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    criteria: list[dict[str, object]] = [{"id": "c1", "text": "THE rewrite SHALL keep every heading.", "must": True},
+                                         {"id": "c2", "text": "THE rewrite SHALL be readable."}]
+    case, candidate = case_and_candidate(tmp_path, "style", contract(), criteria=criteria)
+    judge = FakeJudge(answer={"criteria": {"c1": {"level": 3, "reason": "drops the second heading"},
+                                           "c2": {"level": 4, "reason": "reads well"}}})
+    result = harness(monkeypatch, FakeTask(), judge).evaluate(candidate, case, checks=CheckMemo())
+    score, feedback = feedback_for(result, case, HarnessText(), candidate)
+    assert score == result["score"] == pytest.approx(5 / 6)
+    assert feedback["unmet"] == [{"id": "c1", "must": True, "level": 3, "text": "THE rewrite SHALL keep every heading.",
+                                  "reason": "drops the second heading"}]
+    assert "c2" not in json.dumps(feedback["unmet"]) and "gate_feedback" not in feedback
+
+
+NOISY_GATE = 'import sys;sys.stderr.write("x" * 1500 + " api_key=sk-live-GATESECRET\\n");raise SystemExit(1)'
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize("kind", ["rewrite", "gate"], ids=["hybrid", "command"])
+def test_a_failed_command_gate_records_its_redacted_stderr_tail_and_both_feedback_paths_carry_it(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    case, candidate = case_and_candidate(tmp_path, kind, contract(NOISY_GATE))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    diagnostic = cast(str, result["gate_diagnostic"])
+    assert result["score"] == 0.0 and diagnostic.endswith("x [redacted]") and len(diagnostic) == 1000
+    # The reuse path reads the outcome back from `run.json`.
+    write(tmp_path / "run.json", {"outcome": result})
+    recorded = cast(dict[str, object], read(tmp_path / "run.json")["outcome"])
+    for outcome in (result, recorded):
+        gate = cast(str, feedback_for(outcome, case, HarnessText(), candidate)[1]["gate_feedback"])
+        assert gate == diagnostic and "GATESECRET" not in gate and len(gate) <= 1000
+
+
+SPLIT_SECRETS = {
+    "quoted": 'password="alpha ZZCANARYQ beta" user',
+    "multiline": 'password="line one\nZZCANARYM line three" user',
+    "bearer": "Authorization: Bearer ZZCANARYB user"}
+START = Progress(spent=0, planned=100, proposal=1)
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize("kind", ["rewrite", "gate"], ids=["hybrid", "command"])
+@pytest.mark.parametrize("name", sorted(SPLIT_SECRETS))
+def test_a_secret_that_crosses_the_old_stderr_window_never_reaches_the_diagnostic_the_feedback_or_the_prompt(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str, name: str) -> None:
+    secret = SPLIT_SECRETS[name]
+    cut = secret.index("ZZCANARY") - 4
+    # The old 4,000-character window began inside the secret. Redaction then shrank the rest below 1,000.
+    rest = (" " + ("token=" + "a" * 90 + " ") * 50)[:4000 - (len(secret) - cut)]
+    script = f"import sys;sys.stderr.write({('pad ' + secret + rest)!r});raise SystemExit(1)"
+    case, candidate = case_and_candidate(tmp_path, kind, contract(script))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    diagnostic = cast(str, result["gate_diagnostic"])
+    assert "ZZCANARY" not in diagnostic and len(diagnostic) <= 1000 and diagnostic.startswith("pad ")
+    write(tmp_path / "run.json", {"outcome": result})
+    recorded = cast(dict[str, object], read(tmp_path / "run.json")["outcome"])
+    for outcome in (result, recorded):
+        feedback = feedback_for(outcome, case, HarnessText(), candidate)[1]
+        gate = cast(str, feedback["gate_feedback"])
+        assert "ZZCANARY" not in gate and len(gate) <= 1000
+        prompt, _ = reflection_request("prose", {"SKILL.md": "x"}, {"SKILL.md": [feedback]}, ["SKILL.md"], progress=START)
+        assert "ZZCANARY" not in prompt and gate in prompt
+
+
+@pytest.mark.ac("gh-501:AC-4")
+@pytest.mark.parametrize(("script", "score", "diagnostic"), [
+    ("print('not json')", 0.0, INVALID_STDOUT),
+    ("print('{\"other\": 1}')", 0.0, INVALID_STDOUT),
+    ("print('{\"score\": true}')", 0.0, INVALID_STDOUT),
+    ("print('{\"score\": 2}')", 0.0, INVALID_STDOUT),
+    ("print('{\"score\": -0.5}')", 0.0, INVALID_STDOUT),
+    ("print('{\"score\": \"1\"}')", 0.0, INVALID_STDOUT),
+    ("print('{\"score\": 0}')", 0.0, "the grader argv exits with code 0"),
+    ("print('{\"score\": 0.25}')", 0.25, "the grader argv exits with code 0"),
+    ("print('{\"score\": 1}')", 1.0, None)],
+    ids=["malformed", "missing", "boolean", "above-range", "below-range", "text", "valid-zero", "valid-fraction", "valid-one"])
+def test_a_command_gate_that_exits_zero_with_an_invalid_score_says_so_and_a_valid_score_does_not(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, score: float, diagnostic: str | None) -> None:
+    case, candidate = case_and_candidate(tmp_path, "gate", contract(script))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    assert result["score"] == score and result.get("gate_diagnostic") == diagnostic
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_a_nonzero_exit_keeps_the_exit_code_diagnostic_even_when_stdout_is_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    case, candidate = case_and_candidate(tmp_path, "gate", contract("print('not json');raise SystemExit(3)"))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    assert result["score"] == 0.0 and result["gate_diagnostic"] == "the grader argv exits with code 3"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_invalid_stdout_with_stderr_keeps_the_redacted_stderr_as_the_diagnostic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    case, candidate = case_and_candidate(tmp_path, "gate", contract("import sys;sys.stderr.write('boom api_key=sk-live-ABCDEF');print('not json')"))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    assert result["gate_diagnostic"] == "boom [redacted]"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_a_failed_capture_gives_its_redacted_failure_text_as_gate_feedback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    case, candidate = case_and_candidate(tmp_path, "look", capture_contract("raise SystemExit(3)"))
+    result = harness(monkeypatch, SandboxedTask(), FakeViewer()).evaluate(candidate, case, checks=CheckMemo())
+    assert result["status"] == "capture-failed" and result["gate_diagnostic"] == "the capture argv exits with code 3"
+    assert feedback_for(result, case, HarnessText(), candidate)[1]["gate_feedback"] == result["capture_failure"]
+
+
+def test_a_passing_command_gate_records_no_diagnostic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    case, candidate = case_and_candidate(tmp_path, "gate", contract(GATE_SCRIPT["pass"]))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    assert result["score"] == 1.0 and "gate_diagnostic" not in result
+
+
+@pytest.mark.parametrize("level", [0, 5, 2.5, True, "3"])
+def test_judge_grader_rejects_an_out_of_range_level(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, level: object) -> None:
     rules = contract()
     case, candidate = case_and_candidate(tmp_path, "style", rules)
-    with pytest.raises(ValueError, match="judge"):
-        _ = harness(monkeypatch, FakeTask(), FakeJudge(percent)).evaluate(candidate, case, checks=CheckMemo())
-
+    with pytest.raises(ValueError, match="^invalid judge response$"):
+        _ = harness(monkeypatch, FakeTask(), FakeJudge(level)).evaluate(candidate, case, checks=CheckMemo())
 
 class ScriptTask(FakeTask):
     """A task transport that reports a chosen script command."""
@@ -267,17 +410,17 @@ class ScriptTask(FakeTask):
 
 
 @pytest.mark.parametrize(("command", "executed"), [
-    ("python3 -I .agents/skills/echo-skill/scripts/x.py", True),
-    ("python3 .agents/skills/echo-skill/scripts/x.py", False),
-    ("python3 -I .agents/skills/echo-skill/scripts/x.py input.txt", False)])
+    ("python3 -I .agents/skills/echo-skill/scripts/x.py input.txt", True),
+    ("python3 -I .agents/skills/echo-skill/scripts/x.py", False)])
 def test_wedge_script_prompt_requires_isolated_python(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                                                        command: str, executed: bool) -> None:
-    rules = contract()
+    rules = contract(helper={"path": "scripts/x.py", "input": "input.txt",
+                             "fixtures": [{"input": "hi", "returncode": 0, "output": {"ok": True}}]})
     task = ScriptTask(command)
     case, seed = case_and_candidate(tmp_path, "echo", rules)
-    candidate = Candidate(seed.files | {"scripts/x.py": "print(1)\n"}, seed.editable, rules, script="scripts/x.py")
+    candidate = Candidate(seed.files | {"scripts/x.py": "print(1)\n"}, seed.editable, rules)
     result = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
-    assert "python3 -I .agents/skills/echo-skill/scripts/x.py" in task.prompts[0]
+    assert "python3 -I .agents/skills/echo-skill/scripts/x.py input.txt" in task.prompts[0]
     assert result["loaded"] is True and result["helper_executed"] is executed
 
 
@@ -287,18 +430,13 @@ CAPTURE_SCRIPT = ("import pathlib\n"
                   "pathlib.Path('capture/page.png').write_bytes(b'\\x89PNG\\r\\n\\x1a\\n' + text)\n"
                   "pathlib.Path('capture/notes').mkdir()\n"
                   "pathlib.Path('capture/notes/page.txt').write_bytes(text)\n")
-PILLARS = ["ui", "ux", "information_flow"]
-
-
 def capture_contract(script: str = CAPTURE_SCRIPT, *, grader: str = "judge", gate: str = GATE_SCRIPT["pass"],
-                     pillars: list[str] | None = None, capture: bool = True) -> Contract:
+                     capture: bool = True) -> Contract:
     entry: dict[str, object] = {"grader": grader, "rubric": RUBRIC}
     if capture:
         entry["capture"] = [sys.executable, "-I", "-c", script]
     if grader == "hybrid":
         entry["argv"] = [sys.executable, "-I", "-c", gate]
-    if pillars is not None:
-        entry["pillars"] = pillars
     return parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
                   "kinds": {"look": entry}}, "skill")
 
@@ -306,12 +444,12 @@ def capture_contract(script: str = CAPTURE_SCRIPT, *, grader: str = "judge", gat
 def test_the_capture_sees_the_task_output_and_its_files_reach_the_judge(tmp_path: Path,
                                                                         monkeypatch: pytest.MonkeyPatch) -> None:
     rules = capture_contract()
-    task, judge = SandboxedTask(), FakeViewer(70)
+    task, judge = SandboxedTask(), FakeViewer(3)
     case, candidate = case_and_candidate(tmp_path, "look", rules)
     result = harness(monkeypatch, task, judge).evaluate(candidate, case, checks=CheckMemo())
     assert judge.attachments == [{"page.png": PNG + b"rewritten\n", "notes/page.txt": b"rewritten\n"}]
     assert result["capture_files"] == ["notes/page.txt", "page.png"]
-    assert result["score"] == 0.7 and result["scores"] == {"judge": 0.7}
+    assert result["score"] == 2 / 3 and result["scores"] == {"judge": 2 / 3}
     assert "Read tool" in judge.prompts[0] and '"capture_files": ["notes/page.txt", "page.png"]' in judge.prompts[0]
     workspace = task.workspaces[0]
     assert workspace["output/result.txt"] == "rewritten\n" and "EXPECTED_SENTINEL" not in "".join(workspace.values())
@@ -398,15 +536,6 @@ def test_a_capture_exactly_at_a_limit_is_accepted(tmp_path: Path, monkeypatch: p
     assert "capture_failure" not in result and len(judge.attachments) == 1
 
 
-def test_eight_pillars_and_scores_zero_and_one_hundred_are_accepted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    names = [f"p{n}" for n in range(8)]
-    rules = capture_contract(capture=False, pillars=names)
-    judge = FakeJudge(answer={name: 0 if n % 2 else 100 for n, name in enumerate(names)})
-    case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, FakeTask(), judge).evaluate(candidate, case, checks=CheckMemo())
-    assert result["score"] == pytest.approx(0.5)
-    assert cast(dict[str, float], cast(dict[str, object], result["scores"])["pillars"])["p0"] == 1.0
-
 
 @pytest.mark.parametrize(("task", "judge", "message"), [
     (SandboxedTask, FakeJudge, "view files"), (FakeTask, FakeViewer, "sandbox")])
@@ -421,69 +550,25 @@ def test_a_capture_kind_needs_both_capabilities_before_any_call(tmp_path: Path, 
     assert runner.prompts == [] and viewer.prompts == []
 
 
-def test_pillar_scores_are_required_and_the_kind_score_is_their_mean(tmp_path: Path,
-                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
-    rules = capture_contract(capture=False, pillars=PILLARS)
-    judge = FakeJudge(answer={"ui": 80, "ux": 70, "information_flow": 90})
-    case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, FakeTask(), judge).evaluate(candidate, case, checks=CheckMemo())
-    assert result["score"] == pytest.approx(0.8)
-    assert result["scores"] == {"judge": result["score"], "pillars": {"ui": 0.8, "ux": 0.7, "information_flow": 0.9}}
-    schema = cast(dict[str, object], judge.schemas[0])
-    assert schema["required"] == PILLARS and list(cast(dict[str, object], schema["properties"])) == PILLARS
-    assert schema["additionalProperties"] is False
-    assert "for each pillar: ui, ux, information_flow" in judge.prompts[0] and "score_percent" not in judge.prompts[0]
-
-
-@pytest.mark.parametrize("answer", [
-    {"ui": 80, "ux": 70},
-    {"ui": 80, "ux": 70, "information_flow": 90, "score_percent": 80},
-    {"score_percent": 80},
-    {"ui": 80, "ux": 70, "information_flow": 101},
-    {"ui": 80, "ux": True, "information_flow": 90},
-])
-def test_a_judge_answer_without_exactly_the_pillars_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                                         answer: dict[str, object]) -> None:
-    rules = capture_contract(capture=False, pillars=PILLARS)
-    case, candidate = case_and_candidate(tmp_path, "look", rules)
-    with pytest.raises(ValueError, match="judge"):
-        _ = harness(monkeypatch, FakeTask(), FakeJudge(answer=answer)).evaluate(candidate, case, checks=CheckMemo())
-
-
-def test_pillars_and_capture_work_together(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    rules = capture_contract(pillars=PILLARS)
-    judge = FakeViewer(answer={"ui": 60, "ux": 60, "information_flow": 90})
-    case, candidate = case_and_candidate(tmp_path, "look", rules)
-    result = harness(monkeypatch, SandboxedTask(), judge).evaluate(candidate, case, checks=CheckMemo())
-    assert len(judge.attachments) == 1 and result["score"] == pytest.approx(0.7)
-    assert cast(dict[str, object], result["scores"])["pillars"] == {"ui": 0.6, "ux": 0.6, "information_flow": 0.9}
-
 
 @pytest.mark.parametrize(("entry", "message"), [
     ({"grader": "command", "argv": ["x"], "capture": ["y"]}, "does not take capture"),
-    ({"grader": "exact-json", "pillars": ["ui"]}, "does not take pillars"),
     ({"grader": "judge", "rubric": "r", "capture": []}, "nonempty argv"),
     ({"grader": "judge", "rubric": "r", "capture": "python3 capture.py"}, "nonempty argv"),
-    ({"grader": "judge", "rubric": "r", "pillars": []}, "1 to 8"),
-    ({"grader": "judge", "rubric": "r", "pillars": [f"p{n}" for n in range(9)]}, "1 to 8"),
-    ({"grader": "judge", "rubric": "r", "pillars": ["ui", "ui"]}, "unique"),
-    ({"grader": "judge", "rubric": "r", "pillars": ["UI"]}, "unique lowercase"),
-    ({"grader": "judge", "rubric": "r", "pillars": ["score percent"]}, "unique lowercase"),
 ])
-def test_the_contract_rejects_a_bad_capture_or_pillar_field(entry: dict[str, object], message: str) -> None:
+def test_the_contract_rejects_a_bad_capture_field(entry: dict[str, object], message: str) -> None:
     with pytest.raises(ValueError, match=message):
         _ = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "run",
                    "kinds": {"look": entry}}, "skill")
 
 
-def test_capture_and_pillars_round_trip_and_leave_other_contracts_unchanged() -> None:
-    rules = capture_contract(grader="hybrid", pillars=PILLARS)
+def test_capture_round_trips_and_leaves_other_contracts_unchanged() -> None:
+    rules = capture_contract(grader="hybrid")
     assert parse(rules.data(), "skill") == rules
     plain = contract().data()
     assert all(set(cast(dict[str, object], entry)) <= {"grader", "argv", "rubric"}
                for entry in cast(dict[str, object], plain["kinds"]).values())
     assert capture_contract(capture=False).identity != capture_contract().identity
-    assert capture_contract(capture=False).identity != capture_contract(capture=False, pillars=PILLARS).identity
 
 
 def test_a_fixture_under_capture_is_rejected(tmp_path: Path) -> None:
@@ -519,7 +604,8 @@ def journey_contract(script: str) -> Contract:
 
 def journey_case(tmp_path: Path, rules: Contract) -> tuple[Case, Candidate]:
     item = {"id": "one", "family": "one", "split": "train", "kind": "journey", "request": "Plan the work.",
-            "brief": JOURNEY_BRIEF, "files": {"input.txt": "hello\n"}, "expected": {"secret": "EXPECTED_SENTINEL"},
+            "brief": JOURNEY_BRIEF, "files": {"input.txt": "hello\n"},
+            "expected": {"must": ["EXPECTED_SENTINEL"], "criteria": CRITERIA},
             "provenance": "test", "provider_approved": True}
     path = tmp_path / "cases.json"
     _ = path.write_text(json.dumps({"schema_version": 1, "cases": [item]}))
@@ -530,15 +616,16 @@ def test_journey_grader_gate_pass_calls_the_judge_with_the_brief_and_the_transcr
                                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
     rules = journey_contract(JOURNEY_GATE)
     case, candidate = journey_case(tmp_path, rules)
-    task, judge = JourneyTask(), FakeJudge(70)
+    task, judge = JourneyTask(), FakeJudge(3)
     result = harness(monkeypatch, task, judge).evaluate(candidate, case, checks=CheckMemo())
-    assert result["score"] == 0.7 and result["scores"] == {"command": 1.0, "judge": 0.7}
+    assert result["score"] == 2 / 3 and result["scores"] == {"command": 1.0, "judge": 2 / 3}
     assert len(judge.prompts) == 1
     prompt = judge.prompts[0]
     data = cast(dict[str, object], json.loads(prompt.split("UNTRUSTED DATA (JSON):\n", 1)[1]))
     assert data["brief"] == JOURNEY_BRIEF and data["request"] == "Plan the work."
     assert data["transcript"] == [{"role": "user", "text": "hi"}, {"role": "assistant", "text": "TRANSCRIPT_SENTINEL"}]
-    assert data["output_files"] == {"result.txt": "rewritten\n"} and data["reference"] == {"secret": "EXPECTED_SENTINEL"}
+    assert data["output_files"] == {"result.txt": "rewritten\n"}
+    assert data["reference"] == {"must": ["EXPECTED_SENTINEL"], "criteria": CRITERIA}
     assert RUBRIC in prompt
     assert "raw_events" not in result and result["transcript"] == data["transcript"]
 
@@ -546,7 +633,7 @@ def test_journey_grader_gate_pass_calls_the_judge_with_the_brief_and_the_transcr
 def test_journey_grader_gate_fail_skips_the_judge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = journey_contract('import json;print(json.dumps({"score": 0}))')
     case, candidate = journey_case(tmp_path, rules)
-    judge = FakeJudge(70)
+    judge = FakeJudge()
     result = harness(monkeypatch, JourneyTask(), judge).evaluate(candidate, case, checks=CheckMemo())
     assert judge.prompts == []
     assert result["score"] == 0 and result["status"] == "gate-failed" and result["scores"] == {"command": 0.0, "judge": None}
@@ -557,7 +644,7 @@ def test_journey_grader_gate_workspace_holds_fixtures_output_and_the_event_trace
     rules = journey_contract(JOURNEY_GATE)
     case, candidate = journey_case(tmp_path, rules)
     task = JourneyTask()
-    _ = harness(monkeypatch, task, FakeJudge(70)).evaluate(candidate, case, checks=CheckMemo())
+    _ = harness(monkeypatch, task, FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     workspace = task.workspaces[0]
     assert workspace["input.txt"] == "hello\n" and workspace["output/result.txt"] == "rewritten\n"
     events = [json.loads(line) for line in workspace["trace/events.jsonl"].splitlines()]
@@ -572,5 +659,14 @@ def test_journey_case_on_a_transport_without_conversant_raises_journey_unsupport
     rules = journey_contract(JOURNEY_GATE)
     case, candidate = journey_case(tmp_path, rules)
     with pytest.raises(CodedError) as caught:
-        _ = harness(monkeypatch, SandboxedTask(), FakeJudge(70)).evaluate(candidate, case, checks=CheckMemo())
+        _ = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     assert caught.value.code == "journey-unsupported"
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_an_escaped_quote_credential_in_gate_stderr_is_redacted_from_the_diagnostic(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    secret = r'password=\"one\\\" two zzcanary\" kept'
+    case, candidate = case_and_candidate(tmp_path, "gate", contract(f"import sys;sys.stderr.write({secret!r});raise SystemExit(1)"))
+    result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
+    assert "zzcanary" not in json.dumps(result) and "two" not in cast(str, result["gate_diagnostic"])

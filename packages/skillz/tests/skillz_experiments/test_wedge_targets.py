@@ -32,10 +32,9 @@ from skillz_experiments.harness import Configuration
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
-from skillz_experiments._wedge_targets import WEDGE_EDIT_LIMIT, plan_targets
+from skillz_experiments.run._wedge_targets import WEDGE_EDIT_LIMIT, plan_targets
 from skillz_experiments.run import Stop, export, run
-from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -133,13 +132,10 @@ class Recorder:
 
 
 @final
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     def __init__(self, recorder: Recorder, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        super().__init__()
         self.recorder, self.budget, self.checkpoint = recorder, budget, checkpoint
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -173,12 +169,13 @@ def open_session(out: Path, recorder: Recorder) -> _session.Session:
 
 
 def evaluate(out: Path, recorder: Recorder, change: Callable[[dict[str, str]], None]) -> tuple[float, dict[str, object]]:
-    """Evaluate one search case on a candidate whose components `change` edits."""
+    """Evaluate one train case on a candidate whose components `change` edits. A train case runs once."""
     session = open_session(out, recorder)
     try:
         components = {name: session.seed.files[name] for name in session.seed.editable}
         change(components)
-        return session._evaluate_example(components, next(iter(session._search_cases)))
+        train = next(name for name, case in session._search_cases.items() if case.split == "train")
+        return session._evaluate_example(components, train)
     finally:
         session.provider.close()
 
@@ -483,6 +480,31 @@ def test_a_changed_lock_or_config_stops_a_resume_with_site_layer_drift(
     with pytest.raises(Stop) as stopped:
         _ = open_session(out, Recorder())
     assert stopped.value.code == "site-layer-drift"
+
+
+@pytest.mark.ac("gh-415:AC-1")
+def test_a_site_layer_drift_on_resume_leaves_no_provider_open(
+        world: World, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    _ = world.contract("scripts/beta.pyz")
+    out = prepared(world, tmp_path, write_draft, approvals)
+    config = world.skill / "wedge.toml"
+    _ = config.write_text(config.read_text() + "\n# drift\n")
+    recorder, opened, closed = Recorder(), list[_Provider](), list[_Provider]()
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> _Provider:
+        opened.append(recorder.factory(model, budget, checkpoint))
+        return opened[-1]
+
+    def close(provider: _Provider) -> None:
+        closed.append(provider)
+
+    monkeypatch.setattr(_Provider, "close", close)
+    with pytest.raises(Stop) as stopped:
+        _ = _session.Session(out, MODEL, "claude", factory, None, statistics=DEFAULT_STATISTICS)
+    assert stopped.value.code == "site-layer-drift"
+    # A stopped constructor leaves no provider open: a Claude login would leak its temporary config directory.
+    assert opened == closed
 
 
 @pytest.mark.parametrize("tamper", ["change", "delete"])

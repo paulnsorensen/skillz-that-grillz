@@ -152,7 +152,7 @@ def test_stale_schema_version_rebuilds_inside_the_cache_window(sandbox: Sandbox)
     result = sandbox.run("ingest")
     assert result.returncode == 0, result.stderr
     assert _json(result.stdout)["status"] == "ingested"
-    assert sandbox.query("SELECT version FROM schema_info") == [{"version": 2}]
+    assert sandbox.query("SELECT version FROM schema_info") == [{"version": 3}]
 
 
 @needs_duckdb
@@ -203,7 +203,7 @@ def test_sql_auto_ingests_an_absent_old_or_wrong_version_default_database(
         )
     result = sandbox.run("sql", "SELECT version FROM schema_info")
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == [{"version": 2}]
+    assert json.loads(result.stdout) == [{"version": 3}]
     assert sandbox.database.stat().st_mtime > before
     if appended:
         counted = sandbox.query("SELECT count(*) AS n FROM skill_invocations")
@@ -245,14 +245,24 @@ def test_unwritable_cache_directory_exits_4_without_a_traceback(
     assert "Traceback" not in result.stderr
 
 
-@needs_duckdb
 def test_duckdb_timeout_becomes_a_database_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    # A real duckdb can exit inside the timeout window on a loaded host, so the
+    # outcome would race the process. A stub that outlives the timeout by far
+    # makes `subprocess.run` hit its timeout every time. `exec` lets the kill
+    # reach the sleeping process, which holds the output pipes.
+    stub = tmp_path / "bin" / "duckdb"
+    stub.parent.mkdir()
+    _ = stub.write_text("#!/bin/sh\nexec sleep 60\n")
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("PATH", f"{stub.parent}{os.pathsep}{os.environ['PATH']}")
     monkeypatch.setattr(_db, "DB_PATH", str(tmp_path / "timeout.duckdb"))
-    monkeypatch.setattr(_db, "DUCKDB_TIMEOUT_SECONDS", 0.0001)
+    monkeypatch.setattr(_db, "DUCKDB_TIMEOUT_SECONDS", 0.2)
+    started = time.monotonic()
     with pytest.raises(_db.DatabaseError, match="timed out"):
         _ = _db.query_rows("SELECT 1")
+    assert time.monotonic() - started < 30
 
 
 @needs_duckdb
@@ -570,7 +580,7 @@ def test_sessions_db_override_with_an_old_mtime_is_queried_without_a_refresh(
     os.utime(override, (0, 0))
     result = sandbox.run("sql", "SELECT version FROM schema_info", extra_env=env)
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == [{"version": 2}]
+    assert json.loads(result.stdout) == [{"version": 3}]
     assert override.stat().st_mtime == 0
     assert not sandbox.database.exists()
 

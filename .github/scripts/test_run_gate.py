@@ -1,6 +1,7 @@
 """Behavior tests for the parallel quality gate."""
 from __future__ import annotations
 
+import importlib.util
 import io
 import os
 import signal
@@ -11,6 +12,7 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import run_gate  # noqa: E402
@@ -23,6 +25,10 @@ with open(os.environ['EVENT_LOG'], 'a') as log:
     log.write(pathlib.Path(sys.argv[0]).name + ' ' + ' '.join(args) + '\\n')
     if 'SKILLZ_LIVE' in os.environ:
         log.write('live-flag-leaked\\n')
+    if 'GATE_SHARD' in os.environ:
+        log.write('pythonpath ' + os.environ.get('PYTHONPATH', '') + '\\n')
+    if 'COVERAGE_FILE' in os.environ:
+        log.write('coverage-file ' + os.environ['COVERAGE_FILE'] + '\\n')
 if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
     pid_file = pathlib.Path(os.environ['CHILD_PID'])
     pid_tmp = pid_file.with_name(pid_file.name + '.tmp')
@@ -33,6 +39,19 @@ if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
 if args and args[0] == 'run':
     time.sleep(.03)
 """
+FAKE_EATMYDATA = """#!/usr/bin/env python3
+import os, sys
+with open(os.environ['EVENT_LOG'], 'a') as log:
+    log.write('eatmydata ' + ' '.join(sys.argv[1:]) + '\\n')
+os.execvp(sys.argv[1], sys.argv[1:])
+"""
+HOLD_SLOT = """import sys, time
+sys.path.insert(0, sys.argv[1])
+import run_gate
+with run_gate.host_slot(1):
+    print('held', flush=True)
+    time.sleep(30)
+"""
 
 
 class GateRunnerTest(unittest.TestCase):
@@ -41,10 +60,147 @@ class GateRunnerTest(unittest.TestCase):
             tool = root / name
             _ = tool.write_text(FAKE_TOOL)
             tool.chmod(0o755)
-        # CI's gate job sets GATE_SKIP; drop it so each test sets its own lane selection.
-        inherited = {name: value for name, value in os.environ.items() if name != "GATE_SKIP"}
+        # CI jobs set GATE_SKIP, GATE_SHARD, or GATE_COVERAGE_DIR; drop them so each test sets its own lane selection.
+        # An inherited GATE_COVERAGE_DIR would let a fake gate remove the live coverage data of the outer gate.
+        dropped = {"GATE_SKIP", "GATE_SHARD", "GATE_COVERAGE_DIR"}
+        inherited = {name: value for name, value in os.environ.items() if name not in dropped}
+        # A private lock directory keeps the fake gates out of the real host slots that the outer gate holds.
         return {**inherited, "PATH": str(root) + os.pathsep + os.environ["PATH"],
-                "EVENT_LOG": str(root / "events"), "GATE_JOBS": "2", "TEST_WORKERS": "3"}
+                "EVENT_LOG": str(root / "events"), "GATE_JOBS": "2", "TEST_WORKERS": "3",
+                "GATE_EATMYDATA": "0", "XDG_RUNTIME_DIR": str(root / "run")}
+
+    def _fake_eatmydata(self, root: Path) -> None:
+        tool = root / "eatmydata"
+        _ = tool.write_text(FAKE_EATMYDATA)
+        tool.chmod(0o755)
+
+    def test_only_the_pytest_lanes_run_under_eatmydata(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._fake_eatmydata(root)
+            env = {name: value for name, value in self._fake_env(root).items() if name != "GATE_EATMYDATA"}
+            result = subprocess.run([sys.executable, str(RUNNER), "fix"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            # Each pytest lane runs as `eatmydata env COVERAGE_FILE=<lane data> uv run ...`.
+            wrapped = [event.removeprefix("eatmydata env ").split(" ", 1)[1] for event in events
+                       if event.startswith("eatmydata ")]
+            self.assertTrue(all(event.startswith("eatmydata env COVERAGE_FILE=") for event in events
+                                if event.startswith("eatmydata ")))
+            pytest_events = [event for event in events if " pytest " in event and not event.startswith("eatmydata ")]
+            self.assertEqual(len(pytest_events), 5)
+            self.assertEqual(sorted(wrapped), sorted(pytest_events))
+            self.assertEqual(events[2], "uv sync --locked --all-packages --all-groups --all-extras")
+            self.assertIn("→ skillz-e2e-pytest (eatmydata)", result.stdout)
+            self.assertIn("→ fromargs-typecheck\n", result.stdout)
+
+    def test_gate_eatmydata_zero_keeps_fsync(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self._fake_eatmydata(root)
+            result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=self._fake_env(root),
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            self.assertEqual(sum(" pytest " in event for event in events), 2)
+            self.assertFalse(any(event.startswith("eatmydata") for event in events))
+            self.assertNotIn("(eatmydata)", result.stdout)
+
+    def test_a_missing_eatmydata_gives_no_wrapper(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.dict(os.environ, {"PATH": directory}):
+                _ = os.environ.pop("GATE_EATMYDATA", None)
+                self.assertEqual(run_gate.fsync_wrapper(), [])
+
+    def test_host_slots_admit_at_most_the_slot_count(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": directory}):
+            first, second = run_gate.try_slot(2), run_gate.try_slot(2)
+            self.assertIsNotNone(first)
+            self.assertIsNotNone(second)
+            self.assertIsNone(run_gate.try_slot(2))
+            self.assertIsNone(run_gate.try_slot(1))
+            assert first is not None and second is not None
+            first.close()
+            third = run_gate.try_slot(2)
+            self.assertIsNotNone(third)
+            self.assertIsNone(run_gate.try_slot(2))
+            for handle in (second, third):
+                assert handle is not None
+                handle.close()
+            self.assertEqual(sorted(path.name for path in (Path(directory) / "skillz-gate").iterdir()),
+                             ["slot-0.lock", "slot-1.lock"])
+
+    def test_a_killed_gate_frees_its_host_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            env = {**os.environ, "XDG_RUNTIME_DIR": directory}
+            holder = subprocess.Popen(
+                [sys.executable, "-c", HOLD_SLOT, str(RUNNER.parent)],
+                env=env, stdout=subprocess.PIPE, text=True,
+            )
+            try:
+                assert holder.stdout is not None
+                self.assertEqual(holder.stdout.readline(), "held\n")
+                with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": directory}):
+                    self.assertIsNone(run_gate.try_slot(1))
+                    holder.kill()
+                    _ = holder.wait(timeout=5)
+                    handle = run_gate.try_slot(1)
+                    self.assertIsNotNone(handle)
+                    assert handle is not None
+                    handle.close()
+            finally:
+                if holder.poll() is None:
+                    holder.kill()
+                    _ = holder.wait()
+                if holder.stdout is not None:
+                    holder.stdout.close()
+
+    def test_a_second_gate_waits_for_a_host_slot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_HOST_SLOTS": "1"}
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": env["XDG_RUNTIME_DIR"]}):
+                held = run_gate.try_slot(1)
+            assert held is not None
+            log = root / "stdout"
+            with log.open("w") as stdout:
+                gate = subprocess.Popen([sys.executable, str(RUNNER), "skillz"], env=env,
+                                        stdout=stdout, stderr=subprocess.STDOUT)
+            try:
+                deadline = time.monotonic() + 5
+                while "waiting for a host gate slot" not in log.read_text() and time.monotonic() < deadline:
+                    time.sleep(.02)
+                self.assertIn("… waiting for a host gate slot (1 busy; GATE_HOST_SLOTS sets the count)", log.read_text())
+                time.sleep(.3)
+                self.assertIsNone(gate.poll())
+                events = (root / "events").read_text().splitlines()
+                self.assertTrue(events[0].startswith("uv sync "), events)
+                self.assertFalse(any(" pytest " in event for event in events))
+                held.close()
+                self.assertEqual(gate.wait(timeout=10), 0, log.read_text())
+                self.assertIn("✓ host gate slot", log.read_text())
+                self.assertEqual(sum(" pytest " in event for event in (root / "events").read_text().splitlines()), 2)
+            finally:
+                held.close()
+                if gate.poll() is None:
+                    gate.kill()
+                    _ = gate.wait()
+
+    def test_gate_host_slots_zero_removes_the_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_HOST_SLOTS": "0"}
+            with mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": env["XDG_RUNTIME_DIR"]}):
+                held = run_gate.try_slot(1)
+            assert held is not None
+            try:
+                result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
+                                        capture_output=True, text=True, check=False, timeout=10)
+            finally:
+                held.close()
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("waiting", result.stdout)
 
     def test_jobs_overlap_with_a_bound(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -98,13 +254,16 @@ class GateRunnerTest(unittest.TestCase):
                 "just lint-md-fix", "just lint-yaml-fmt-fix",
                 "uv sync --locked --all-packages --all-groups --all-extras",
             ])
-            readers = events[3:]
+            # Main tracks no archive (ADR-012), so the archives build before any test reads them.
+            self.assertEqual(events[3], "uv run --locked --no-sync --project packages/wedge wedge bundle skills/skillz")
+            self.assertTrue(events[4].startswith("uv lock --project "), events[4])
+            readers = events[5:]
             self.assertFalse(any(event.startswith("uv sync") for event in readers))
             self.assertTrue(any("packages/wedge/tests" in event for event in readers))
             self.assertTrue(any("packages/skillz/tests" in event for event in readers))
             self.assertTrue(any("packages/fromargs/tests" in event for event in readers))
             self.assertTrue(any("packages/agent-session-analytics/tests" in event for event in readers))
-            self.assertTrue(any("wedge bundle" in event for event in readers))
+            self.assertFalse(any("wedge bundle" in event for event in readers))
             self.assertTrue(all("--no-sync" in event for event in readers if event.startswith("uv run") and "--no-project" not in event))
             pytest_events = [event for event in readers if " pytest " in event]
             self.assertEqual(len(pytest_events), 5)
@@ -193,18 +352,139 @@ class GateRunnerTest(unittest.TestCase):
             result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            events = (root / "events").read_text().splitlines()
+            events = [event for event in (root / "events").read_text().splitlines()
+                      if not event.startswith("coverage-file ")]
             self.assertEqual(events[0], "uv sync --locked --all-packages --all-groups --all-extras")
+            # Each CI shard builds the archives that its tests run (ADR-012).
+            self.assertEqual(events[1], "uv run --locked --no-sync --project packages/wedge wedge bundle skills/skillz")
+            self.assertTrue(events[2].startswith("uv lock --project "), events[2])
             e2e = "packages/skillz/tests/skillz_experiments/e2e"
-            self.assertEqual(len(events), 3)
-            self.assertTrue(any(f"pytest {e2e} " in event for event in events[1:]))
-            self.assertTrue(any(f"pytest packages/skillz/tests --ignore {e2e} " in event for event in events[1:]))
+            self.assertEqual(len(events), 5)
+            self.assertTrue(any(f"pytest {e2e} " in event for event in events[3:]))
+            self.assertTrue(any(f"pytest packages/skillz/tests --ignore {e2e} " in event for event in events[3:]))
+
+    def test_skillz_shard_loads_the_plugin_into_both_skillz_lanes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_SHARD": "2/4", "PYTHONPATH": "/elsewhere"}
+            result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            pytest_events = [event for event in events if " pytest " in event]
+            self.assertEqual(len(pytest_events), 2)
+            self.assertTrue(all(event.endswith(" -p pytest_shard") for event in pytest_events))
+            paths = {event for event in events if event.startswith("pythonpath ")}
+            self.assertEqual(paths, {f"pythonpath {RUNNER.parent}{os.pathsep}/elsewhere"})
+
+    def test_every_pytest_lane_writes_its_own_coverage_then_the_coverage_lane_runs_last(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data = root / "lane-data"
+            data.mkdir()
+            for name in ("old.cov", "old.cov.host.7.Xabc", "keep.txt"):
+                _ = (data / name).write_text("")
+            env = {**self._fake_env(root), "GATE_COVERAGE_DIR": str(data)}
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            files = [event.removeprefix("coverage-file ") for event in events if event.startswith("coverage-file ")]
+            self.assertEqual(sorted(Path(path).name for path in files), [
+                "agent-session-analytics-pytest.cov", "fromargs-pytest.cov", "skillz-e2e-pytest.cov",
+                "skillz-pytest.cov", "wedge-pytest.cov"])
+            self.assertTrue(all(Path(path).parent == data.resolve() for path in files))
+            pytest_events = [event for event in events if " pytest " in event]
+            sources = ",".join(f"{RUNNER.parents[2]}/packages/{name}/src"
+                                for name in ("agent-session-analytics", "fromargs", "skillz", "wedge"))
+            self.assertEqual(len(pytest_events), 5)
+            self.assertTrue(all(f" coverage run --parallel-mode --source={sources} -m pytest " in event
+                                for event in pytest_events), pytest_events)
+            gate = ".github/scripts/check_coverage.py"
+            self.assertEqual(events[-1], f"uv run --locked --no-sync --all-groups python {gate} {data.resolve()}")
+            self.assertIn("✓ coverage", result.stdout)
+            # Stale lane data from an earlier run is gone; other files stay.
+            self.assertEqual(sorted(path.name for path in data.iterdir()), ["keep.txt"])
+
+    def test_the_coverage_lane_needs_every_pytest_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_SKIP": "skillz-pytest"}
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("- coverage (needs skillz-pytest)", result.stdout)
+            self.assertFalse(any(" .github/scripts/check_coverage.py " in event
+                                 for event in (root / "events").read_text().splitlines()))
+            env = {**self._fake_env(root), "GATE_SKIP": "coverage"}
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("- coverage (skipped by GATE_SKIP)", result.stdout)
+
+    def test_a_failed_lane_stops_the_gate_before_the_coverage_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tool = root / "just"
+            env = self._fake_env(root)
+            _ = tool.write_text(FAKE_TOOL + "if args == ['lint-yaml']:\n    sys.exit(3)\n")
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertNotIn("coverage", result.stdout.replace("coverage-tests", ""))
+
+    def test_a_shard_tags_its_coverage_files_and_skips_the_coverage_lane(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {**self._fake_env(root), "GATE_SHARD": "2/6", "GATE_COVERAGE_DIR": str(root / "data")}
+            result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            files = sorted(Path(event.split(" ", 1)[1]).name for event in events if event.startswith("coverage-file "))
+            self.assertEqual(files, ["skillz-e2e-pytest.2of6.cov", "skillz-pytest.2of6.cov"])
+            self.assertFalse(any(" .github/scripts/check_coverage.py " in event for event in events))
+
+    def test_a_malformed_or_misplaced_shard_fails_before_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self._fake_env(root)
+            cases = [("check", "1/2"), ("skillz", "0/2"), ("skillz", "3/2"), ("skillz", "x"), ("skillz", "1/")]
+            for mode, value in cases:
+                with self.subTest(mode=mode, value=value):
+                    result = subprocess.run([sys.executable, str(RUNNER), mode], env={**env, "GATE_SHARD": value},
+                                            capture_output=True, text=True, check=False, timeout=10)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertIn("GATE_SHARD", result.stderr)
+                    self.assertFalse((root / "events").exists())
+
+    @unittest.skipUnless(importlib.util.find_spec("pytest"), "pytest is not installed")
+    def test_the_shards_partition_the_collected_tests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _ = (root / "test_sample.py").write_text("".join(f"def test_{n}():\n    pass\n" for n in range(7)))
+            env = {**self._fake_env(root), "PYTHONPATH": str(RUNNER.parent)}
+
+            def collected(*extra: str, shard: str | None = None) -> list[str]:
+                run_env = env if shard is None else {**env, "GATE_SHARD": shard}
+                result = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+                                         *extra, str(root / "test_sample.py")], cwd=root, env=run_env,
+                                        capture_output=True, text=True, check=False, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return [line for line in result.stdout.splitlines() if "::" in line]
+
+            everything = collected()
+            shards = [collected("-p", "pytest_shard", shard=f"{index}/3") for index in (1, 2, 3)]
+            self.assertEqual(len(everything), 7)
+            self.assertEqual([len(shard) for shard in shards], [3, 2, 2])
+            self.assertEqual(sorted(test for shard in shards for test in shard), sorted(everything))
 
     def test_invalid_worker_count_fails_before_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env = self._fake_env(root)
-            for name, value in (("GATE_JOBS", "0"), ("TEST_WORKERS", "auto"), ("TEST_WORKERS", "-1")):
+            for name, value in (("GATE_JOBS", "0"), ("TEST_WORKERS", "auto"), ("TEST_WORKERS", "-1"),
+                                ("GATE_HOST_SLOTS", "-1"), ("GATE_HOST_SLOTS", "two")):
                 with self.subTest(name=name, value=value):
                     result = subprocess.run([sys.executable, str(RUNNER), "fix"],
                                             env={**env, name: value}, capture_output=True,

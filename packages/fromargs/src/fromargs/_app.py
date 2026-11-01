@@ -31,9 +31,8 @@ _HelpFormat = Literal["markdown", "md", "plaintext", "restructuredtext", "rst", 
 class _AppKwargs(TypedDict, total=False):
     """Keyword-only ``cyclopts.App`` constructor arguments this wrapper forwards untouched.
 
-    This mirrors the ``cyclopts.App`` constructor by hand; a new cyclopts 5.x
-    keyword needs an entry here before fromargs accepts it. This type omits
-    the options that ``run`` never honors; see ``_INERT_KWARGS``.
+    This mirrors the ``cyclopts.App`` constructor by hand; add new cyclopts 5.x
+    keywords here. This type omits options that ``run`` ignores; see ``_INERT_KWARGS``.
     """
 
     usage: str | None

@@ -25,12 +25,19 @@ class _Adapter:
         raise CodedError(self.code, f"close says {self.code}")
 
 
-def _configuration(adapter: _Adapter) -> type:
+def _configuration(adapter: _Adapter, chosen: list[str] | None = None) -> type:
+    picks: list[str] = [] if chosen is None else chosen
+
     @final
     class Configuration:
         @classmethod
         def load(cls, path: Path | None, model: str) -> Configuration:
-            del path, model
+            picks.append(f"load {path} {model}")
+            return cls()
+
+        @classmethod
+        def single(cls, adapter_name: str, model: str) -> Configuration:
+            picks.append(f"single {adapter_name} {model}")
             return cls()
 
         def create(self, *args: object) -> _Adapter:
@@ -55,6 +62,18 @@ def test_a_terminal_code_from_close_still_fails_the_preflight(monkeypatch: pytes
         _ = _cli.self_test(model="m", preflight_only=True)
     assert adapter.closed == 1
 
+
+@pytest.mark.ac("gh-131:AC-16")
+def test_preflight_only_runs_claude_unless_a_harness_config_names_the_roles(
+        monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    chosen: list[str] = []
+    monkeypatch.setattr(_cli, "Configuration", _configuration(_Adapter("credential-refreshed"), chosen))
+    config = tmp_path / "harness.json"
+    _ = _cli.self_test(model="m", preflight_only=True)
+    _ = _cli.self_test(model="m", preflight_only=True, harness_config=config)
+    assert chosen == ["single claude m", f"load {config} m"]
+
+
 @pytest.mark.parametrize("metric", ["false_promotions_2se", "false_promotions_one_holdout"])
 def test_the_metric_selector_prints_only_that_count(capsys: pytest.CaptureFixture[str], metric: str) -> None:
     expected = cast(int, getattr(simulate(), metric))
@@ -75,7 +94,7 @@ def test_the_output_without_a_selector_keeps_its_keys(capsys: pytest.CaptureFixt
                              "true_promotions_effect_10", "power_effect_10", "true_promotions_effect_20",
                              "power_effect_20", "true_promotions_effect_30", "power_effect_30",
                              "cheaper_loss_5_margin_0", "cheaper_loss_5_margin_2", "cheaper_loss_5_margin_5",
-                             "cheaper_loss_0_margin_5"]
+                             "cheaper_loss_0_margin_5", "cheaper_loss_0_margin_5_fixed_1"]
 
 
 def test_the_metric_selector_needs_simulate(capsys: pytest.CaptureFixture[str]) -> None:

@@ -19,8 +19,8 @@ def normalize(adapter: str, path: Path, env: dict[str, str]) -> list[object]:
             sys.executable,
             "-B",
             "-c",
-            "import json, sys; from agent_session_analytics import _ingest; "
-            + "print(json.dumps(list(getattr(_ingest, sys.argv[1])(sys.argv[2]))))",
+            "import json, sys; from agent_session_analytics import _adapters; "
+            + "print(json.dumps(list(getattr(_adapters, sys.argv[1])(sys.argv[2]))))",
             adapter,
             str(path),
         ],
@@ -49,7 +49,12 @@ def test_pi_rows_keep_their_valid_parts(tmp_path: Path) -> None:
     _ = path.write_text("".join(json.dumps(entry) + "\n" for entry in entries))
     rows = normalize("pi_normalize", path, dict(os.environ))
     envelope = {"harness": "pi", "timestamp": None, "sessionId": "s1", "cwd": "/work"}
-    usage = {"input_tokens": None, "output_tokens": None, "cache_read_input_tokens": None}
+    usage = {
+        "input_tokens": None,
+        "output_tokens": None,
+        "cache_read_input_tokens": None,
+        "cache_creation_input_tokens": None,
+    }
     assert rows == [
         envelope | {"type": "assistant", "message": {"content": [], "usage": usage}},
         envelope

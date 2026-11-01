@@ -1,14 +1,18 @@
 """Run the repository quality checks with bounded parallel jobs."""
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import os
+import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Generator
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, TextIO
 
 Job = tuple[str, list[str]]
 ROOT = Path(__file__).resolve().parents[2]
@@ -17,13 +21,106 @@ _cancelled = False
 PACKAGE_MODES = frozenset({"fromargs", "agent-session-analytics"})
 LIVE_FLAG = "SKILLZ_LIVE"
 SKIP_VARIABLE = "GATE_SKIP"
+# `skillz` mode only: run one shard of each skillz lane through the `pytest_shard` plugin.
+SHARD_VARIABLE = "GATE_SHARD"
 # CI runs these lanes in their own job (`just test-skillz`) and skips them in the gate job.
 SKILLZ_LANES = ("skillz-e2e-pytest", "skillz-pytest")
+# The requirement that `test_generated_target.py` locks offline.
+OFFLINE_LOCK_DEPENDENCY = "cyclopts==5.2.0"
+# `0` keeps fsync in the pytest lanes; otherwise they run under `eatmydata` when it is on PATH.
+EATMYDATA_VARIABLE = "GATE_EATMYDATA"
+# The count of gates on one host that run their lanes at the same time; `0` removes the limit.
+HOST_SLOTS_VARIABLE = "GATE_HOST_SLOTS"
+DEFAULT_HOST_SLOTS = 2
+# The pytest lanes write their coverage data here; CI sets it so the jobs can upload the data to the coverage job.
+COVERAGE_DIR_VARIABLE = "GATE_COVERAGE_DIR"
+# The serial lane that combines the lane data and runs check_coverage.py after every other lane passes.
+COVERAGE_LANE = "coverage"
 
 
 def _environment() -> dict[str, str]:
-    """Return the step environment without `SKILLZ_LIVE`, so no gate step makes a real model call."""
-    return {name: value for name, value in os.environ.items() if name != LIVE_FLAG}
+    """Return the step environment without `SKILLZ_LIVE`, so no gate step makes a real model call.
+
+    With `GATE_SHARD` set, put this directory on `PYTHONPATH`, so pytest can load the `pytest_shard` plugin.
+    """
+    environment = {name: value for name, value in os.environ.items() if name != LIVE_FLAG}
+    if environment.get(SHARD_VARIABLE):
+        scripts = str(Path(__file__).resolve().parent)
+        environment["PYTHONPATH"] = os.pathsep.join(filter(None, [scripts, environment.get("PYTHONPATH")]))
+    return environment
+
+
+def parse_shard(value: str) -> tuple[int, int]:
+    """Return `(index, count)` from `<index>/<count>`, with `1 <= index <= count`."""
+    index, separator, count = value.partition("/")
+    if separator and index.isdigit() and count.isdigit() and 1 <= int(index) <= int(count):
+        return int(index), int(count)
+    raise ValueError(f"{SHARD_VARIABLE} must be <index>/<count> with 1 <= index <= count: {value!r}")
+
+
+def fsync_wrapper() -> list[str]:
+    """Return the `eatmydata` prefix for the pytest lanes, or `[]` if it is off or missing.
+
+    The pytest lanes write only below the gate temporary root, so a lost flush loses nothing.
+    The wrapper makes fsync a no-op and so stops the flush storm of the run records.
+    Tests that replace `os.fsync` still see their replacement.
+    """
+    if os.environ.get(EATMYDATA_VARIABLE) == "0":
+        return []
+    path = shutil.which("eatmydata")
+    return [path] if path else []
+
+
+def _host_slots() -> int:
+    value = os.environ.get(HOST_SLOTS_VARIABLE, str(DEFAULT_HOST_SLOTS))
+    if not value.isdigit():
+        raise ValueError(f"{HOST_SLOTS_VARIABLE} must be a non-negative integer: {value!r}")
+    return int(value)
+
+
+def _lock_dir() -> Path:
+    """Return the per-user directory of the host slot files."""
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    base = Path(runtime) if runtime else Path.home() / ".cache"
+    return base / "skillz-gate"
+
+
+def try_slot(slots: int) -> TextIO | None:
+    """Lock one free slot file and return it open, or return `None` if every slot is busy.
+
+    The kernel releases a `flock` when the last descriptor closes, so a killed gate frees its slot.
+    """
+    directory = _lock_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    for index in range(slots):
+        handle = (directory / f"slot-{index}.lock").open("a")
+        try:
+            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            handle.close()
+            continue
+        return handle
+    return None
+
+
+@contextlib.contextmanager
+def host_slot(slots: int) -> Generator[None]:
+    """Hold one of `slots` host-wide gate slots; wait while all of them are busy."""
+    if slots == 0:
+        yield
+        return
+    handle = try_slot(slots)
+    if handle is None:
+        print(f"… waiting for a host gate slot ({slots} busy; {HOST_SLOTS_VARIABLE} sets the count)", flush=True)
+        while handle is None:
+            _check_cancelled()
+            time.sleep(0.2)
+            handle = try_slot(slots)
+        print("✓ host gate slot", flush=True)
+    try:
+        yield
+    finally:
+        handle.close()
 
 
 def _check_cancelled() -> None:
@@ -33,7 +130,7 @@ def _check_cancelled() -> None:
 
 def _start(name: str, command: list[str]) -> bool:
     _check_cancelled()
-    print(f"→ {name}", flush=True)
+    print(f"→ {name}" + (" (eatmydata)" if Path(command[0]).name == "eatmydata" else ""), flush=True)
     output = tempfile.TemporaryFile()
     try:
         process = subprocess.Popen(
@@ -117,44 +214,82 @@ def _stop_children() -> None:
         output.close()
 
 
-def _test_jobs(test_workers: int, cache_root: Path) -> list[Job]:
+def coverage_dir(temp_root: Path) -> Path:
+    """Create and return the lane coverage data directory: `$GATE_COVERAGE_DIR`, else one below the temporary root.
+
+    Remove the lane data of an earlier run, so the coverage lane never combines stale data.
+    """
+    configured = os.environ.get(COVERAGE_DIR_VARIABLE)
+    directory = Path(configured).resolve() if configured else temp_root / "cov"
+    directory.mkdir(parents=True, exist_ok=True)
+    for stale in [*directory.glob("*.cov"), *directory.glob("*.cov.*")]:
+        stale.unlink()
+    return directory
+
+
+def _covered(lane: str, data_dir: Path) -> tuple[list[str], list[str]]:
+    """Return the prefix that names one lane's coverage data file, and the `coverage run` command that wraps pytest.
+
+    Every lane measures every workspace package, because the tests of one package also run another's code.
+    `--parallel-mode` and `patch = ["subprocess"]` make the controller, each xdist worker, and each test subprocess
+    write their own `<data file>.<host>.<pid>.<random>`. Only the coverage lane combines them.
+    A CI shard tags its file name with the shard, so the coverage job can merge every shard's files.
+    The sources are absolute, so a test subprocess with another working directory measures the same tree.
+    """
+    shard = os.environ.get(SHARD_VARIABLE, "").replace("/", "of")
+    data_file = data_dir / f"{lane}{'.' + shard if shard else ''}.cov"
+    sources = ",".join(str(source) for source in sorted((ROOT / "packages").glob("*/src")))
+    return ["env", f"COVERAGE_FILE={data_file}"], ["coverage", "run", "--parallel-mode", f"--source={sources}",
+                                                   "-m", "pytest"]
+
+
+def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None) -> list[Job]:
     root = ["uv", "run", "--locked", "--no-sync", "--all-groups"]
     wedge = ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge"]
     skillz = ["uv", "run", "--locked", "--no-sync", "--project", "packages/skillz"]
     fromargs = ["uv", "run", "--locked", "--no-sync", "--project", "packages/fromargs"]
     analytics = ["uv", "run", "--locked", "--no-sync", "--project", "packages/agent-session-analytics"]
+    # Only the `--no-sync` pytest lanes run without fsync; they write only below `cache_root` and the coverage directory.
+    eat = fsync_wrapper()
+    data_dir = data_dir or cache_root / "cov"
+
+    def pytest(lane: str, runner: list[str], paths: list[str], key: str) -> Job:
+        prefix, measured = _covered(lane, data_dir)
+        return lane, eat + prefix + runner + [*measured, *paths, "-q", "-n", str(test_workers), "--dist", "worksteal",
+                                              "--basetemp", str(cache_root / key),
+                                              "-o", f"cache_dir={cache_root / (key + 'c')}"]
+
     # The slow process-level e2e suite runs as its own job, in parallel with the skillz unit tests.
     skillz_e2e = "packages/skillz/tests/skillz_experiments/e2e"
     return [
-        ("skillz-e2e-pytest", skillz + ["pytest", skillz_e2e, "-q", "-n", str(test_workers),
-                                  "--dist", "worksteal", "--basetemp", str(cache_root / "e"),
-                                  "-o", f"cache_dir={cache_root / 'ec'}"]),
-        ("wedge-pytest", wedge + ["pytest", "packages/wedge/tests", "-q", "-n", str(test_workers),
-                            "--dist", "worksteal", "--basetemp", str(cache_root / "l"),
-                            "-o", f"cache_dir={cache_root / 'lc'}"]),
-        ("skillz-pytest", skillz + ["pytest", "packages/skillz/tests", "--ignore", skillz_e2e,
-                              "-q", "-n", str(test_workers),
-                              "--dist", "worksteal", "--basetemp", str(cache_root / "s"),
-                              "-o", f"cache_dir={cache_root / 'sc'}"]),
-        ("fromargs-pytest", fromargs + ["pytest", "packages/fromargs/tests", "-q", "-n", str(test_workers),
-                                      "--dist", "worksteal", "--basetemp", str(cache_root / "f"),
-                                      "-o", f"cache_dir={cache_root / 'fc'}"]),
+        pytest("skillz-e2e-pytest", skillz, [skillz_e2e], "e"),
+        pytest("wedge-pytest", wedge, ["packages/wedge/tests"], "l"),
+        pytest("skillz-pytest", skillz, ["packages/skillz/tests", "--ignore", skillz_e2e], "s"),
+        pytest("fromargs-pytest", fromargs, ["packages/fromargs/tests"], "f"),
         ("skill-validator-tests", root + ["python", ".github/scripts/test_validate_skills.py"]),
         ("eval-validator-tests", root + ["python", ".github/scripts/test_validate_evals.py"]),
         ("skill-validator", root + ["python", ".github/scripts/validate_skills.py"]),
+        ("eval-validator", root + ["python", ".github/scripts/validate_evals.py"]),
         ("reference-tests", root + ["python", ".github/scripts/test_check_skillz_references.py"]),
         ("reference-check", root + ["python", ".github/scripts/check_skillz_references.py"]),
+        ("architecture-tests", root + ["python", ".github/scripts/test_check_architecture.py"]),
+        ("architecture-check", root + ["python", ".github/scripts/check_architecture.py"]),
+        ("slice-guard-tests", root + ["python", ".github/scripts/test_check_slices.py"]),
+        ("slice-guard", root + ["python", ".github/scripts/check_slices.py", "check", "--strict"]),
+        ("depth-ratchet-tests", root + ["python", ".github/scripts/test_check_depth.py"]),
+        ("depth-ratchet", root + ["python", ".github/scripts/check_depth.py", "check"]),
         ("ac-trace-tests", root + ["python", ".github/scripts/test_check_ac_trace.py"]),
         ("ac-trace", root + ["python", ".github/scripts/check_ac_trace.py"]),
         ("dead-code-tests", root + ["python", ".github/scripts/test_check_dead_code.py"]),
+        ("file-size-tests", root + ["python", ".github/scripts/test_check_file_lengths.py"]),
+        ("file-size", root + ["python", ".github/scripts/check_file_lengths.py", "check"]),
+        ("coverage-tests", root + ["python", ".github/scripts/test_check_coverage.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
-        ("agent-session-analytics-pytest", analytics + ["pytest", "packages/agent-session-analytics/tests", "-q", "-n", str(test_workers),
-                                                "--dist", "worksteal", "--basetemp", str(cache_root / "a"),
-                                                "-o", f"cache_dir={cache_root / 'ac'}"]),
+        ("dist-publisher-tests", root + ["python", ".github/scripts/test_publish_dist.py"]),
+        pytest("agent-session-analytics-pytest", analytics, ["packages/agent-session-analytics/tests"], "a"),
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),
         ("wedge-check", wedge + ["wedge", "check", "--root", "packages/wedge/examples/skills",
                               "--root", "packages/wedge/examples/consumer/skills"]),
-        ("wedge-bundle", wedge + ["wedge", "bundle", "skills/skillz", "--check"]),
     ]
 
 
@@ -171,11 +306,23 @@ def _check_jobs() -> list[Job]:
 def _skipped() -> frozenset[str]:
     """Return the lane names in `GATE_SKIP`; reject a name that is not a lane."""
     names = frozenset(part.strip() for part in os.environ.get(SKIP_VARIABLE, "").split(",") if part.strip())
-    lanes = {name for name, _ in _test_jobs(1, Path("/tmp")) + _check_jobs()}
+    lanes = {name for name, _ in _test_jobs(1, Path("/tmp")) + _check_jobs()} | {COVERAGE_LANE}
     unknown = sorted(names - lanes)
     if unknown:
         raise ValueError(f"{SKIP_VARIABLE} names unknown lanes: {', '.join(unknown)}")
     return names
+
+
+def _coverage(data_dir: Path, skip: frozenset[str]) -> int:
+    """Run the coverage lane after every other lane passes; it needs the data of every pytest lane."""
+    missing = sorted(name for name in skip if name.endswith("-pytest"))
+    if COVERAGE_LANE in skip or missing:
+        reason = f"needs {', '.join(missing)}" if missing and COVERAGE_LANE not in skip else f"skipped by {SKIP_VARIABLE}"
+        print(f"- {COVERAGE_LANE} ({reason})", flush=True)
+        return 0
+    command = ["uv", "run", "--locked", "--no-sync", "--all-groups", "python", ".github/scripts/check_coverage.py",
+               str(data_dir)]
+    return 0 if run_step(COVERAGE_LANE, command) else 1
 
 
 def _without(jobs: list[Job], skip: frozenset[str]) -> list[Job]:
@@ -186,10 +333,27 @@ def _without(jobs: list[Job], skip: frozenset[str]) -> list[Job]:
 
 
 def _prepare() -> bool:
-    return run_step("workspace-env", ["uv", "sync", "--locked", "--all-packages", "--all-groups", "--all-extras"])
+    """Sync the workspace, build the skill archives, then warm the uv index cache for the offline e2e locks.
+
+    Main tracks no archive (ADR-012), and the skillz tests run the built archives, so the build runs before any reader.
+    `uv sync` stores wheels but not registry index metadata. The e2e tests run `uv lock --offline`
+    on a scratch project that pins `OFFLINE_LOCK_DEPENDENCY`. Without this metadata, that lock fails on a cold cache.
+    One online lock of the same requirement stores it. Keep the pin equal to the pin in the e2e `_world` helpers.
+    """
+    if not run_step("workspace-env", ["uv", "sync", "--locked", "--all-packages", "--all-groups", "--all-extras"]):
+        return False
+    if not run_step("wedge-bundle", ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge",
+                                     "wedge", "bundle", "skills/skillz"]):
+        return False
+    with tempfile.TemporaryDirectory() as scratch:
+        project = Path(scratch)
+        _ = (project / "pyproject.toml").write_text(
+            f'[project]\nname = "warm-index"\nversion = "0"\ndependencies = ["{OFFLINE_LOCK_DEPENDENCY}"]\n'
+        )
+        return run_step("index-cache", ["uv", "lock", "--project", str(project)])
 
 
-def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: frozenset[str]) -> int:
+def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: frozenset[str], slots: int) -> int:
     formatters = (
         [("markdown", ["just", "lint-md-fix"]), ("yaml-fmt", ["just", "lint-yaml-fmt-fix"])]
         if mode == "fix" else
@@ -200,8 +364,12 @@ def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: 
             return 1
     if not _prepare():
         return 1
-    jobs = _without(_test_jobs(test_workers, temp_root) + _check_jobs(), skip)
-    return 0 if run_jobs(jobs, workers) else 1
+    data_dir = coverage_dir(temp_root)
+    jobs = _without(_test_jobs(test_workers, temp_root, data_dir) + _check_jobs(), skip)
+    with host_slot(slots):
+        if not run_jobs(jobs, workers):
+            return 1
+    return _coverage(data_dir, skip)
 
 
 def _workers(name: str) -> int:
@@ -229,7 +397,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         workers, test_workers = _workers("GATE_JOBS"), _workers("TEST_WORKERS")
+        slots = _host_slots()
         skip = _skipped()
+        shard = os.environ.get(SHARD_VARIABLE, "")
+        if shard and args[0] != "skillz":
+            raise ValueError(f"{SHARD_VARIABLE} applies only to `run_gate.py skillz`")
+        if shard:
+            _ = parse_shard(shard)
     except ValueError as error:
         print(error, file=sys.stderr)
         return 2
@@ -250,16 +424,21 @@ def main(argv: list[str] | None = None) -> int:
                                 "-q", "-n", str(test_workers), "--dist", "worksteal",
                                 "--basetemp", str(temp_root / "f"),
                                 "-o", f"cache_dir={temp_root / 'fc'}"]
-                    return 0 if run_step(f"{package}-pytest", command) else 1
+                    # `uv run --locked` can sync the environment, so this lane keeps fsync.
+                    with host_slot(slots):
+                        return 0 if run_step(f"{package}-pytest", command) else 1
                 if args[0] in {"test", "skillz"}:
-                    jobs = _test_jobs(test_workers, temp_root)
+                    # These modes write the lane data but do not check it: CI's coverage job combines the shards.
+                    jobs = _test_jobs(test_workers, temp_root, coverage_dir(temp_root))
                     if args[0] == "skillz":
-                        jobs = [job for job in jobs if job[0] in SKILLZ_LANES]
+                        plugin = ["-p", "pytest_shard"] if shard else []
+                        jobs = [(name, command + plugin) for name, command in jobs if name in SKILLZ_LANES]
                     jobs = _without(jobs, skip)
                     if not _prepare():
                         return 1
-                    return 0 if run_jobs(jobs, workers) else 1
-                return run_gate(args[0], workers, test_workers, temp_root, skip)
+                    with host_slot(slots):
+                        return 0 if run_jobs(jobs, workers) else 1
+                return run_gate(args[0], workers, test_workers, temp_root, skip, slots)
             except KeyboardInterrupt:
                 _stop_children()
                 print("interrupted", file=sys.stderr)

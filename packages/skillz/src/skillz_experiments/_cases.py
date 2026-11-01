@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from collections.abc import Mapping
@@ -24,9 +26,10 @@ def repo_root(start: Path) -> Path | None:
 class CodedError(ValueError):
     """A coded validation failure or run stop that carries a stable machine-readable code."""
 
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, details: Mapping[str, object] | None = None) -> None:
         super().__init__(message)
         self.code: str = code
+        self.details: Mapping[str, object] | None = details
 
 
 def loads_untrusted(text: str) -> object:
@@ -178,11 +181,141 @@ class Journey:
 
 
 JOURNEY_FIELDS = {"brief", "max_turns", "requirements"}
+JOURNEY_EXPECTED_FIELDS = {
+    "must": "each item is an observable that the transcript must show",
+    "must_not": "each item is an observable that the transcript must not show",
+    "questions": "the only questions that the agent may ask; an empty list means the agent asks nothing; "
+                 + "when absent, any question is allowed",
+    "final_stop": "the stop or state in which the conversation must end",
+    "criteria": "the approved EARS statements that the judge grades, one level per criterion id",
+}
+CRITERIA_DRAFTING = "skills/skillz/references/criteria-drafting.md"
+CRITERION_FIELDS = {"id", "text", "must", "from"}
+CRITERION_ID = re.compile(r"[A-Za-z0-9_.-]{1,64}")
+_EARS = re.compile(r"(?:(?P<trigger>WHEN|WHILE|IF|WHERE)\s+\S.*?\s+)?THE\s+\S.*?\s+SHALL\s+\S.*", re.S)
+_EARS_WORDS = re.compile(r"\b(?:WHEN|WHILE|IF|WHERE|THE|SHALL)\b")
+_QUOTED = re.compile(r"`[^`]*`|\"[^\"]*\"")
+CRITERION_TEXT_LIMIT = 1000
+# A judge level below this is an unmet criterion. Level 4 is `fully met`.
+MET_LEVEL = 4
+_HIDDEN = frozenset({"Cc", "Cf", "Cs", "Zl", "Zp"})
 
 
-def journey_of(item: dict[str, object], kind: str) -> Journey | None:
-    """Return the journey fields of a `journey` case, else None. Journey fields on another kind are an error."""
-    if kind != "journey":
+@dataclass(frozen=True)
+class Criterion:
+    """One approved EARS statement of a judged case. `source` is the JSON key `from`: the source item it converts."""
+
+    id: str
+    text: str
+    must: bool = False
+    source: str | None = None
+
+
+def _ears(text: str) -> bool:
+    """Return True for one EARS statement: at most one leading WHEN, WHILE, IF, or WHERE clause, then one THE ... SHALL ....
+
+    A keyword inside backticks or double quotes is plain text, so a response may name `WHERE` or "THE END".
+    """
+    plain = _QUOTED.sub('""', text).strip()
+    match = _EARS.fullmatch(plain)
+    return match is not None and _EARS_WORDS.findall(plain) == ([match["trigger"]] if match["trigger"] else []) + ["THE", "SHALL"]
+
+
+def _hidden(value: str) -> str | None:
+    """Return the first hidden character of `value` as `U+XXXX at position N`, or None.
+
+    A value that passes cannot add a line to a prompt or the approval question, or reorder the text that a reader sees.
+    """
+    for position, character in enumerate(value):
+        if unicodedata.category(character) in _HIDDEN:
+            return f"U+{ord(character):04X} at position {position}"
+    return None
+
+
+def case_criteria(value: object, case_id: object) -> tuple[Criterion, ...]:
+    """Return the `expected.criteria` of a judged case. Raise `case-criteria-missing` or `case-criteria-invalid`."""
+    raw = cast(dict[object, object], value).get("criteria") if isinstance(value, dict) else None
+    if raw is None or raw == []:
+        raise CodedError("case-criteria-missing", f"judged case {case_id!r} has no expected.criteria; draft them with "
+                         + f"the criteria drafting procedure in {CRITERIA_DRAFTING}")
+    code = "case-criteria-invalid"
+    if not isinstance(raw, list):
+        raise CodedError(code, f"judged case {case_id!r}: expected.criteria must be a list of criteria")
+    found: list[Criterion] = []
+    for position, entry in enumerate(cast(list[object], raw)):
+        item = cast(dict[object, object], entry) if isinstance(entry, dict) else {}
+        name = item.get("id")
+        where = f"judged case {case_id!r} criterion {name if isinstance(name, str) else '#' + str(position)}"
+        if not item or set(item) - CRITERION_FIELDS or not {"id", "text"} <= set(item):
+            raise CodedError(code, f"{where}: a criterion is an object with id and text, and optional must and from")
+        if not isinstance(name, str) or not CRITERION_ID.fullmatch(name):
+            raise CodedError(code, f"{where}: id must be 1 to 64 letters, digits, dots, dashes, or underscores")
+        if any(criterion.id == name for criterion in found):
+            raise CodedError(code, f"{where}: the id repeats")
+        text = item["text"]
+        if isinstance(text, str) and len(text) > CRITERION_TEXT_LIMIT:
+            raise CodedError(code, f"{where}: text must be at most {CRITERION_TEXT_LIMIT} characters")
+        if isinstance(text, str) and (hidden := _hidden(text)):
+            raise CodedError(code, f"{where}: text must be one EARS statement on one line, and holds a control, format, "
+                             + f"surrogate, or line-separator character: {hidden}")
+        if not isinstance(text, str) or not _ears(text):
+            raise CodedError(code, f"{where}: text must be one EARS statement on one line: at most one leading WHEN, WHILE, "
+                             + "IF, or WHERE clause, then one THE <subject> SHALL <response>; quote a keyword inside the "
+                             + "response with backticks")
+        must = item.get("must", False)
+        source = item.get("from")
+        if type(must) is not bool:
+            raise CodedError(code, f"{where}: must must be true or false")
+        if isinstance(source, str) and (hidden := _hidden(source)):
+            raise CodedError(code, f"{where}: from must be one line of text, and holds a control, format, surrogate, "
+                             + f"or line-separator character: {hidden}")
+        if source is not None and (not isinstance(source, str) or not source.strip() or len(source) > CRITERION_TEXT_LIMIT):
+            raise CodedError(code, f"{where}: from must be one line of text, at most {CRITERION_TEXT_LIMIT} characters, "
+                             + "that names a source item")
+        found.append(Criterion(name, text, must, source))
+    return tuple(found)
+
+
+def _entries(value: object, label: str, code: str, case_id: object) -> tuple[str, ...]:
+    if not isinstance(value, list):
+        raise CodedError(code, f"journey case {case_id!r}: expected.{label} must be a list of text")
+    names: list[str] = []
+    for entry in cast(list[object], value):
+        if not isinstance(entry, str) or not entry.strip():
+            raise CodedError(code, f"journey case {case_id!r}: expected.{label} entries must be nonempty text")
+        if entry in names:
+            raise CodedError(code, f"journey case {case_id!r}: expected.{label} repeats {entry!r}")
+        names.append(entry)
+    return tuple(names)
+
+
+def journey_expected(value: object, case_id: object) -> None:
+    """Validate the closed `expected` object of a journey case. Raise `CodedError` on a violation."""
+    if value is None:
+        raise CodedError("expected-missing", f"journey case {case_id!r} needs an expected object")
+    code = "journey-expected-invalid"
+    where = f"journey case {case_id!r}"
+    advice = "fix the case, or start a new run when it comes from an older run"
+    if not isinstance(value, dict):
+        raise CodedError(code, f"{where}: expected must be an object; {advice}")
+    expected = cast(dict[object, object], value)
+    unknown = sorted(str(key) for key in expected if key not in JOURNEY_EXPECTED_FIELDS)
+    if unknown:
+        raise CodedError(code, f"{where}: expected has unknown key {', '.join(unknown)}; allowed keys: "
+                         + f"{', '.join(JOURNEY_EXPECTED_FIELDS)}; {advice}")
+    lists = {name: _entries(expected[name], name, code, case_id) for name in ("must", "must_not", "questions")
+             if name in expected}
+    if not lists.get("must") and not lists.get("must_not"):
+        raise CodedError(code, f"{where}: expected needs a nonempty must or must_not; {advice}")
+    if "final_stop" in expected and (not isinstance(expected["final_stop"], str) or not expected["final_stop"].strip()):
+        raise CodedError(code, f"{where}: expected.final_stop must be nonempty text; {advice}")
+    if "criteria" in expected:  # a seed or an older frozen run may leave them out; intake requires them on a judged case
+        _ = case_criteria(expected, case_id)
+
+
+def journey_of(item: dict[str, object], journey: bool) -> Journey | None:
+    """Return the journey fields of a case of a journey-graded kind, else None. Journey fields elsewhere are an error."""
+    if not journey:
         if JOURNEY_FIELDS & set(item):
             raise ValueError(f"{', '.join(sorted(JOURNEY_FIELDS & set(item)))} only belong to a journey case")
         return None
@@ -192,10 +325,14 @@ def journey_of(item: dict[str, object], kind: str) -> Journey | None:
     turns = item.get("max_turns", 8)
     if type(turns) is not int or turns < 1:
         raise ValueError("max_turns must be a positive integer")
+    journey_expected(item.get("expected"), item.get("id"))
     requirements = item.get("requirements", [])
     if not isinstance(requirements, list):
         raise ValueError("requirements must be a list of text")
-    return Journey(brief, turns, tuple(string(entry, "requirement") for entry in cast(list[object], requirements)))
+    names = [string(entry, "requirement") for entry in cast(list[object], requirements)]
+    if len(set(names)) != len(names):
+        raise ValueError("requirements must be unique")
+    return Journey(brief, turns, tuple(names))
 
 
 @dataclass(frozen=True)
@@ -215,7 +352,7 @@ class Case:
 
     @property
     def eligible(self) -> bool:
-        return bool(self.request and self.files and self.expected is not None and self.provider_approved
+        return bool(self.request and (self.files or self.journey is not None) and self.expected is not None and self.provider_approved
                     and (not isinstance(self.expected, Audit) or self.labels_reviewed))
 
 
@@ -256,7 +393,7 @@ def _case(value: object, kinds: Mapping[str, str]) -> Case:
         string(item.get("id"), "id"), string(item.get("family"), "family"), cast(Split, split),
         request, files, expected,
         string(item.get("provenance"), "provenance"), item.get("provider_approved") is True,
-        cast(Visibility, visibility), kind, reviewed, journey_of(item, kind),
+        cast(Visibility, visibility), kind, reviewed, journey_of(item, kinds[kind] == "journey"),
     )
 
 

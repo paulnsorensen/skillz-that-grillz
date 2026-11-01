@@ -23,12 +23,11 @@ from skillz_experiments.evaluation._evaluator import task_tokens
 from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics, simulate, verdict
 from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, run
-from skillz_experiments.run._session import (
-    _mean_tokens as mean_tokens,  # pyright: ignore[reportPrivateUsage]
-    Session,
-)
-from typing_extensions import override
-from fake_provider import FakeProvider
+from skillz_experiments.run._holdout import holdout_tokens
+from skillz_experiments.run._leaderboard import Leaderboard
+from skillz_experiments.run._outcomes import mean_tokens
+from skillz_experiments.run._session import Session
+from fake_provider import FakeRunProvider
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -405,21 +404,20 @@ def test_mean_tokens_is_none_for_empty_or_any_unknown_and_exact_otherwise() -> N
     assert mean_tokens([0, 0]) == 0.0
 
 
-# --- session: holdout tokens and tie-breaks ---------------------------------------------------------------
+# --- session: holdout tokens and the token rule of the incumbent ------------------------------------------
 
 def _changed(files: dict[str, str]) -> SimpleNamespace:
     return SimpleNamespace(identity="changed", files=files)
 
 
 def _cases_for(_split: str) -> list[SimpleNamespace]:
-    return [SimpleNamespace(identifier=item) for item in ("v1", "v2")]
+    return [SimpleNamespace(identifier=item, family="f") for item in ("v1", "v2")]
 
 
-def _stub(statistics: Statistics, outcomes: list[dict[str, object]], kept: dict[str, object] | None = None) -> Session:
+def _stub(statistics: Statistics, outcomes: list[dict[str, object]]) -> Session:
     session = object.__new__(Session)
     attributes: dict[str, object] = {
-        "lock": threading.RLock(), "statistics": statistics, "outcomes": outcomes,
-        "record": {} if kept is None else {"best_validated": kept},
+        "lock": threading.RLock(), "statistics": statistics, "outcomes": outcomes, "record": {},
         "seed": SimpleNamespace(identity="seed", editable=("a",),
                                 changed=_changed),
         "cases_for": _cases_for,
@@ -441,143 +439,80 @@ def test_holdout_tokens_average_repeats_and_ignore_other_arms_and_splits() -> No
                 _holdout("winner", "h1", 0, 10), _holdout("winner", "h1", 1, 30),
                 _holdout("search", "h1", 0, 999999), _holdout("baseline", "h1", 0, 888888, split="train")]
     session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
-    assert session._holdout_tokens() == {"h1": (150.0, 20.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    assert holdout_tokens(session.outcomes) == {"h1": (150.0, 20.0)}
 
 
 def test_holdout_tokens_with_one_unknown_repeat_make_that_arm_unknown() -> None:
     outcomes = [_holdout("baseline", "h1", 0, 100), _holdout("baseline", "h1", 1, None),
                 _holdout("winner", "h1", 0, 10), _holdout("winner", "h1", 1, 30)]
     session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
-    assert session._holdout_tokens() == {"h1": (None, 20.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    assert holdout_tokens(session.outcomes) == {"h1": (None, 20.0)}
 
 
 def test_holdout_tokens_with_a_missing_arm_are_unknown_for_that_arm() -> None:
     session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), [_holdout("baseline", "h1", 0, 100)])
-    assert session._holdout_tokens() == {"h1": (100.0, None)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    assert holdout_tokens(session.outcomes) == {"h1": (100.0, None)}
 
 
 def test_holdout_tokens_fall_back_to_usage_when_task_usage_is_absent() -> None:
     outcomes = [_holdout("baseline", "h1", 0, 100, 5, task=False), _holdout("winner", "h1", 0, 10, 5, task=False)]
     session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
-    assert session._holdout_tokens() == {"h1": (105.0, 15.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    assert holdout_tokens(session.outcomes) == {"h1": (105.0, 15.0)}
 
 
 def test_holdout_tokens_charge_only_the_uncached_input() -> None:
     outcomes = [_holdout("baseline", "h1", 0, 100, 5, cached=40), _holdout("winner", "h1", 0, 100, 5, cached=90)]
     session = _stub(Statistics(max_quality_loss=10.0, min_token_saving=0.2), outcomes)
-    assert session._holdout_tokens() == {"h1": (65.0, 15.0)}  # pyright: ignore[reportPrivateUsage] -- unit test of the private reader
+    assert holdout_tokens(session.outcomes) == {"h1": (65.0, 15.0)}
 
 
 def _validation(identity: str, score: float, tokens: list[object]) -> list[dict[str, object]]:
-    return [{"arm": "search", "split": "validation", "search_candidate": identity, "case_id": case_id,
+    """Return one outcome per repeat of each validation case."""
+    return [{"arm": "search", "split": "validation", "search_candidate": identity, "case_id": case_id, "repeat": repeat,
              "score": score, "usage": {"input_tokens": count, "cached_input_tokens": 0, "output_tokens": 0}}
-            for case_id, count in zip(("v1", "v2"), tokens, strict=True)]
+            for case_id, count in zip(("v1", "v2"), tokens, strict=True) for repeat in (0, 1)]
 
 
 def _keep(statistics: Statistics, *rounds: tuple[str, float, list[object]]) -> object:
-    session = _stub(statistics, [])
+    """Offer each challenger in turn to the incumbent rule. The seed scores 0.5 with 100 tokens. Return the incumbent."""
+    session = _stub(statistics, _validation("seed", 0.5, [100, 100]))
     case = cast(Case, cast(object, SimpleNamespace(split="validation")))
     for identity, score, tokens in rounds:
         session.outcomes.extend(_validation(identity, score, tokens))
         candidate = cast(Candidate, cast(object, SimpleNamespace(identity=identity, files={"a": identity})))
-        session._keep_if_best(candidate, case)  # pyright: ignore[reportPrivateUsage] -- unit test of the private keeper
-    kept = session.record.get("best_validated")
-    return cast(dict[str, object], kept)["identity"] if isinstance(kept, dict) else None
+        Leaderboard(session).keep_if_best(candidate, case)
+    return Leaderboard(session).best_identity()
 
 
 SAVE = Statistics(max_quality_loss=10.0, min_token_saving=0.2)
 
 
-def test_keep_if_best_a_cheaper_tie_displaces_and_a_later_cheapest_tie_displaces_again() -> None:
-    assert _keep(SAVE, ("one", 0.5, [100, 100]), ("two", 0.5, [60, 60]), ("three", 0.5, [10, 10])) == "three"
-    assert _keep(SAVE, ("one", 0.5, [100, 100]), ("two", 0.5, [60, 60]), ("three", 0.5, [70, 70])) == "two"
+def test_a_cheaper_tie_displaces_the_incumbent_and_a_later_cheaper_tie_displaces_it_again() -> None:
+    assert _keep(SAVE, ("two", 0.5, [60, 60]), ("three", 0.5, [10, 10])) == "three"
+    assert _keep(SAVE, ("two", 0.5, [60, 60]), ("three", 0.5, [70, 70])) == "two"
 
 
-def test_keep_if_best_one_unknown_case_makes_the_candidate_unknown_and_it_never_wins_a_tie() -> None:
-    assert _keep(SAVE, ("one", 0.5, [100, 100]), ("two", 0.5, [1, None])) == "one"
-    assert _keep(SAVE, ("one", 0.5, [100, None]), ("two", 0.5, [1, 1])) == "one"
-    assert _keep(SAVE, ("one", 0.5, ["bad", 100]), ("two", 0.5, [1, 1])) == "one"
+def test_an_unknown_or_non_integer_token_count_never_displaces_the_incumbent() -> None:
+    counts: list[list[object]] = [[1, None], ["bad", 1], [1.0, 1.0], [True, True]]
+    for tokens in counts:
+        assert _keep(SAVE, ("two", 0.5, tokens)) == "seed", tokens
 
 
-def test_keep_if_best_a_float_count_is_unknown_for_the_tie_break() -> None:
-    assert _keep(SAVE, ("one", 0.5, [100, 100]), ("two", 0.5, [1.0, 1.0])) == "one"
-    assert _keep(SAVE, ("one", 0.5, [100, 100]), ("two", 0.5, [True, True])) == "one"
-
-
-def test_keep_if_best_equal_means_with_equal_tokens_keep_the_first_with_every_field_combination() -> None:
+def test_equal_tokens_keep_the_incumbent_with_every_field_combination() -> None:
     for statistics in (SAVE, Statistics(max_token_increase_per_gain=0.0), DEFAULT_STATISTICS):
-        assert _keep(statistics, ("one", 0.5, [7, 7]), ("two", 0.5, [7, 7])) == "one"
+        assert _keep(statistics, ("two", 0.5, [100, 100])) == "seed"
 
 
-def test_keep_if_best_without_a_token_field_ignores_cheaper_ties_even_at_zero_tokens() -> None:
-    assert _keep(DEFAULT_STATISTICS, ("one", 0.5, [100, 100]), ("two", 0.5, [0, 0])) == "one"
-    assert _keep(Statistics(max_token_increase_per_gain=0.0), ("one", 0.5, [100, 100]), ("two", 0.5, [0, 0])) == "two"
+def test_without_min_token_saving_a_cheaper_tie_never_displaces_the_incumbent() -> None:
+    for statistics in (DEFAULT_STATISTICS, Statistics(max_token_increase_per_gain=0.0)):
+        assert _keep(statistics, ("two", 0.5, [0, 0])) == "seed"
 
 
-def _best(statistics: Statistics, seed: list[object], other: list[object], other_score: float = 0.5) -> object:
-    outcomes = _validation("seed", 0.5, seed) + _validation("other", other_score, other)
-    kept: dict[str, object] = {"identity": "other", "mean": other_score, "files": {"a": "other"}}
-    return _stub(statistics, outcomes, kept)._best_validated(["v1", "v2"]).identity  # pyright: ignore[reportPrivateUsage] -- unit test of the private picker
-
-
-def test_best_validated_a_cheaper_tie_picks_the_candidate_only_when_a_token_field_is_set() -> None:
-    assert _best(SAVE, [100, 100], [99, 99]) == "changed"
-    assert _best(Statistics(max_token_increase_per_gain=0.0), [100, 100], [99, 99]) == "changed"
-    assert _best(DEFAULT_STATISTICS, [100, 100], [99, 99]) == "seed"
-
-
-def test_best_validated_unknown_or_equal_or_costlier_tokens_keep_the_seed() -> None:
-    assert _best(SAVE, [100, None], [1, 1]) == "seed"
-    assert _best(SAVE, [100, 100], [1, None]) == "seed"
-    assert _best(SAVE, [100, 100], [100, 100]) == "seed"
-    assert _best(SAVE, [100, 100], [101, 101]) == "seed"
-    assert _best(SAVE, ["x", 100], [1, 1]) == "seed"
-
-
-def test_best_validated_a_lower_candidate_mean_never_wins_on_tokens() -> None:
-    assert _best(SAVE, [100, 100], [0, 0], other_score=0.49) == "seed"
-
-
-def test_best_validated_without_a_kept_candidate_returns_the_seed() -> None:
+def test_a_lower_score_never_wins_on_tokens_and_a_clear_gain_wins_at_a_higher_cost() -> None:
+    assert _keep(SAVE, ("two", 0.49, [0, 0])) == "seed"
+    assert _keep(SAVE, ("two", 0.6, [500, 500])) == "two"
     session = _stub(SAVE, _validation("seed", 0.5, [1, 1]))
-    assert session._best_validated(["v1", "v2"]).identity == "seed"  # pyright: ignore[reportPrivateUsage] -- unit test of the private picker
-
-
-def _arrivals(identity: str, scores: list[tuple[str, float]], tokens: int) -> list[dict[str, object]]:
-    return [{"arm": "search", "split": "validation", "search_candidate": identity, "case_id": case_id,
-             "score": score, "usage": {"input_tokens": tokens, "cached_input_tokens": 0, "output_tokens": 0}}
-            for case_id, score in scores]
-
-
-def _tie_pick(seed_tokens: int, other_tokens: int, other_scores: list[tuple[str, float]],
-              statistics: Statistics = SAVE) -> object:
-    outcomes = (_arrivals("seed", [("v1", 0.1), ("v2", 0.2), ("v3", 0.3)], seed_tokens)
-                + _arrivals("other", other_scores, other_tokens))
-    kept: dict[str, object] = {"identity": "other", "mean": 0.2, "files": {"a": "other"}}
-    session = _stub(statistics, outcomes, kept)
-    return session._best_validated(["v1", "v2", "v3"]).identity  # pyright: ignore[reportPrivateUsage] -- unit test of the private picker
-
-
-def test_best_validated_equal_scores_in_another_order_are_a_tie_that_a_cheaper_candidate_wins() -> None:
-    reordered = [("v3", 0.3), ("v2", 0.2), ("v1", 0.1)]  # a plain sum differs only on Python 3.11; the test below covers newer interpreters
-    assert _tie_pick(100, 99, reordered) == "changed"
-    assert _tie_pick(100, 101, reordered) == "seed"
-
-
-def test_best_validated_a_mean_within_float_noise_above_the_seed_is_still_a_tie() -> None:
-    noisy = [("v1", 0.1), ("v2", 0.2), ("v3", 0.3 + 1e-16)]
-    assert _tie_pick(100, 101, noisy) == "seed"
-    assert _tie_pick(100, 99, noisy) == "changed"
-
-
-def test_best_validated_a_mean_above_the_seed_only_by_float_noise_loses_without_a_token_field() -> None:
-    noisy = [("v1", 0.1), ("v2", 0.2), ("v3", 0.3 + 1e-16)]
-    assert _tie_pick(100, 1, noisy, DEFAULT_STATISTICS) == "seed"
-
-
-def test_best_validated_a_clear_mean_gain_still_wins_when_the_candidate_costs_more() -> None:
-    better = [("v1", 0.1), ("v2", 0.2), ("v3", 0.4)]
-    assert _tie_pick(100, 500, better) == "changed"
+    assert session._best_validated().identity == "seed"  # pyright: ignore[reportPrivateUsage] -- unit test of the private picker
 
 
 # --- statistics values ------------------------------------------------------------------------------------
@@ -716,18 +651,14 @@ def test_a_frozen_record_with_a_malformed_token_key_is_tampered(
 SENTENCE = " Prefer fewer tokens when correctness is equal."
 
 
-class _Probe(FakeProvider):
+class _Probe(FakeRunProvider):
     """A fake provider whose improved candidate always scores 1.0 and costs `IMPROVED` task tokens."""
 
     IMPROVED: int = 101
     prompts: list[str] = []
 
     def __init__(self, _model: str, _budget: object, _checkpoint: Callable[[], None]) -> None:
-        pass
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
+        super().__init__()
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -766,7 +697,11 @@ def test_a_zero_cap_run_adds_the_prompt_sentence_and_rejects_a_one_token_increas
         approvals: Callable[..., tuple[str, int]]) -> None:
     provider = _probe(101)
     gate = _gate_of(tmp_path, make_target, write_draft, approvals, provider, {"max_token_increase_per_gain": 0.0})
-    assert (gate["verdict"], gate["reasons"]) == ("reject", ["token-cost"])
+    # The incumbent rule is the gate rule (gh-500): it rejects the costlier challenger, so the gate sees the seed.
+    search = cast(dict[str, object], read(tmp_path / "run" / "run.json")["search"])
+    comparisons = cast(list[dict[str, object]], search["comparisons"])
+    assert comparisons and all((item["verdict"], item["reasons"]) == ("reject", ["token-cost"]) for item in comparisons)
+    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
     assert provider.prompts and all(SENTENCE in prompt for prompt in provider.prompts)
 
 

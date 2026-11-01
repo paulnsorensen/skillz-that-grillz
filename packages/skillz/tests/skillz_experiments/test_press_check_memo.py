@@ -23,7 +23,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
 from skillz_experiments._contract import Contract
 from skillz_experiments._records import read
-from skillz_experiments.evaluation import CheckMemo, evaluate
+from skillz_experiments.evaluation import CheckMemo, CheckResult, evaluate
 from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments.harness._command import Command
@@ -31,7 +31,7 @@ from skillz_experiments._intake import intake_contract
 from skillz_experiments.run import run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import PASSED, FakeProvider, FakeRunProvider
 from memo_fixtures import SKILL, cases as _cases, contract as _contract
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ WAIT = 10.0
 @pytest.mark.ac("gh-247:AC-2")
 def test_a_real_claude_early_rejection_keeps_none_after_another_candidate_left_a_reason(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """D-7: `_transport.py` returns False without a reason. A reason that an earlier check left must not leak in."""
+    """D-7: `_transport.py` returns a rejection without a reason. A reason that an earlier check gave must not leak in."""
     def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
         del self, workspace, argv, seconds
         return 3, "", ""
@@ -69,7 +69,7 @@ def test_a_real_claude_early_rejection_keeps_none_after_another_candidate_left_a
     cases, memo = _cases(tmp_path, contract), CheckMemo()
     try:
         first = harness.evaluate(helper, cases[0], checks=memo)
-        reason = harness.rejection
+        reason = first["rejection"]
         assert isinstance(reason, str) and reason.startswith("helper fixture 0 fails on ")
         early = [harness.evaluate(undeclared, case, checks=memo) for case in cases]
         late = [harness.evaluate(helper, case, checks=memo) for case in cases[1:]]
@@ -99,13 +99,13 @@ class Gated(FakeProvider):
         self.checked: list[str] = []
 
     @override
-    def check_candidate(self, candidate: object) -> bool:
+    def check_candidate(self, candidate: object) -> CheckResult:
         identity = cast(Candidate, candidate).identity
         with self.lock:
             self.checked.append(identity)
         if identity != self.blocked:
             self.other_checked.set()
-        return True
+        return PASSED
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -143,7 +143,7 @@ def test_a_full_command_run_checks_the_seed_once_across_check_seed_and_every_cas
     lock = threading.Lock()
     counts: Counter[str] = Counter()
 
-    def counted(self: Command, candidate: Candidate) -> bool:
+    def counted(self: Command, candidate: Candidate) -> CheckResult:
         with lock:
             counts[candidate.identity] += 1
         return original(self, candidate)
@@ -158,13 +158,14 @@ def test_a_full_command_run_checks_the_seed_once_across_check_seed_and_every_cas
 
 
 @final
-class Searcher(FakeProvider):
+class Searcher(FakeRunProvider):
     """A provider that routes each evaluation through the session memo, as `Harness.evaluate` does, then scores.
 
     Proposals are new identities, so GEPA's `parallel=True` minibatch evaluates each one on several cases at once.
     """
 
     def __init__(self, budget: Budget, checkpoint: Callable[[], None], counts: Counter[str], contract: Contract) -> None:
+        super().__init__()
         self.budget = budget
         self.checkpoint = checkpoint
         self.counts = counts
@@ -173,24 +174,24 @@ class Searcher(FakeProvider):
         self.proposals = 0
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         if self.budget.calls == 0:
             for _ in range(PREFLIGHT_CALLS):
                 self.budget.claim()
         return {"isolation": "test-provider"}
 
     @override
-    def check_candidate(self, candidate: object) -> bool:
+    def check_candidate(self, candidate: object) -> CheckResult:
         identity = cast(Candidate, candidate).identity
         with self.lock:
             self.counts[identity] += 1
         time.sleep(0.02)
-        return True
+        return PASSED
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: CheckMemo) -> dict[str, object]:
-        passed, _ = checks.check(self, candidate)
-        assert passed
+        assert checks.check(self, candidate).passed
         for _ in range(self.contract.calls(case.kind)):
             self.budget.claim(holdout=holdout)
         self.checkpoint()

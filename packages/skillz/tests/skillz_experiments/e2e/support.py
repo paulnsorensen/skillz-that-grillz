@@ -20,6 +20,7 @@ from skillz_experiments.harness._claude import _sandbox
 from skillz_experiments.run import summary
 
 
+CRITERIA = [{"id": "text", "text": "THE output SHALL match the reference text."}]
 FIXTURES = Path(__file__).parent / "fixtures"
 ROOT = Path(__file__).resolve().parents[5]
 CLI = ROOT / ".venv/bin/skillz-experiment"
@@ -44,9 +45,11 @@ def snapshot(root: Path) -> dict[str, tuple[int, int, str]]:
 
 
 def build_wedge(skill: Path, destination: Path) -> dict[str, dict[str, str]]:
+    """Run `wedge build`. Builds in one pytest worker share a verified site-layer cache below the base temp."""
     destination.mkdir()
+    env = os.environ | {"WEDGE_CACHE": str(destination.parent.parent / "wedge-cache")}
     result = subprocess.run([str(ROOT / ".venv/bin/wedge"), "build", str(skill), "--out", str(destination)],
-                            capture_output=True, text=True, check=False)
+                            capture_output=True, text=True, check=False, env=env)
     assert result.returncode == 0, result.stderr
     return cast(dict[str, dict[str, str]], json.loads(result.stdout))
 
@@ -76,7 +79,8 @@ def make_vendor_bin(scenario: Scenario, home: Path, harness: str, mode: str) -> 
     settings = {"mode": mode, "log": str(scenario.out / "vendor.jsonl")}
     _ = (directory / "vendor-settings.json").write_text(json.dumps(settings))
     if harness == "claude":
-        for name, source in (("claude", FIXTURES / "claude.py"), ("bwrap", FIXTURES / "bwrap.py")):
+        for name, source in (("claude", FIXTURES / "claude.py"), ("bwrap", FIXTURES / "bwrap.py"),
+                             ("sandbox-exec", FIXTURES / "bwrap.py")):
             target = directory / name
             _ = shutil.copyfile(source, target)
             target.chmod(0o755)
@@ -126,11 +130,12 @@ def make_scenario(base: Path, *, helper: bool = False) -> Scenario:
     evals.mkdir()
     _ = (evals / "autoimprove.json").write_text(json.dumps(contract))
     draft: list[dict[str, object]] = []
-    for index in range(10):
+    # gh-300: f4 and f9 hold two cases each, so train gets 4 cases and validation gets 2 at seed 1 and the default seed.
+    for index, family in enumerate([*range(10), 4, 9]):
         source = f"case-{index}\n"
-        draft.append({"id": f"t{index}", "family": f"f{index}", "kind": "task",
+        draft.append({"id": f"t{index}", "family": f"f{family}", "kind": "task",
                       "request": "Transform fixture.md according to this skill.",
-                      "files": {"fixture.md": source}, "expected": {"text": source.upper()},
+                      "files": {"fixture.md": source}, "expected": {"text": source.upper(), "criteria": CRITERIA},
                       "source": "skill"})
     out = base / "run"
     out.mkdir(mode=0o700)

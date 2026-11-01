@@ -20,6 +20,7 @@ def valid_listing(value: object, workspace: Path, skill: str) -> bool:
     if not isinstance(data, list) or len(cast(list[object], data)) != 1:
         return False
     listing = mapping(cast(list[object], data)[0])
+    # app-server echoes `cwd` as sent but reports the skill path canonical (macOS: /var -> /private/var).
     if listing.get("cwd") != str(workspace) or listing.get("errors") != []:
         return False
     skills = listing.get("skills")
@@ -28,7 +29,7 @@ def valid_listing(value: object, workspace: Path, skill: str) -> bool:
     listed = mapping(cast(list[object], skills)[0])
     return (listed.get("name") == skill and listed.get("enabled") is True
             and listed.get("scope") == "repo" and listed.get("pluginId") is None
-            and listed.get("path") == str(workspace / ".agents/skills" / skill / "SKILL.md"))
+            and listed.get("path") == str(workspace.resolve() / ".agents/skills" / skill / "SKILL.md"))
 
 
 def _send(stream: IO[bytes], messages: list[dict[str, object]]) -> None:

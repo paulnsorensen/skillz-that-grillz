@@ -8,7 +8,9 @@ import fcntl
 import sys
 import time
 import uuid
+from collections import Counter
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from pathlib import Path
 from typing import cast, get_args
 
@@ -18,22 +20,22 @@ from skillz_experiments._budget import (
 )
 from skillz_experiments._candidate import NEW_CLI, Candidate, store_frozen
 from skillz_experiments._cases import CodedError, Split, digest, load_cases
-from skillz_experiments._contract import Contract
 from skillz_experiments._intake import (
     DRAFT_NAME,
-    HOLDOUT_MINIMUM,
     approval_question,
     case_hash,
+    check_criteria,
     check_helper_input,
     freeze,
     intake_contract,
     load_draft,
     skill_facts,
     split_cases,
+    too_few,
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
-from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_summary
-from skillz_experiments._wedge_targets import TargetPlan, plan_targets, seal, settle
+from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_inferred, seed_projection, seed_summary
+from skillz_experiments.run._wedge_targets import plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
     ClaudeOptions,
@@ -45,12 +47,10 @@ from skillz_experiments.harness import (
     refuses_claude_options,
     stop_kind,
 )
-from skillz_experiments.run._export import summary
+from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
-from skillz_experiments.run._history_store import load as load_history
-from skillz_experiments.run._history_store import store_path
-from skillz_experiments.run._history_store import write as write_history
-from skillz_experiments.run._plan import editable_files, plan_estimate, size_plan, supported_kind
+from skillz_experiments.run._edit_plan import editable_chars, reflection_warning, seed_or_prose
+from skillz_experiments.run._plan import plan_estimate, scored_kinds, size_plan
 from skillz_experiments.run._resume import (
     check_resume,
     check_statistics,
@@ -63,7 +63,11 @@ from skillz_experiments.run._resume import (
     statistics_flag,
     resolve_statistics,
 )
-from skillz_experiments.run._session import Factory, HarnessName, engine_hash, is_inside, Session, text_field
+from skillz_experiments.run._open import engine_hash, validation_policy
+from skillz_experiments.run._ports import HistoryStore, Ports
+from skillz_experiments.run._record_fields import text_field
+from skillz_experiments.run._session import Session
+from skillz_experiments.run._state import Factory, HarnessName
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Edit
 
@@ -73,21 +77,11 @@ DEFAULT_SEED = 20261006
 DEFAULT_REPEATS = 3
 
 
-def _fall_back_to_prose(target: Path, skeleton: Candidate, contract: Contract,
-                        error: CodedError) -> tuple[TargetPlan, Candidate]:
-    """Plan an omitted `--edit` as `prose` after `prose+cli` found nothing to edit, and say why on stderr."""
-    print(f"skillz-experiment: {error}; this run uses --edit prose", file=sys.stderr)
-    wedge = plan_targets(target, skeleton.files, contract, "prose")
-    files = skeleton.files | wedge.sources
-    frozen = skeleton.frozen | wedge.frozen
-    return wedge, Candidate(files, tuple(editable_files(files, contract, "prose", frozen.keys(), wedge)), contract, frozen=frozen)
-
-
 def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Edit | None, repeats: int, seed: int | None,
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
              options: ClaudeOptions, configuration: Configuration | None = None,
              statistics_given: Mapping[str, float] | None = None, judge_model: str | None,
-             history: bool = True) -> Statistics:
+             history: bool = True, requested_kinds: Sequence[str] = ()) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
     The case approval covers the resolved statistics, so a changed or dropped flag stops at the case approval.
@@ -108,30 +102,44 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         seeded = seed_cases(target)
         if seeded is not None:
             write(seed_file, seeded)
-            data |= {"seed_file": str(seed_file), "seed_summary": seed_summary(seeded)}
+            split: dict[str, object] | None = None
+            with suppress(CodedError, ValueError):
+                planned = intake_contract(target)
+                split = seed_projection(seeded, scored_kinds(planned), planned.journey_kinds())
+            data |= {"seed_file": str(seed_file), "seed_summary": seed_summary(seeded, seed_inferred(target), split)}
         start = "" if seeded is None else f", starting from the seed cases in {seed_file}"
         raise Stop("cases-missing", f"write the case draft to {draft}{start}, then call run again",
                    data | ({"doctor": report} if report else {}))
     split_seed = DEFAULT_SEED if seed is None else seed
     contract = intake_contract(target)
     resolved = resolve_statistics(contract, statistics_given or {})
-    kind = supported_kind(contract)
+    kinds = scored_kinds(contract, requested_kinds)
     captures = configuration.judge_captures() if configuration is not None else has_claude_sandbox(adapter)
-    if contract.kinds[kind].capture and not captures:
-        raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
-                         + "the claude harness can show capture files to the judge; run with --harness claude")
-    drafted = load_draft(draft)
+    for kind in kinds:
+        if contract.kinds[kind].capture and not captures:
+            raise CodedError("contract-capture-unsupported", f"the kind {kind} declares capture, and only "
+                             + "the claude harness can show capture files to the judge; run with --harness claude")
+    journeys = set(contract.journey_kinds())
+    extra = [] if requested_kinds else [kind for kind in journeys if kind not in kinds]
+    drafted = load_draft(draft, contract.journey_kinds())
+    task_adapter = configuration.roles["task"].adapter if configuration is not None else adapter
+    evaluated = {*kinds, *extra}
+    if not Configuration.supports_conversation(task_adapter) and any(case.journey is not None and case.kind in evaluated for case in drafted):
+        retry = "; or pass --kind task" if "task" in contract.kinds and "task" not in journeys else ""
+        raise CodedError("journey-unsupported", "a journey case needs a task transport that can hold a conversation; "
+                         + f"run with --harness claude or codex{retry}")
     check_helper_input(contract, drafted)
     check_coverage(target, drafted)
-    cases = split_cases(drafted, split_seed, kind)
+    plain = [kind for kind in kinds if kind not in journeys]
+    cases = split_cases(drafted, split_seed, plain[0] if plain else None, [kind for kind in kinds if kind in journeys], extra)
+    check_criteria(contract, cases)
     unknown = sorted(set(resolved.family_budgets) - {case.family for case in cases})
     if unknown:
         raise CodedError("contract-family-unknown", f"the contract family_budgets names no draft family: {', '.join(unknown)}; "
                          + f"the draft families are {', '.join(sorted({case.family for case in cases}))}")
-    held = sum(case.split == "holdout" and case.kind == kind for case in cases)
-    if held < HOLDOUT_MINIMUM:
-        raise CodedError("cases-too-few", f"the holdout has {held} scored cases; the minimum is {HOLDOUT_MINIMUM}; "
-                         + "add task cases in more families to the draft, then call run again")
+    shortfall = too_few(Counter(case.family for case in cases if case.scored and case.kind in kinds))
+    if shortfall is not None:
+        raise shortfall
     expected = case_hash(cases, split_seed, resolved.data())
     if resolve_harness or configuration is not None:
         chosen = configuration if configuration is not None else Configuration.split(adapter, model, judge_model, options)
@@ -149,13 +157,11 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     wedge = plan_targets(target, skeleton.files, contract, mode)
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
-    try:
-        seed_candidate = Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen)
-    except CodedError as error:
-        if edit is not None or error.code != "helper-missing":
-            raise
-        mode = "prose"
-        wedge, seed_candidate = _fall_back_to_prose(target, skeleton, contract, error)
+    mode, wedge, seed_candidate, _ = seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
+    # An omitted --edit that still plans prose+cli here failed its prose fallback, so the warning does not offer prose.
+    warning = reflection_warning(editable_chars(seed_candidate.files, seed_candidate.editable), mode, offer_prose=edit is not None)
+    if warning is not None:
+        print(f"skillz-experiment: warning: {warning}", file=sys.stderr)
     plan = size_plan(contract, scored, repeats, (options if configuration is None else configuration.sizing_options()))
     shown = plan_estimate(plan, repeats, count["holdout"])
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
@@ -163,19 +169,16 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         budget = approve(plan.sized, approve_budget, reserve=plan.reserve, reserve_time=plan.reserve_seconds)
     except BudgetUnapproved as error:
         raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
-                                                     "statistics": resolved.data(), **shown_options}) from None
+                                                     "statistics": resolved.data(), **shown_options,
+                                                     **({} if warning is None else {"reflection_warning": warning})}) from None
     offered = wedge.capable is not None
     wedge, layers = settle(wedge, out / "site")
     if offered and wedge.capable is None:
         files = skeleton.files | wedge.sources
         frozen = skeleton.frozen | wedge.frozen
-        try:
-            seed_candidate = Candidate(files, tuple(editable_files(files, contract, mode, frozen.keys(), wedge)), contract, frozen=frozen)
-        except CodedError as error:
-            if edit is not None or error.code != "helper-missing":
-                raise
-            mode, layers = "prose", {}
-            wedge, seed_candidate = _fall_back_to_prose(target, skeleton, contract, error)
+        mode, wedge, seed_candidate, fell_back = seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
+        if fell_back:
+            layers = {}
     seed_candidate, owned = seal(wedge, seed_candidate, target, layers)
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
@@ -191,6 +194,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         "seed_frozen": seed_frozen, "own_targets": owned,
         "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
         "estimate": shown, "engine_hash": engine_hash(), "statistics": resolved.data(),
+        "validation_policy": validation_policy(),
         "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
                    "reserve_seconds": budget.reserve_seconds, "approved": budget.approved,
                    **({"journey": True} if budget.journey else {})},
@@ -258,12 +262,11 @@ def _check_statistics_flags(statistics: Mapping[str, float] | None) -> dict[str,
     return accepted
 
 
-def _record_history(session: Session, loaded: Loaded) -> None:
+def _record_history(session: Session, history: HistoryStore, loaded: Loaded) -> None:
     """Add this run's attempts to the store, then write the history block of the search. A store fault adds a warning."""
-    path = store_path(session.contract.skill, text_field(session.record, "target_root"))
     attempts = cast(dict[str, object], session.record["search"]).get("attempts")
-    warning = write_history(path, session.record, text_field(session.record, "run_id"),
-                            cast(list[dict[str, object]], attempts or []))
+    warning = history.write(session.contract.skill, text_field(session.record, "target_root"), session.record,
+                            text_field(session.record, "run_id"), cast(list[dict[str, object]], attempts or []))
     if warning is not None and warning not in loaded.warnings:
         loaded.warnings.append(warning)
     with session.lock:
@@ -271,7 +274,7 @@ def _record_history(session: Session, loaded: Loaded) -> None:
         session.checkpoint()
 
 
-def _search(session: Session) -> None:
+def _search(session: Session, history: HistoryStore) -> None:
     """Run the search with the compatible earlier attempts of the history store, then add this run's attempts to it.
 
     A run with `history` off neither reads nor writes the store. A store fault adds a warning and keeps the result.
@@ -282,13 +285,13 @@ def _search(session: Session) -> None:
             cast(dict[str, object], session.record["search"])["history"] = {"enabled": False}
             session.checkpoint()
         return
-    path = store_path(session.contract.skill, text_field(session.record, "target_root"))
-    loaded = load_history(path, session.record, text_field(session.record, "run_id"))
+    loaded = history.load(session.contract.skill, text_field(session.record, "target_root"), session.record,
+                          text_field(session.record, "run_id"))
     session.search(earlier=loaded.attempts)
-    _record_history(session, loaded)
+    _record_history(session, history, loaded)
 
 
-def _repair_history(session: Session) -> None:
+def _repair_history(session: Session, history: HistoryStore) -> None:
     """Write the store for a run that stopped after the `searched` checkpoint and before the store write.
 
     The write replaces the line of the same run id, so a repeat is safe. The block names no earlier run, because this
@@ -296,10 +299,10 @@ def _repair_history(session: Session) -> None:
     """
     search = session.record.get("search")
     if session.record.get("history") is True and isinstance(search, dict) and "history" not in search:
-        _record_history(session, Loaded())
+        _record_history(session, history, Loaded())
 
 
-def _drive(session: Session) -> dict[str, object]:
+def _drive(session: Session, ports: Ports) -> dict[str, object]:
     """Run the remaining phases of `session`, close the provider, and return the run summary."""
     pending: BaseException | None = None
     try:
@@ -309,13 +312,13 @@ def _drive(session: Session) -> dict[str, object]:
             session.preflight()
             if session.phase == "prepared":
                 session.check_seed()
-                _search(session)
+                _search(session, ports.history)
             elif session.phase == "searched":
-                _repair_history(session)
+                _repair_history(session, ports.history)
             if session.phase == "searched":
                 session.gate()
             if session.phase == "gated":
-                session.replay()
+                session.replay(ports.patches)
             if session.phase == "replayed":
                 session.finish()
         except EnvironmentDiffers:
@@ -340,7 +343,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None,
         statistics: Mapping[str, float] | None = None,
-        judge_model: str | None = None, history: bool | None = None) -> dict[str, object]:
+        judge_model: str | None = None, history: bool | None = None, kinds: Sequence[str] = (),
+        ports: Ports | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
     `judge_model` sets the model of the judge calls. Task and reflection calls use `model`. The first run records it,
@@ -351,6 +355,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
 
     `history` turns the private cross-run attempt history on or off. It is on by default. The first run records it,
     and a resume that passes another value stops with `run-config-differs`.
+
+    `ports` replaces the default infrastructure adapters: `git apply` for the replay and the XDG history store.
     """
     requested, given = _check_arguments(
         adapter, configuration, factory, edit, repeats,
@@ -363,7 +369,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                          + "configuration")
     statistics_given = _check_statistics_flags(statistics)
     if is_inside(out, target):
-        raise ValueError("--out must be outside the target skill directory")
+        raise CodedError("out-inside-target", f"{out} is inside the target skill directory; "
+                         + "use a private directory outside the skill from `mktemp -d`")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
     require_private(out)
     path = out / "run.json"
@@ -392,8 +399,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
                               options=requested, configuration=configuration,
                               statistics_given=statistics_given, judge_model=judge_model,
-                              history=True if history is None else history)
+                              history=True if history is None else history, requested_kinds=kinds)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)
-        return _drive(session)
+        return _drive(session, ports or Ports())

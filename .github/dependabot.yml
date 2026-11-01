@@ -4,21 +4,31 @@
 # GitHub Actions refs and the root uv workspace have Dependabot updates.
 # The root uv.lock also pins every skill .pyz closure.
 # Workflow pip pins have no manifest. Dependabot does not update them.
+# `dist` is the default branch and only CI writes it, so each update targets main.
+# The PR title lint needs Conventional Commits, so each entry sets `chore(deps):`.
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    target-branch: main
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
     groups:
       actions-minor-and-patch:
         update-types: [minor, patch]
   - package-ecosystem: uv
     directory: /
+    target-branch: main
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    commit-message:
+      prefix: chore
+      include: scope
     groups:
       uv-minor-and-patch:
         update-types: [minor, patch]

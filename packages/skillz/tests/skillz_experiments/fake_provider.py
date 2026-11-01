@@ -7,6 +7,10 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
+from skillz_experiments.evaluation import CheckResult
+
+PASSED = CheckResult(True, None, "pass")
+
 
 class ProviderCrash(OverflowError):
     """A provider error that ends the run. The gate does not catch an `OverflowError`; `run` records it and re-raises."""
@@ -14,8 +18,6 @@ class ProviderCrash(OverflowError):
 
 class FakeProvider:
     """No-op defaults for every `Transport` member that a fake does not exercise."""
-
-    rejection: str | None = None
 
     def check_name(self, candidate: object) -> None:
         del candidate
@@ -40,6 +42,26 @@ class FakeProvider:
     def close(self) -> None:
         pass
 
-    def check_candidate(self, candidate: object) -> bool:
+    def check_candidate(self, candidate: object) -> CheckResult:
         del candidate
-        return True
+        return PASSED
+
+
+class FakeRunProvider:
+    """No-op defaults for the run `Provider` port (`run/_state.py`): the members that a run fake rarely overrides."""
+
+    def __init__(self) -> None:
+        self.run_facts: dict[str, object] = {}
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
+        return {"isolation": "test-provider"}
+
+    def close(self) -> None:
+        pass
+
+    def check_name(self, candidate: object) -> None:
+        del candidate
+
+    def check_candidate(self, candidate: object) -> CheckResult:
+        del candidate
+        return PASSED

@@ -6,7 +6,7 @@ name = "skillz-experiment"
 entry = "skillz_experiments._cli:main"
 source = "../../packages/skillz/src/skillz_experiments"
 include = ["../../packages/fromargs/src/fromargs", "../../packages/wedge/src/wedge"]
-groups = ["experiments", "wedge"]
+groups = ["experiments", "retry", "wedge"]
 
 [[target]]
 name = "inspect-skill"

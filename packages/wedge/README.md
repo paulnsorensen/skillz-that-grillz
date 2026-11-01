@@ -33,6 +33,49 @@ branch through the compare API, so a shallow checkout still passes.
 For local development, run `uv run --project packages/wedge wedge --help`. Building
 requires `uv`; publishing also requires an authenticated `gh` CLI.
 
+## Merge queues and publication races
+
+Run the check that matches each skill's packaging mode on both `pull_request`
+and `merge_group: {types: [checks_requested]}`:
+
+- **Locks and launchers:** run `wedge check --root skills`, or use the action's `command: check`.
+- **Committed direct bundles:** run `wedge bundle --root skills --check`. It checks the committed bundles and does not overwrite them.
+- **Bundles built only in CI:** build them from the event checkout, then test the generated distribution before merging.
+
+`wedge check` rejects a direct-bundle skill, and `wedge bundle --check` rejects a
+lock-mode skill. Keep each mode under its own root, or pass the skill directories
+of one mode. The
+[action workflow guide](../../actions/wedge/README.md#workflows)
+defines the merge-queue setup, stale-artifact recovery, and publication policy.
+
+### Example: easy-cheese
+
+The [easy-cheese repository](https://github.com/paulnsorensen/easy-cheese) uses
+CI-built direct bundles and a separate `dist` branch, not the action's legacy
+release-asset workflow. These links pin the implementation inspected on
+2026-10-22:
+
+- [Validation workflow](https://github.com/paulnsorensen/easy-cheese/blob/d70e619dc0cda9c4d52140b1689d2e744c51a754/.github/workflows/validate.yml):
+  handles `pull_request` and `merge_group`; builds archives, stages skills,
+  checks publication with `gh skill publish --dry-run`, and runs each archive's `--help`.
+- [Distribution workflow](https://github.com/paulnsorensen/easy-cheese/blob/d70e619dc0cda9c4d52140b1689d2e744c51a754/.github/workflows/publish-dist.yml):
+  uses a shared `publish-dist` concurrency group with `cancel-in-progress: false`.
+  Each run checks out the latest `main` tip, rather than the triggering commit.
+  Manual and hourly runs retry publication when an earlier run fails or a newer pending run replaces it.
+- [Distribution publisher](https://github.com/paulnsorensen/easy-cheese/blob/d70e619dc0cda9c4d52140b1689d2e744c51a754/scripts/publish_dist.py):
+  puts the source snapshot and all built archives in one `dist` commit.
+  Its `Source-Commit` trailer identifies the source. It skips older snapshots,
+  rejects divergent history, and uses a non-force push so concurrent writes fail
+  rather than overwrite another publication.
+
+This example shows merge-group-ready validation and race-safe distribution,
+not proof of queue enforcement. Check your own repository settings before
+relying on a queue.
+
+Do not copy the distribution workflow's pending-run replacement into a
+release-asset publisher. It works here because the next snapshot includes all
+intervening source changes; it does not preserve every historical release asset.
+
 ## Optional skill experiments
 
 The installed skill ships `scripts/skillz-experiment.pyz` with pinned GEPA 0.1.4.

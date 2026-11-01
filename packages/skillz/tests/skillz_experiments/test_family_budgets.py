@@ -21,7 +21,7 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._resume import resolve_statistics
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 MODEL = "local-test"
 
@@ -219,15 +219,11 @@ def test_a_contract_without_the_new_keys_hashes_as_before() -> None:
 REGRESSING = ("f0", "f1")
 
 
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     """A fake provider. `improved` always wins the search. On the holdout, families f0 and f1 reverse that."""
 
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
-        pass
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
+        super().__init__()
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -253,7 +249,7 @@ class _Tie(_Provider):
         del candidate, case, holdout
         assert schema is not None
         seed = cast(dict[str, str], json.loads(prompt.rsplit("\n", 1)[1])["candidate"])
-        return {"answer": {name: seed[name] for name in cast(list[str], schema["required"])}}
+        return {"answer": {name: seed.get(name) for name in cast(list[str], schema["required"])}}
 
 
 def test_a_tie_run_lists_every_one_case_family_as_skipped(
@@ -305,7 +301,7 @@ def test_a_family_budget_flag_rejects_a_regressing_holdout_family_and_summary_an
     gate = cast(dict[str, object], result["gate"])
     reasons = cast(list[str], gate["reasons"])
     assert gate["verdict"] == "reject"
-    assert reasons == ["family-regression:f0"]
+    assert reasons == ["family-regression:f0", "family-regression:f1"]
     assert gate["skipped_families"] == []
     assert read(out / "run.json")["statistics"]["family_budget"] == 0.0  # pyright: ignore[reportIndexIssue]
     _ = export(out, tmp_path / "export")
@@ -449,7 +445,7 @@ def test_the_cli_passes_family_budget_to_run(tmp_path: Path, monkeypatch: pytest
         seen.update(kwargs)
         return {}
 
-    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    monkeypatch.setattr("skillz_experiments.run.run", fake)
     base = ["run", "--target", str(tmp_path / "skill"), "--out", str(tmp_path / "run"), "--model", MODEL]
     assert main([*base, "--family-budget=0.25"]) == 0
     assert seen["statistics"] == {"family_budget": 0.25}

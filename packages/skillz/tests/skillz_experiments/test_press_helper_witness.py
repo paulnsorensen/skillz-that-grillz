@@ -15,7 +15,7 @@ import pytest
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import load_cases
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._evaluation import witnessed_events
+from skillz_experiments.evaluation._scoring import witnessed_events
 from skillz_experiments.evaluation._evaluator import _activation, evaluate  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments._protocol import LEDGER_KEY
@@ -34,11 +34,13 @@ ROOT = f".agents/skills/{SKILL}"
 
 def rules() -> Contract:
     return parse({"schema_version": 1, "status": "approved", "skill": SKILL, "invocation": f"${SKILL} run",
-                  "kinds": {"echo": {"grader": "exact-json"}, "style": {"grader": "judge", "rubric": "Rate it."}}}, "skill")
+                  "kinds": {"echo": {"grader": "exact-json"}, "style": {"grader": "judge", "rubric": "Rate it."}},
+                  "helper": {"path": HELPER, "input": "input.txt",
+                             "fixtures": [{"input": "hi", "returncode": 0, "output": {"echo": "hello"}}]}}, "skill")
 
 
 def candidate(source: str = HELPER_SOURCE) -> Candidate:
-    return Candidate({"SKILL.md": "seed", HELPER: source}, ("SKILL.md",), contract=rules(), script=HELPER)
+    return Candidate({"SKILL.md": "seed", HELPER: source}, ("SKILL.md",), contract=rules())
 
 
 def event(command: str, code: int = 0) -> dict[str, object]:
@@ -47,7 +49,7 @@ def event(command: str, code: int = 0) -> dict[str, object]:
 
 def build(tmp_path: Path, files: dict[str, str], helper: str = HELPER) -> tuple[Path, Witness]:
     workspace = make_workspace(tmp_path / "workspace")
-    item = Candidate({"SKILL.md": "seed", **files}, ("SKILL.md",), contract=rules(), script=helper)
+    item = Candidate({"SKILL.md": "seed", **files}, ("SKILL.md",), contract=rules())
     stage_task(workspace, item, None)
     witness = stage_witness(workspace, SKILL, helper)
     assert witness is not None
@@ -259,23 +261,25 @@ def result(command: str, ledger: object = ...) -> dict[str, object]:
 
 
 def test_activation_without_a_ledger_adds_no_witness_key() -> None:
-    out = result(f"python3 -I {INVOKED}")
+    out = result(f"python3 -I {INVOKED} input.txt")
     _, _, helper = _activation(out, candidate(), rules())
     assert "helper_witnessed" not in out and LEDGER_KEY not in out
     assert helper is True
 
 
 def test_activation_with_an_empty_ledger_refuses_helper_credit() -> None:
-    out = result(f"python3 -I {INVOKED}", [])
+    out = result(f"python3 -I {INVOKED} input.txt", [])
     _, _, helper = _activation(out, candidate(), rules())
     assert helper is False and out["helper_witnessed"] is False and LEDGER_KEY not in out
 
 
 def test_activation_without_a_helper_does_not_report_a_witness() -> None:
-    bare = Candidate({"SKILL.md": "seed"}, ("SKILL.md",), contract=rules())
+    bare_rules = parse({"schema_version": 1, "status": "approved", "skill": SKILL, "invocation": f"${SKILL} run",
+                        "kinds": {"echo": {"grader": "exact-json"}}}, "skill")
+    bare = Candidate({"SKILL.md": "seed"}, ("SKILL.md",), contract=bare_rules)
     out = result("echo", [])
     out["answer"] = {"load_marker": bare.identity}
-    _, _, helper = _activation(out, bare, rules())
+    _, _, helper = _activation(out, bare, bare_rules)
     assert helper is True and "helper_witnessed" not in out
 
 

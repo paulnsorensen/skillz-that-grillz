@@ -112,3 +112,18 @@
 - 2026-10-15 · 1406d6d87eb17d68 · updated · decisions/skillz-autoimprove.md · ADR-017 records the three autoimprove claims, the replay phase, and the claims.apply rule (spec skillz-autoimprove-claims).
 - 2026-10-15 · 1406d6d87eb17d68 · merged · ideas/session-driven-skill-optimization.md · Export section now states the replay on a clean copy and the three-claim report.
 
+- 2026-10-18 · pr-363-journey-kits · updated · decisions/skillz-autoimprove.md · Record the kit location `packages/skillz/journey-kits/` in an ADR-008 note and the ADR-019 context, and why PR #363 renamed it from `experiments/`.
+
+
+- 2026-10-19 · 82aa7d68c88aff27 · new-page · research/llm-judge-scoring-and-binary-criteria.md · Current judge scoring (0-100, pillar mean, one call per case) and judge-scale, binary-checklist, generated-criteria, and EARS research. Research only; the /mold judge design is open. No page owned the topic; ADR and criteria files left unchanged. All five frozen probes return the page at rank 1.
+
+- 2026-10-22 · c1182c6ea19c3c0d · merged · decisions/wedge-skill-packaging.md · Record consumer merge-group validation and separate publication policies. All three frozen probes return the decision page at rank 1; corpus reconciliation remains pending.
+
+- 2026-10-24 · wedge-site-layer-cache · updated · decisions/wedge-skill-packaging.md · ADR-003 and ADR-011 amendments: `build` reuses a manifest-verified site layer from wedge's own cache, and `build_from_layer` links clean layer entries instead of copying them
+
+- 2026-10-25 · wiki-harvest · updated · criteria/index.md · Add the 41 criteria files that the index list lacked, so the list matches the directory.
+
+- 2026-10-27 · gh-324-live-proof · new-page · skillz-live-proof-lessons.md · Lessons from the #324 live proof: split and plain preflight prompts after a live model refusal, the native Read setting, split floors that move suites and caps together, caps that equal the dry estimate, the scoring-label cohort break, CPU-time test margins, and process gotchas. No page owned these gotchas; ADR-006 and the criteria files hold the design.
+
+
+- 2026-10-30 · 6070cd54e776b3bf · merged · decisions/skillz-autoimprove.md · Record approved trusted activation and native shell/cwd parsing constraints from PR #579.

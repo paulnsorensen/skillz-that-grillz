@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import json
+import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import cast
@@ -15,11 +18,13 @@ from skillz_experiments.harness import Configuration, command_profile
 from skillz_experiments.wrapper import _gemini
 from skillz_experiments.wrapper._gemini import respond
 from skillz_experiments._budget import Budget
+from skillz_experiments._runtime import SANDBOX_SECONDS, TERM_GRACE_SECONDS
 
 FIXTURES = Path(__file__).parent / "fixtures"
 MAIN = "import sys; from skillz_experiments._cli import main; sys.exit(main())"
 SCHEMA: dict[str, object] = {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"],
                              "additionalProperties": False}
+pytestmark = pytest.mark.usefixtures("runner_tempdir")  # each `workspace(tmp_path)` is below the temporary directory
 
 
 def no_dirs() -> list[Path]:
@@ -155,6 +160,25 @@ def test_infer_passes_the_image_and_the_macos_profile(tmp_path: Path, monkeypatc
     assert env["GEMINI_SANDBOX_IMAGE"] is None and env["SANDBOX_FLAGS"] is None
 
 
+def test_sandbox_exec_argv_pins_the_developer_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path))
+    launched: list[list[str]] = []
+
+    def run(command: list[str], *_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        launched.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    def runtime(_runtime: str | None, _bin_dir: Path | None) -> tuple[str, str]:
+        return "sandbox-exec", "/usr/bin/sandbox-exec"
+
+    monkeypatch.setattr(_gemini, "_runtime", runtime)
+    monkeypatch.setattr(_gemini, "_run", run)
+    root = workspace(tmp_path)
+    _ = _gemini._sandbox({"argv": ["true"]}, root, None, _gemini.IMAGE, None)  # pyright: ignore[reportPrivateUsage]
+    assert f"DEVELOPER_DIR={tmp_path}" in launched[0]
+    assert launched[0].index(f"DEVELOPER_DIR={tmp_path}") < launched[0].index("true")
+
+
 def test_infer_trace_holds_only_the_tool_calls_gemini_reported(tmp_path: Path) -> None:
     directory = fake_bin(tmp_path)
     result = infer(directory, workspace(tmp_path))
@@ -260,6 +284,16 @@ def test_an_image_that_looks_like_an_option_is_refused(tmp_path: Path) -> None:
     assert not (directory / "docker.log").exists()
 
 
+@pytest.mark.ac("gh-402:AC-1")
+@pytest.mark.parametrize("model", ["", " \t", "--include-directories=/home/x", "-gemini-2.5"])
+def test_an_infer_model_that_is_empty_or_looks_like_an_option_is_refused(tmp_path: Path, model: str) -> None:
+    directory = fake_bin(tmp_path)
+    raw = request("infer", workspace(tmp_path), prompt="p", response_schema=SCHEMA, model=model)
+    with pytest.raises(ValueError, match="model must be a model name that does not start with '-'"):
+        _ = respond(raw, bin_dir=directory)
+    assert not (directory / "gemini.log").exists() and not (directory / "docker.log").exists()
+
+
 def test_a_container_runtime_is_refused_on_macos(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
     directory = fake_bin(tmp_path)
@@ -287,11 +321,16 @@ def test_missing_macos_runtime_names_seatbelt(tmp_path: Path, monkeypatch: pytes
         _ = respond(request("sandbox", workspace(tmp_path), argv=["true"]))
 
 
+# A hanging fake must start and log its arguments before the deadline. A fresh Python script can take more than 1 s to
+# start under parallel test load on macOS; the wrapper then kills it before it logs.
+HANG_SECONDS = 5
+
+
 def test_a_sandbox_timeout_kills_the_named_container(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     directory = fake_bin(tmp_path)
     _ = (directory / "docker.mode").write_text("hang")
-    monkeypatch.setitem(_gemini.TIMEOUTS, "sandbox", 1)
-    with pytest.raises(RuntimeError, match="timed out after 1 s"):
+    monkeypatch.setitem(_gemini.TIMEOUTS, "sandbox", HANG_SECONDS)
+    with pytest.raises(RuntimeError, match=f"timed out after {HANG_SECONDS} s"):
         _ = respond(request("sandbox", workspace(tmp_path), argv=["true"]), bin_dir=directory)
     run, kill = docker_calls(directory)
     assert kill == ["kill", run[run.index("--name") + 1]]
@@ -300,8 +339,8 @@ def test_a_sandbox_timeout_kills_the_named_container(tmp_path: Path, monkeypatch
 def test_an_infer_timeout_kills_the_labeled_container(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     directory = fake_bin(tmp_path)
     _ = (directory / "gemini.mode").write_text("hang")
-    monkeypatch.setitem(_gemini.TIMEOUTS, "infer", 1)
-    with pytest.raises(RuntimeError, match="timed out after 1 s"):
+    monkeypatch.setitem(_gemini.TIMEOUTS, "infer", HANG_SECONDS)
+    with pytest.raises(RuntimeError, match=f"timed out after {HANG_SECONDS} s"):
         _ = infer(directory, workspace(tmp_path))
     listing, kill = docker_calls(directory)
     label = cast(dict[str, str], logged(directory / "gemini.log")[0]["env"])["SANDBOX_FLAGS"].split()[-1]
@@ -350,8 +389,18 @@ def test_the_sandbox_container_has_its_own_time_limit(tmp_path: Path) -> None:
     flags = docker_calls(directory)[0]
     start = flags.index("--entrypoint")
     assert flags[start + 1] == "/usr/bin/timeout"
-    assert flags[start + 3:start + 6] == ["-s", "KILL", str(_gemini.TIMEOUTS["sandbox"] + _gemini.CONTAINER_GRACE)]
+    assert flags[start + 3:start + 6] == ["-s", "KILL", str(_gemini.CONTAINER_SECONDS)]
     assert flags[start + 6] == "/usr/bin/env"
+
+
+@pytest.mark.ac("gh-364:AC-3")
+def test_the_container_ends_itself_soon_after_the_runner_kills_the_wrapper(tmp_path: Path) -> None:
+    directory = fake_bin(tmp_path)
+    _ = respond(request("sandbox", workspace(tmp_path), argv=["true"]), bin_dir=directory)
+    flags = docker_calls(directory)[0]
+    limit = int(flags[flags.index("KILL") + 1])
+    runner_kill = SANDBOX_SECONDS + TERM_GRACE_SECONDS
+    assert runner_kill < limit <= runner_kill + _gemini.CONTAINER_GRACE
 
 
 def test_infer_selects_google_login_and_keeps_the_docker_context(tmp_path: Path, user_home: Path) -> None:
@@ -591,6 +640,7 @@ def test_macos_sandbox_runs_the_command_under_the_shared_profile(tmp_path: Path,
     directory = fake_bin(tmp_path)
     root = workspace(tmp_path)
     monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr("skillz_experiments.harness._seatbelt.DEVELOPER_DIR", str(tmp_path / "missing"))
     log = tmp_path / "sandbox-exec.log"
     _ = (directory / "sandbox-exec").write_text(
         f"#!{sys.executable}\nimport json, sys\nopen({str(log)!r}, 'w').write(json.dumps(sys.argv[1:]))\n")
@@ -624,3 +674,168 @@ def test_command_line_refuses_an_unknown_runtime(tmp_path: Path) -> None:
     assert result.returncode != 0 and result.stdout == "" and "Traceback" not in result.stderr
     assert "runtime" in result.stderr and "lxc" in result.stderr
     assert not (directory / "docker.log").exists()
+
+
+ESCAPEE = ("import subprocess, sys, time\n"
+           "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], start_new_session=True)\n"
+           "open(sys.argv[1], 'w').write(str(child.pid))\n"
+           "time.sleep(60)\n")
+
+
+@pytest.mark.ac("gh-418:AC-1")
+def test_a_timeout_stops_the_container_and_bounds_the_drain_when_a_descendant_left_the_group(tmp_path: Path) -> None:
+    pid_file = tmp_path / "escapee.pid"
+    stopped: list[float] = []
+
+    def stop() -> str:
+        stopped.append(time.monotonic())
+        return ""
+    started = time.monotonic()
+    try:
+        with pytest.raises(RuntimeError, match="timed out after 1 s"):
+            _ = _gemini._run([sys.executable, "-c", ESCAPEE, str(pid_file)], tmp_path, {"PATH": "/usr/bin:/bin"},  # pyright: ignore[reportPrivateUsage]
+                             timeout=1, stop=stop)
+        elapsed = time.monotonic() - started
+    finally:
+        if pid_file.exists():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+    assert elapsed < 10 and stopped and stopped[0] - started < 1 + _gemini.DRAIN_GRACE / 2
+
+
+WRAPPER = ("import sys\n"
+           "from pathlib import Path\n"
+           "from skillz_experiments.wrapper import _gemini\n"
+           "_gemini._run([sys.executable, '-c', "
+           "'import os, sys, time; open(sys.argv[1], \"w\").write(str(os.getpid())); time.sleep(60)', sys.argv[1]],\n"
+           "             Path(sys.argv[2]), {'PATH': '/usr/bin:/bin'}, timeout=60)\n")
+
+
+def running(pid: int) -> bool:
+    state = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False).stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
+@pytest.mark.ac("gh-364:AC-1")
+def test_a_sigkill_of_the_wrapper_group_leaves_no_sandbox_child(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    wrapper = subprocess.Popen([sys.executable, "-c", WRAPPER, str(pid_file), str(tmp_path)], start_new_session=True)
+    child = 0
+    try:
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and not (pid_file.exists() and pid_file.read_text()):
+            time.sleep(0.05)
+        child = int(pid_file.read_text())
+        assert running(child)
+        os.killpg(wrapper.pid, signal.SIGKILL)
+        _ = wrapper.wait()
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and running(child):
+            time.sleep(0.05)
+        assert not running(child)
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(wrapper.pid, signal.SIGKILL)
+        if child:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child, signal.SIGKILL)
+
+
+@pytest.mark.ac("gh-364:AC-2")
+def test_a_timeout_kills_the_child_and_leaves_the_wrapper_running(tmp_path: Path) -> None:
+    pid_file = tmp_path / "child.pid"
+    script = "import os, time; open(%r, 'w').write(str(os.getpid())); time.sleep(60)" % str(pid_file)
+    stopped: list[bool] = []
+    with pytest.raises(RuntimeError, match="timed out after 1 s"):
+        _ = _gemini._run([sys.executable, "-c", script], tmp_path, {"PATH": "/usr/bin:/bin"}, timeout=1,  # pyright: ignore[reportPrivateUsage]
+                         stop=lambda: stopped.append(True) or "")
+    assert stopped and not running(int(pid_file.read_text()))
+
+
+
+def discover_request(root: Path) -> str:
+    return request("discover", root, skill_name="demo", skill_path=str(root / ".agents/skills/demo"))
+
+
+@pytest.mark.ac("gh-419:AC-1")
+@pytest.mark.parametrize("operation", ["discover", "infer"])
+def test_the_dotenv_guard_refuses_a_workspace_outside_the_temporary_directory(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str) -> None:
+    directory = fake_bin(tmp_path)
+    (tmp_path / "temporary").mkdir()
+    monkeypatch.setattr(tempfile, "gettempdir", lambda: str(tmp_path / "temporary"))
+    root = workspace(tmp_path)
+    sibling = root.parent / ".env"
+    _ = sibling.write_text("SECRET=keep")
+    raw = (discover_request(root) if operation == "discover"
+           else request("infer", root, prompt="p", response_schema=SCHEMA))
+    with pytest.raises(ValueError, match="temporary directory"):
+        _ = respond(raw, bin_dir=directory)
+    assert sibling.read_text() == "SECRET=keep"
+
+
+@pytest.mark.ac("gh-419:AC-2")
+@pytest.mark.parametrize("kind", ["text", "symlink"])
+def test_the_dotenv_guard_never_destroys_an_existing_dotenv_file(tmp_path: Path, kind: str) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    target = tmp_path / "target.env"
+    _ = target.write_text("SECRET=keep")
+    existing = root.parent / ".env"
+    if kind == "text":
+        _ = existing.write_text("SECRET=keep")
+    else:
+        existing.symlink_to(target)
+    with pytest.raises(ValueError, match="dotenv"):
+        _ = respond(discover_request(root), bin_dir=directory)
+    assert existing.is_symlink() == (kind == "symlink") and existing.read_text() == "SECRET=keep"
+    assert target.read_text() == "SECRET=keep"
+
+
+@pytest.mark.ac("gh-419:AC-3")
+def test_an_invalid_request_writes_no_dotenv_guard(tmp_path: Path) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    bad = [request("discover", root, skill_name="demo", skill_path=str(tmp_path / "other")),
+           request("infer", root, prompt="p", response_schema=SCHEMA, model="-x")]
+    for raw in bad:
+        with pytest.raises(ValueError):
+            _ = respond(raw, bin_dir=directory)
+        assert not (root.parent / ".env").exists()
+
+
+@pytest.mark.ac("gh-419:AC-5")
+def test_the_command_adapter_passes_the_runner_temp_dir_so_the_guard_accepts_its_workspace(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from skillz_experiments.harness._command import Command
+
+    directory = fake_bin(tmp_path)
+    runner_tmp = tmp_path / "t"
+    runner_tmp.mkdir()
+    monkeypatch.setenv("TMPDIR", str(runner_tmp))
+    monkeypatch.setattr(tempfile, "tempdir", None)
+    script = tmp_path / "wrapper.py"
+    _ = script.write_text("\n".join([
+        "import json, sys, tempfile",
+        "from pathlib import Path",
+        "from skillz_experiments.wrapper._gemini import respond",
+        f"Path({str(tmp_path / 'seen')!r}).write_text(tempfile.gettempdir())",
+        f"print(json.dumps(respond(sys.stdin.read(), bin_dir=Path({str(directory)!r}))))",
+        ""]))
+    task = Path(tempfile.mkdtemp(prefix="skillz-task-"))
+    root = task / "workspace"
+    (root / ".agents/skills").mkdir(parents=True)
+    adapter = Command((sys.executable, str(script)), "m", Budget(10, 60, 0), lambda: None)
+    _ = adapter._request("discover", root, skill_name="demo",  # pyright: ignore[reportPrivateUsage]
+                         skill_path=str(root / ".agents/skills/demo"))
+    assert (tmp_path / "seen").read_text() == str(runner_tmp)
+    assert (task / ".env").read_text() == ""
+
+
+@pytest.mark.ac("gh-419:AC-2")
+def test_the_dotenv_guard_refuses_a_fifo(tmp_path: Path) -> None:
+    directory = fake_bin(tmp_path)
+    root = workspace(tmp_path)
+    os.mkfifo(root.parent / ".env")
+    with pytest.raises(ValueError, match="dotenv"):
+        _ = respond(discover_request(root), bin_dir=directory)

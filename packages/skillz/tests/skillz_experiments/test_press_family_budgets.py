@@ -17,8 +17,7 @@ from skillz_experiments.gate import Statistics, verdict
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._resume import resolve_statistics
-from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 MODEL = "local-test"
 
@@ -184,11 +183,11 @@ def test_verdict_breachOnScoreRejectWithoutBudget_addsNothing() -> None:
 # --- non-finite and degenerate --------------------------------------------------------------------------
 
 @pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
-def test_verdict_nonFiniteDelta_skipsTheFamilyRuleButListsSkippedFamilies(bad: float) -> None:
+def test_verdict_nonFiniteDelta_skipsItsFamilyButListsSkippedFamilies(bad: float) -> None:
     result = verdict(CASES | {"a1": bad, "x": 1.0}, thresholds=Statistics(family_budget=0.0),
                      families=FAMILIES | {"x": "solo"})
     assert result.verdict == "inconclusive"
-    assert result.reasons == () and result.skipped_families == ("solo",)
+    assert result.reasons == ("non-finite-delta",) and result.skipped_families == ("solo",)
 
 
 def test_verdict_sequenceDeltasWithFamilies_raises() -> None:
@@ -292,13 +291,9 @@ REGRESSING = ("f0", "f1")
 
 
 @final
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     def __init__(self, _model: str, _budget: Budget, _checkpoint: Callable[[], None]) -> None:
-        pass
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
+        super().__init__()
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:

@@ -41,22 +41,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The slice guard reads the baseline at HEAD^1 (the base tip in a PR merge commit) for SB-07.
+          fetch-depth: 2
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Install uv
         # `just test` runs the workspace pytest suites through `uv run`.
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
 
       - name: Install just
         # The gate uses `[script]` recipes, which require just >= 1.34 — newer
-        # than distro apt packages ship. setup-just installs a current release.
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        # than distro apt packages ship. install-action fetches this pinned release
+        # from its checksum manifest, with no GitHub releases-API lookup.
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Install gate tooling
         # `just ci` is the single source of truth — the same gate runs locally.
@@ -81,29 +88,54 @@ jobs:
           REQUIRE_DUCKDB: "1"
           # The skillz tests job runs these lanes in parallel with this job.
           GATE_SKIP: skillz-e2e-pytest,skillz-pytest
+          # The coverage job combines this lane data with the skillz shards' data.
+          GATE_COVERAGE_DIR: ${{ runner.temp }}/coverage
         run: just ci
 
-  skillz-tests:
+      - name: Upload lane coverage data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-gate
+          # A test subprocess writes <lane>.cov.<host>.<pid>.<random> beside the lane file.
+          path: |
+            ${{ runner.temp }}/coverage/*.cov
+            ${{ runner.temp }}/coverage/*.cov.*
+          if-no-files-found: error
+          # A rerun of failed jobs reuses the other jobs' data from the first attempt, so keep it past one day.
+          retention-days: 5
+          # A rerun attempt replaces this job's data from the earlier attempt instead of a name conflict.
+          overwrite: true
+
+  skillz-shard:
     # The two skillz pytest lanes set the gate's wall time, so they run here
-    # in parallel. The gate job skips them through GATE_SKIP.
-    name: skillz tests
+    # in parallel. The gate job skips them through GATE_SKIP. One runner has
+    # 4 vCPUs and the lanes are CPU-bound, so each shard runs 1/6 of each lane.
+    # Six shards keep each shard under the gate job's time.
+    name: skillz shard (${{ matrix.shard }}/6)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
 
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Install DuckDB CLI
         # test_analytics_packs.py requires the DuckDB CLI when REQUIRE_DUCKDB is set.
@@ -116,7 +148,86 @@ jobs:
       - name: Run skillz tests
         env:
           REQUIRE_DUCKDB: "1"
+          GATE_SHARD: ${{ matrix.shard }}/6
+          GATE_COVERAGE_DIR: ${{ runner.temp }}/coverage
         run: just test-skillz
+
+      - name: Upload lane coverage data
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-shard-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/coverage/*.cov
+            ${{ runner.temp }}/coverage/*.cov.*
+          if-no-files-found: error
+          retention-days: 5
+          overwrite: true
+
+  coverage:
+    # The gate job and the six skillz shards each measure part of the pytest lanes. This job combines
+    # their data, then checks the project floor, whole-symbol dead code, and the diff coverage.
+    # The data holds absolute paths; every job checks out to the same runner workspace path.
+    name: coverage
+    needs: [gate, skillz-shard]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The diff check reads the base at HEAD^1 (the base tip in a PR merge commit), as the slice guard does.
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          version: "0.11.32"
+
+      - name: Download lane coverage data
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*
+          path: ${{ runner.temp }}/coverage
+          merge-multiple: true
+
+      - name: Check coverage
+        run: uv run --locked python .github/scripts/check_coverage.py "$RUNNER_TEMP/coverage"
+
+  skillz-tests:
+    # The main ruleset requires this check name. It passes only when every shard passes.
+    # A rerun of one matrix job can make the matrix result pass while another shard
+    # stays failed. The job list of the current run attempt holds a completed copy of
+    # each shard that did not run again, so the job fails when a shard in that list
+    # completed without success. The jobs API can show a shard that ended in this
+    # attempt as in_progress for minutes (run 39818883914), so the job does not wait
+    # for that status: the needs result already covers the shards of this attempt.
+    name: skillz tests
+    if: always()
+    needs: skillz-shard
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: Check the skillz shards
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHARDS: ${{ needs.skillz-shard.result }}
+        run: |
+          set -euo pipefail
+          echo "skillz shards: $SHARDS"
+          test "$SHARDS" = success
+          shards=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name | startswith("skillz shard ("))' \
+            | jq -s 'map({name, started_at, status, conclusion})')
+          jq -r '.[] | "\(.name): started \(.started_at), \(.status), \(.conclusion)"' <<<"$shards"
+          if ! jq -e 'length == 6 and all(.status != "completed" or .conclusion == "success")' <<<"$shards" >/dev/null; then
+            echo "::error::a skillz shard in run attempt $GITHUB_RUN_ATTEMPT is missing or completed without success"
+            exit 1
+          fi
 
   fromargs-tests:
     name: fromargs tests (py${{ matrix.python }})
@@ -129,12 +240,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
 
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Run fromargs tests
         run: just test-fromargs ${{ matrix.python }}
@@ -150,12 +264,15 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: "0.11.32"
 
       - name: Install just
-        uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+        uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        with:
+          tool: just@1.59.0
+          fallback: none
 
       - name: Install DuckDB CLI
         run: |

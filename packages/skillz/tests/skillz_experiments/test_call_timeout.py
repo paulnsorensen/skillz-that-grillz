@@ -11,7 +11,16 @@ from typing import cast
 import pytest
 
 from skillz_experiments import _runtime
-from skillz_experiments._budget import CALL_TIMEOUT_FACTOR, FAILED, SEARCH_ROLES, SECONDS_PER_CALL, Budget, BudgetExhausted, CallTimeout
+from skillz_experiments._budget import (
+    CALL_TIMEOUT_FACTOR,
+    FAILED,
+    PROMPT_CHARS_PER_SECOND,
+    SEARCH_ROLES,
+    SECONDS_PER_CALL,
+    Budget,
+    BudgetExhausted,
+    CallTimeout,
+)
 from skillz_experiments._records import read, write
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._codex import Codex
@@ -19,7 +28,7 @@ from skillz_experiments.harness._command import Command
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._export import summary
 from test_codex_retry import _fake  # pyright: ignore[reportPrivateUsage]
-from test_run_search import MODEL, Provider, Search, _start, _validation  # pyright: ignore[reportPrivateUsage]
+from test_run_search import MODEL, Provider, Search, _start, _validation_runs  # pyright: ignore[reportPrivateUsage]
 
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
@@ -33,17 +42,22 @@ def _restore_call_slots() -> Iterator[None]:
 
 
 @pytest.fixture
-def timeouts(monkeypatch: pytest.MonkeyPatch) -> list[float]:
-    """Record the timeout of every process the model calls start. The real process still runs."""
-    seen: list[float] = []
+def spied(monkeypatch: pytest.MonkeyPatch) -> list[tuple[float, int]]:
+    """Record the timeout and the input characters of every process the model calls start. The real process still runs."""
+    seen: list[tuple[float, int]] = []
     original = _runtime.process
 
     def spy(command: list[str], *, cwd: Path, timeout: float, **options: object) -> subprocess.CompletedProcess[str]:
-        seen.append(timeout)
+        seen.append((timeout, len(cast(str | None, options.get("input_text")) or "")))
         return original(command, cwd=cwd, timeout=timeout, **options)  # pyright: ignore[reportArgumentType]
 
     monkeypatch.setattr(_runtime, "process", spy)
     return seen
+
+
+def _base(spied: list[tuple[float, int]]) -> list[float]:
+    """Return each uncapped timeout less the share that its input size adds (gh-563)."""
+    return [timeout - chars / PROMPT_CHARS_PER_SECOND for timeout, chars in spied]
 
 
 def _no_sleep(_seconds: float) -> None:
@@ -69,36 +83,36 @@ def test_the_per_call_estimate_is_the_plan_estimate() -> None:
 
 @pytest.mark.ac("gh-319:AC-1")
 def test_a_codex_call_gets_four_times_the_per_call_estimate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                                           timeouts: list[float]) -> None:
+                                                           spied: list[tuple[float, int]]) -> None:
     _ = _fake(tmp_path, monkeypatch, failures=0)
     _ = _codex_call(Budget(10, 1000, 0, call_seconds=2.5))
-    assert timeouts == [10.0]
+    assert _base(spied) == pytest.approx([10.0])
 
 
 @pytest.mark.ac("gh-319:AC-1")
 def test_a_codex_call_timeout_is_capped_by_the_remaining_search_time(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                                                    timeouts: list[float]) -> None:
+                                                                    spied: list[tuple[float, int]]) -> None:
     _ = _fake(tmp_path, monkeypatch, failures=0)
     _ = _codex_call(Budget(10, 5, 0))
-    assert len(timeouts) == 1 and 0 < timeouts[0] <= 5 < CALL_TIMEOUT_FACTOR * SECONDS_PER_CALL
+    assert len(spied) == 1 and 0 < spied[0][0] <= 5 < CALL_TIMEOUT_FACTOR * SECONDS_PER_CALL
 
 
 @pytest.mark.ac("gh-319:AC-1")
 def test_a_codex_retry_attempt_gets_the_per_call_timeout_too(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                                                            timeouts: list[float]) -> None:
+                                                            spied: list[tuple[float, int]]) -> None:
     _ = _fake(tmp_path, monkeypatch, failures=1, event='{"type":"error","message":"429 rate limit exceeded"}')
     monkeypatch.setattr(_codex, "_sleep", _no_sleep)
     _ = _codex_call(Budget(10, 1000, 0, call_seconds=2.5))
-    assert timeouts == [10.0, 10.0]
+    assert _base(spied) == pytest.approx([10.0, 10.0])
 
 
 @pytest.mark.ac("gh-319:AC-1")
-def test_a_command_call_gets_four_times_the_per_call_estimate_and_the_remaining_cap(timeouts: list[float]) -> None:
+def test_a_command_call_gets_four_times_the_per_call_estimate_and_the_remaining_cap(spied: list[tuple[float, int]]) -> None:
     with pytest.raises(CallTimeout):
         _ = _sleeper(Budget(10, 1000, 0, call_seconds=0.25)).invoke("hello")
     with pytest.raises(BudgetExhausted):
         _ = _sleeper(Budget(10, 0.5, 0, call_seconds=100)).invoke("hello")
-    assert timeouts[0] == 1.0 and 0 < timeouts[1] <= 0.5
+    assert _base(spied[:1]) == pytest.approx([1.0]) and 0 < spied[1][0] <= 0.5
 
 
 @pytest.mark.ac("gh-319:AC-2")
@@ -182,7 +196,7 @@ def test_failed_judge_and_reflection_calls_still_count_by_role(tmp_path: Path, m
 def test_a_run_records_calls_by_role_that_sum_to_calls_and_a_resume_keeps_them(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(Exception, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     stopped = read(out / "run.json")
@@ -199,7 +213,7 @@ def test_a_run_records_calls_by_role_that_sum_to_calls_and_a_resume_keeps_them(
 def test_a_record_from_before_the_roles_resumes_with_its_calls_unattributed(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(Exception, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
@@ -227,6 +241,7 @@ def _deadline_search(tmp_path: Path, make_target: Maker, write_draft: Drafter, a
     return target, out, state
 
 
+@pytest.mark.ac("gh-500:AC-7")
 @pytest.mark.ac("gh-319:AC-4")
 def test_a_search_that_the_deadline_ends_early_reports_time_exhausted_with_seconds_by_role(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
@@ -245,15 +260,18 @@ def test_a_search_that_the_deadline_ends_early_reports_time_exhausted_with_secon
     result = run(target, out, MODEL, live=True, factory=factory)
     search = cast(dict[str, object], result["search"])
     assert search["reason"] == "time-exhausted"
+    assert cast(dict[str, object], read(out / "run.json")["search"])["stop_trigger"] == "search-deadline"
     assert set(cast(dict[str, float], search["seconds_by_role"])) == set(SEARCH_ROLES)
     assert result["phase"] == "complete"
 
 
 @pytest.mark.ac("gh-319:AC-4")
+@pytest.mark.ac("gh-500:AC-7")
 def test_a_call_budget_stop_is_not_reported_as_time_exhausted(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    state.exhaust_after_improved = len(_validation(out))
+    state.exhaust_after_improved = _validation_runs(out)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
     assert search["reason"] == "budget-exhausted-best-validated" and "seconds_by_role" not in search
+    assert cast(dict[str, object], read(out / "run.json")["search"])["stop_trigger"] == "call-cap"

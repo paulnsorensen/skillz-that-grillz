@@ -35,6 +35,7 @@ Do not treat this as a published `/skillz` mode.
 6. Run `/skillz autoimprove skills/skillz` after the improve fixes land.
    Follow `skills/skillz/references/experiments.md` for the questions, the run, the gate, and the export.
    Run the checkout's `skills/skillz/scripts/skillz-experiment.pyz`, not an installed copy.
+   `main` tracks no archive, so run `just build` first to build it.
    Pass `--edit prose+cli` so the search can also change the `inspect-skill` sources in `packages/skillz/src/skillz_inspect`.
    Draft `task` cases that each audit one skill fixture named `fixture.md`.
    Put the expected findings in `expected`. The shipped contract judges them with its `task` rubric.

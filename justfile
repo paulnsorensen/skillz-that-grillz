@@ -47,8 +47,13 @@ mutate-fromargs:
 
 # Opt-in live smoke runs of the experiment stack and session analytics (not part of build/ci). They need SKILLZ_LIVE=1.
 # HARNESS is claude or codex. SCENARIO is basic (default), all, or a comma list; see packages/skillz/tests/skillz_live.
-# SKILLZ_LIVE_DRY=1 stops each run at its budget question and makes no model call. The basic run uses at most 100 calls.
+# SKILLZ_LIVE_DRY=1 stops each run at its budget question and makes no model call. The basic run uses at most 132 calls.
 # Each attempt appends one JSON line to .live-smoke/runs.jsonl (gitignored).
+# fromargs-benefit and changelog-proof run MODEL as the task role.
+# SKILLZ_LIVE_STRONG_MODEL sets the model that drafts, reflects, and judges.
+# Its default is opus on claude and gpt-6-astra on codex (STRONG in skillz_live/fromargs_benefit.py).
+# The fromargs-benefit drafting stage always runs in claude, so its default drafting model is opus on both harnesses.
+# Main tracks no skill archive (ADR-012), so the recipe builds them from source before the tests.
 [script("bash")]
 live-smoke $harness $model $scenario="basic":
     set -euo pipefail
@@ -56,6 +61,7 @@ live-smoke $harness $model $scenario="basic":
         echo "error: live-smoke makes real model calls; set SKILLZ_LIVE=1 to run it" >&2
         exit 2
     fi
+    uv run --locked --project packages/wedge wedge bundle skills/skillz
     SKILLZ_LIVE_HARNESS="$harness" SKILLZ_LIVE_MODEL="$model" SKILLZ_LIVE_SCENARIO="$scenario" \
         uv run --locked --extra experiments --project packages/skillz \
         pytest packages/skillz/tests/skillz_live -m live -v -rs \

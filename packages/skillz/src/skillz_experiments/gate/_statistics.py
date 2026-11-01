@@ -57,8 +57,9 @@ class Statistics:
 
     Every field except `min_token_saving` and `max_quality_loss` only tightens `promote`. Those two fields set only
     `promote-cheaper`, and a larger `max_quality_loss` loosens it. That verdict claims no gain. It needs the delta
-    to be at least 0 and `delta - 2*se` to be at least `-max_quality_loss`, so `max_quality_loss` bounds the
-    plausible quality loss. While `max_quality_loss` is None, `promote-cheaper` is off.
+    to be at least 0 and `delta - 2*se_loss` to be at least `-max_quality_loss`, so `max_quality_loss` bounds the
+    plausible quality loss. `se_loss` is the SE of the case losses, `min(d_i, 0)`, with the SE floor.
+    While `max_quality_loss` is None, `promote-cheaper` is off.
     The SE multiplier stays 2. `min_gain` and `min_lower_bound` are floors of at least 0.
     A field with `flag` metadata also has a CLI flag. A field with `nullable` metadata may be None, which
     turns its rule off. A field with `map` metadata holds a name-to-number map and is contract-only.
@@ -66,6 +67,7 @@ class Statistics:
     `min_token_saving` is a saving share strictly between 0 and 1.
     `min_coverage` is the least share of planned holdout cases that must be scored, from 0 to 1. Below it the
     verdict is `inconclusive`. 0 turns the rule off.
+    A field with `bounds` metadata holds the JSON Schema bounds of its value. The default bound is a minimum of 0.
     A field with `check` metadata sets its own value check: a function that returns the checked float or None.
     The default check is `threshold`. The `rule` metadata then names the accepted values in the error message.
     `declared`, `parse`, and `data` check the shape of a map, not its agreement with any run record.
@@ -78,9 +80,10 @@ class Statistics:
                                                 metadata={"map": True})
     max_token_increase_per_gain: float | None = field(default=None, metadata={"flag": True, "nullable": True})
     min_token_saving: float | None = field(default=None, metadata={
-        "flag": True, "nullable": True, "check": _saving, "rule": "null or a number above 0 and below 1"})
+        "flag": True, "nullable": True, "check": _saving, "rule": "null or a number above 0 and below 1",
+        "bounds": {"exclusiveMinimum": 0, "exclusiveMaximum": 1}})
     min_coverage: float = field(default=0.6, metadata={
-        "flag": True, "check": _coverage, "rule": "a number from 0 to 1"})
+        "flag": True, "check": _coverage, "rule": "a number from 0 to 1", "bounds": {"minimum": 0, "maximum": 1}})
     max_quality_loss: float | None = field(default=None, metadata={"flag": True, "nullable": True})
 
     def __post_init__(self) -> None:

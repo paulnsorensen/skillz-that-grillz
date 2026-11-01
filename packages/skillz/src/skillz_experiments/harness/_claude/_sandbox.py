@@ -10,9 +10,10 @@ import sys
 from pathlib import Path
 from typing import cast
 
-from skillz_experiments._cases import CodedError, mapping
+from skillz_experiments._cases import CodedError
 from skillz_experiments.harness._claude._constants import INSTALL_BUBBLEWRAP, SANDBOX_STDERR
-from skillz_experiments.harness._seatbelt import command_profile
+from skillz_experiments.harness._claude._pairs import tool_pairs
+from skillz_experiments.harness._seatbelt import command_profile, seatbelt_environment
 
 
 # Curl exit codes that show a request attempt. Codes 5 and 6 are name-resolution failures, and 22 needs `-f`.
@@ -26,6 +27,8 @@ SANDBOX_CAPTURE = "/run/skillz-capture"
 
 
 INSTALL_SOCAT = "install socat (for example `sudo apt install socat`)"
+DARWIN_FIX = ("run on macOS with `sandbox-exec` and the Command Line Tools installed (`xcode-select --install`); "
+              "no Linux package is needed")
 
 
 USERNS_FIX = ("allow unprivileged user namespaces with `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, "
@@ -64,6 +67,8 @@ def host_tools() -> list[tuple[str, bool, str]]:
 def sandbox_fix(detail: str) -> str:
     """Pick the fix that matches the sandbox failure text."""
     text = detail.lower()
+    if sys.platform == "darwin":
+        return DARWIN_FIX
     if "socat" in text:
         return INSTALL_SOCAT
     if any(word in text for word in ("uid map", "operation not permitted", "permission denied", "namespace", "apparmor")):
@@ -106,18 +111,11 @@ def network_commands(port: int, token: str) -> list[str]:
 
 def _results(events: list[dict[str, object]], command: str) -> list[str]:
     """Return the Bash results that answer a tool call whose command equals `command`."""
-    uses: set[str] = set()
     results: list[str] = []
-    for event in events:
-        message = event.get("message")
-        content = cast(dict[str, object], message).get("content") if isinstance(message, dict) else None
-        for block in cast(list[object], content) if isinstance(content, list) else []:
-            item = mapping(block)
-            if item.get("type") == "tool_use" and item.get("name") == "Bash" and isinstance(item.get("id"), str):
-                if mapping(item.get("input", {})).get("command") == command:
-                    uses.add(cast(str, item["id"]))
-            elif item.get("type") == "tool_result" and item.get("tool_use_id") in uses:
-                results.append(json.dumps(item))
+    for use, result in tool_pairs(events, "Bash"):
+        raw = use.get("input")
+        if result is not None and isinstance(raw, dict) and cast(dict[str, object], raw).get("command") == command:
+            results.append(json.dumps(result))
     return results
 
 
@@ -198,6 +196,10 @@ def nested_userns_blocked() -> bool:
     return result.returncode != 0 and result.stderr.strip() in {"unshare", "map"}
 
 
+_TO_CAPTURE = 'exec "$@" 2>"$0"'
+"""Shell script that sends the command's standard error to the file named by `$0`, then runs the command."""
+
+
 def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], environment: dict[str, str],
                  read_roots: tuple[str, ...] = (), capture: Path | None = None) -> list[str]:
     """Wrap `argv` for the OS sandbox: `sandbox-exec` on macOS, bubblewrap elsewhere. No external network.
@@ -210,13 +212,21 @@ def sandbox_argv(system: str, tool: str, workspace: Path, argv: list[str], envir
     workspace, and a shell sends the command's standard error to a file there before the command starts.
     `sandbox` reads it. Only bubblewrap can then write to the process standard error,
     so a message that starts with `bwrap:` is a setup failure that the command cannot forge.
+
+    Under `sandbox-exec` with `capture`, the profile allows writes to `capture`, and a shell sends the command's
+    standard error to a file there. A message that starts with `sandbox-exec:` is then a setup failure too.
     """
     assignments = [f"{name}={value}" for name, value in environment.items()]
     if system == "darwin":
-        return [tool, "-p", command_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
+        assignments.extend(seatbelt_environment())
+        if capture is None:
+            return [tool, "-p", command_profile(workspace, read_roots), "/usr/bin/env", "-i", *assignments, *argv]
+        resolved = capture.resolve()
+        return [tool, "-p", command_profile(workspace, read_roots, resolved), "/bin/sh", "-c", _TO_CAPTURE,
+                str(resolved / SANDBOX_STDERR), "/usr/bin/env", "-i", *assignments, *argv]
     path = str(workspace)
     mount = ["--bind", str(capture), SANDBOX_CAPTURE] if capture is not None else []
-    shell = ['/bin/sh', '-c', 'exec "$@" 2>"$0"', f"{SANDBOX_CAPTURE}/{SANDBOX_STDERR}"] if capture is not None else [
+    shell = ['/bin/sh', '-c', _TO_CAPTURE, f"{SANDBOX_CAPTURE}/{SANDBOX_STDERR}"] if capture is not None else [
         '/bin/sh', '-c', 'exec "$@" 2>/dev/null', 'sh']
     return [tool, "--unshare-all", "--die-with-parent", "--clearenv",
             "--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/lib", "/lib",

@@ -101,7 +101,8 @@ The `run.json` adapter label is `config` for `--harness-config` and `command` fo
 The `claude` role runs `claude -p --setting-sources project` with `--tools Bash,Read,Skill`.
 It also passes `--strict-mcp-config`, `--no-session-persistence`, and a generated settings file.
 The settings enable the sandbox floor and disable bundled skills.
-They deny host reads from `/`. They allow only the workspace and the runtime roots that commands need.
+On Linux, they deny host reads from `/` and allow only the workspace and the runtime roots that commands need.
+On macOS, they deny a list of host roots instead, and other system paths stay readable (see the macOS section below).
 They deny Bash writes to `.agents` and `.claude` in the workspace, so a task cannot change the candidate or plant project settings.
 The runner places only the staged candidate under the workspace skill directory.
 The runner does not use `--restricted`. On Claude Code 2.1.289 and later, `--restricted` drops project skills, so the candidate never loads.
@@ -134,17 +135,37 @@ The runner never copies a refreshed login file over a real file that also change
 A run that completes records the warning code as `close_warning` in the summary.
 A run that fails records the code as `close_failure` in `run.json` and in a note on the error.
 On macOS, the login lives in the Keychain, so there is no file to link.
-The runner sets `CLAUDE_CONFIG_DIR` to your real config directory.
-`--setting-sources project` makes Claude Code ignore the user settings files and user skills in that directory.
-The directory can still expose your own memory, account skills, agents, or MCP servers.
-Before any model call, the preflight stops with the code `preflight-leak` when `CLAUDE.md` or a `rules` directory with `.md` files exists there.
+The runner uses your real config directory. You do not need a token or an API key.
+Claude Code finds the Keychain login only for the real home, the login user, and the config directory that you use.
+So the macOS child keeps your `HOME`, gets `USER` and `LOGNAME`, and gets `CLAUDE_CONFIG_DIR` only when you set it.
+`--setting-sources project` makes Claude Code ignore the user settings files, user skills, and user memory in that directory.
+The directory can still expose account skills, agents, or MCP servers.
+When `CLAUDE.md` or a `rules` directory with `.md` files exists there, the runner runs `claude -p /context` once per role in each process.
+That local command makes no model call. It lists the memory files that load.
+The run stops with the code `preflight-leak` when the list names your memory, or when the command does not run.
+A `User` memory row stops the run even when its path does not match, so a changed path format cannot pass.
+Memory that appears during the run gets its listing before the next model call.
+You do not need to move your `CLAUDE.md`.
 The live preflight also stops with `preflight-leak` when the init event lists a user skill, plugin, agent, or MCP server.
-The live preflight also asks the Read tool to read a sealed file outside the workspace.
-The run stops with `preflight-leak` when the Read tool returns that file, or when the model never calls the Read tool.
-The `--restricted` flag no longer confines the Read tool, so only this probe proves it.
+The settings set `permissions.blockReadsOutsideWorkingDirectories: true`, so the Read tool cannot read a file outside the workspace.
+This setting needs Claude Code 2.1.257 or later.
+The Read tool stays enabled, because the task reads the candidate skill and the workspace files with it.
+The live preflight makes two calls for each Claude role.
+The first call, the Bash sandbox check, runs the Bash read, write, and network commands.
+The second call, the file-access check, asks the Read tool for four paths.
+They are a sealed file outside the workspace, `/etc/hosts`, a workspace symlink to the sealed file, and a workspace control file.
+The run stops with `preflight-leak` when the Read tool returns the sealed file or `/etc/hosts`, directly or through the symlink.
+The run also stops when a Read call for the sealed file, `/etc/hosts`, or the symlink has no answer.
+The run also stops when the Read tool cannot return the control file.
+A call that makes no tool call of its tool also stops the run with `preflight-leak`.
+Its message says that the model refused or skipped the check, and that this is not a confirmed leak.
+A host without `/etc/hosts` stops with `host-not-ready` before the model call.
+The preflight evidence records the refused `/etc/hosts` read.
+The `--restricted` flag does not confine the Read tool.
+The setting confines it, and this probe checks the setting on each new Claude Code version.
 Only the candidate skill, Claude Code's own commands and built-in plugins, and the built-in agents are allowed.
 
-When the live preflight call returns and a preflight check then fails, the runner keeps its transcript in `RUN/preflight.events.json` (mode 0600).
+When the live preflight calls return and a preflight check then fails, the runner keeps their transcript in `RUN/preflight.events.json` (mode 0600).
 A call that times out or fails to run writes no transcript. Each preflight first removes an old transcript.
 The stop message names the file. `run.json` records the message in `failure`.
 If the file cannot be written, the stop keeps its code and the message says so.
@@ -172,7 +193,7 @@ A command that differs from the generated command, a missing output, or a malfor
 All these failures use the code `network-isolation-failed`.
 The environment key carries the probe version, so a change of the probe set starts a new preflight.
 The run record keeps the pass and its live calls under `preflight`.
-Each Claude role makes one live preflight per run. Each one counts against the approved call budget.
+Each Claude role makes two live preflight calls per run. Each call counts against the approved call budget.
 A resumed `run` reuses the recorded pass and makes no new live call.
 Every resume still runs the free helper sandbox probe, which makes no model call.
 The reuse key joins the role fingerprint and the Claude environment hash.
@@ -185,6 +206,11 @@ The check runs before any live call, so a changed key costs nothing.
 A failed preflight stops the run. There is no fallback to an unsandboxed run.
 The adapter runs its own sandbox commands in `bwrap` on Linux and `sandbox-exec` on macOS.
 By default, those commands read only the system runtime and the workspace.
+On macOS, the profile also allows a read of the root directory itself, but not its children, because every sandboxed process aborts without it.
+The runner sets `DEVELOPER_DIR` to the Command Line Tools, when present, so the `/usr/bin/python3` shim stays inside the readable runtime.
+The shim adds `CPATH`, `LIBRARY_PATH`, `MANPATH`, and `SDKROOT` to the environment.
+The macOS isolation probe allows exactly those names and `DEVELOPER_DIR`. On other systems, it allows none of them.
+The Gemini `sandbox` operation pins `DEVELOPER_DIR` the same way.
 The runner mounts each `sandbox_read` root read-only at its own path.
 A root must exist, and it must not be a symlink.
 A root must not equal or hold the home directory.
@@ -216,14 +242,21 @@ The environment hash includes this setting, so a resume on a host with the other
 The preflight evidence records `unix_socket_filter` as `on` or `off`.
 The runner sets `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=0` in the Claude child environment. On Claude Code 2.1.301, the value `1` replaced the sandbox file and socket rules on a host that blocks the nested user namespace. Bash then read host files and reached a host pathname Unix socket. The child environment holds no credential variable. The live preflight stays the detector if a later Claude Code version changes this.
 A failure in the live preflight can cost its one call, but it never reaches a task call.
-The macOS path is unverified live. Verify it before you authorize private data.
-On the live Bash path, the network probes cover direct loopback TCP and the proxy HTTP path. They also cover a direct name lookup and a direct non-loopback TCP connection. They do not prove full network isolation. No live model run has exercised them yet. Run them on a macOS host before you trust the seatbelt profile.
-Manual macOS checklist:
+On the live Bash path, the network probes cover direct loopback TCP and the proxy HTTP path. They also cover a direct name lookup and a direct non-loopback TCP connection. They do not prove full network isolation.
 
-1. On a macOS host with `sandbox-exec`, run the full live preflight with a real model.
-2. Confirm that the helper sandbox probe and the live network probe both pass.
+### macOS live check
+
+On macOS, the Bash sandbox denies reads of a root list, not of `/`.
+Claude Code 2.1.309 does not reopen the workspace inside `denyRead: ["/"]` on macOS, and its own temp files then fail.
+The list holds the host roots (`/Users`, `/home`, and the others), `/Volumes`, `/var/folders`, `/private/var/folders`, your home directory, and the run paths.
+Bash can still read other system paths, such as `/etc` and `/private/tmp`. Linux denies `/` and is stricter.
+The last recorded pass: macOS 26.5.1, Claude Code 2.1.309, `claude-sonnet-4-6`, 2026-10-23.
+The full live preflight passed for all three roles, with `network: denied`, and the helper sandbox probe passed.
+Run this check again after a Claude Code or macOS upgrade:
+
+1. Run `python3 "$SKILLZ/scripts/skillz-experiment.pyz" self-test --preflight-only --model MODEL`. It makes one live call per role.
+2. Confirm that each role shows `isolation: passed` and `network: denied`, and that the command exits 0.
 3. Record the macOS version and the Claude Code version in the ADR.
-4. Remove the "unverified" lines only after a recorded pass.
 
 ## The Claude converse loop
 
@@ -245,7 +278,11 @@ The runner passes the declared MCP file with `--mcp-config` and grants the permi
 MCP stdio servers run as children of Claude Code, outside the Bash sandbox.
 They run unconfined on the host; only the seed-fixed MCP config limits them.
 
-Codex and command transports raise `journey-unsupported`.
+Codex runs each journey in one ephemeral App Server thread and one isolated workspace.
+It sends each simulator reply as a new turn and applies the strict Codex permission profile throughout.
+The first turn must read `SKILL.md` and `EXPERIMENT_MARKER` successfully and show the marker output.
+The trace gate receives raw App Server notifications. Scoring receives normalized command and usage events.
+The command transport still raises `journey-unsupported`.
 A declared surface raises `contract-surface-unsupported` first.
 
 ## Credential kind
@@ -311,6 +348,11 @@ The checks compare `returncode`, `stdout`, and `stderr` with the fixtures.
 Return the real `stderr` from the transport.
 The checks compare only the last non-empty `stderr` line with the `error` of a fixture.
 A command adapter must return the real command `stderr`, not an empty placeholder.
+The runner kills the wrapper process group 20 seconds after it sends a helper-fixture or grader sandbox request.
+This time includes the wrapper start-up, so start any container before the request or keep start-up short.
+The isolation probe gets 300 seconds.
+The request carries no time limit field.
+A helper fixture that reaches this limit is a sandbox timeout, and a grader that reaches it scores as exit code 124.
 
 ### Discovery
 
@@ -400,7 +442,7 @@ Codex and command preflights make no inference invocation.
 The Codex preflight requires `codex --version` to report 0.154.0 or newer and records the observed string as `codex_version`.
 A lower or unparsable version stops with `codex-version-unsupported`. A resume on a different recorded version stops with `environment-differs`.
 A runner upgrade needs a new run. A run record from an older runner does not resume.
-Each `claude` role makes one live preflight call per run.
+Each `claude` role makes two live preflight calls per run.
 Every attempted inference, including a failed response, consumes the shared invocation budget.
 All roles share the same deadline and holdout reservation.
 The reservation holds the gate calls and the gate's estimated time: the gate calls times 60 seconds, divided by 2 parallel calls.

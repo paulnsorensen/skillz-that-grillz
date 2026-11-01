@@ -6,7 +6,7 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments._evaluation import fixture_failure, grade, usage
+from skillz_experiments.evaluation._scoring import fixture_failure, grade, usage
 
 
 def test_evaluator_rejects_parroting_and_missing_activation() -> None:
@@ -23,7 +23,7 @@ def test_usage_keeps_unknown_and_does_not_double_count_cache() -> None:
     assert usage(events) == {"input_tokens": 12, "cached_input_tokens": 5, "output_tokens": 3}
 
 def test_command_trace_rejects_spoofed_helper_names() -> None:
-    from skillz_experiments._evaluation import executed
+    from skillz_experiments.evaluation._scoring import executed
 
     def events(command: str) -> list[dict[str, object]]:
         return [{"type": "item.completed", "item": {"type": "command_execution", "exit_code": 0, "command": command}}]
@@ -161,19 +161,6 @@ def test_a_fixture_with_output_and_an_error_object_parses() -> None:
 def test_a_malformed_helper_fixture_is_rejected(fixture: dict[str, object]) -> None:
     with pytest.raises(ValueError):
         _ = _parse_fixture(fixture)
-
-def test_wedge_script_runs_isolated() -> None:
-    from types import SimpleNamespace
-    from typing import cast
-
-    from skillz_experiments._candidate import Candidate
-    from skillz_experiments._cases import Case
-    from skillz_experiments._contract import resolve
-    from skillz_experiments.evaluation._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
-
-    candidate = Candidate({"SKILL.md": "s", "scripts/offload.py": "print(1)"}, ("SKILL.md",), None, "scripts/offload.py")
-    prompt = _prompt(resolve(None), candidate, "", cast(Case, cast(object, SimpleNamespace(request="task"))))
-    assert "python3 -I .agents/skills/skillz/scripts/offload.py" in prompt
 
 
 def test_deeply_nested_answer_scores_zero_instead_of_stopping_the_run() -> None:

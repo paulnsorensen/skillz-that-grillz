@@ -31,7 +31,7 @@ def respond(request: dict[str, object], mode: str = "normal", observed: str = ""
         schema = cast(dict[str, object], request["response_schema"])
         fields = cast(list[str], schema["required"])
         prompt = cast(str, request["prompt"])
-        if "score_percent" in fields:
+        if "criteria" in fields:
             answer, trace = judge(prompt, fields), []
         elif "load_marker" in fields:
             answer, trace = task(workspace, cast(str, request["skill_name"]), mode)
@@ -53,12 +53,15 @@ def main() -> None:
     mode = settings.get("mode", "normal")
     log = Path(settings["log"]) if "log" in settings else None
     fields = cast(list[str], cast(dict[str, object], request.get("response_schema", {})).get("required", []))
-    role = ("task" if "load_marker" in fields else "judge" if "score_percent" in fields
+    role = ("task" if "load_marker" in fields else "judge" if "criteria" in fields
             else "reflection" if request["operation"] == "infer" else cast(str, request["operation"]))
     workspace = Path(cast(str, request["workspace"]))
     visible = log.with_suffix(".visible") if log is not None else None
     observed = (visible.read_text() if mode == "leak-answer" and role == "reflection"
                 and visible is not None and visible.is_file() else "")
+    if mode == "leak-harness" and role == "reflection" and log is not None:
+        earlier = log.read_text().splitlines() if log.is_file() else []
+        observed = str(sum(1 for line in earlier if json.loads(line)["role"] == "reflection"))
     if request["operation"] == "infer" and "pause_dir" in settings:
         pause_dir = Path(settings["pause_dir"])
         pending = pause_dir / f"{os.getpid()}.{role}.pending"

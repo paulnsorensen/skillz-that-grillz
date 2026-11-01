@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -10,6 +11,9 @@ import pytest
 
 from support import (BUNDLE, CLI, FIXTURES, Scenario, approve_and_run, cli_error, export_and_apply, make_scenario,
                      read_events, read_record, snapshot)
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "darwin", reason="the wrapper subprocess sees the real platform and picks sandbox-exec, not docker")
 
 
 def configured_wrapper(out: Path, home: Path, cli: Path, mode: str) -> tuple[Path, Path]:
@@ -107,7 +111,8 @@ def test_malformed_gemini_answer_charges_calls_without_a_trace(tmp_path: Path) -
     code, result, error = approve_and_run(gemini_args(scenario, config, helper=False), private, scenario)
     assert code == 1 and cli_error(error)["code"] == "search-faulted", (result, error)
     record = read_record(scenario.out)
-    assert record["failure_code"] == "search-faulted" and record["calls"] == 4
+    # The headroom pass makes every seed call before the fault check: 4 train runs and 2 runs of each of 2 validation cases.
+    assert record["failure_code"] == "search-faulted" and record["calls"] == 8
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     failed = [item for item in outcomes if item.get("case_id") is not None]
     assert failed and all(item["status"] == "evaluation-failed" for item in failed)

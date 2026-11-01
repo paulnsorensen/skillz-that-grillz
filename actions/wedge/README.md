@@ -86,15 +86,27 @@ directory layout.
 
 ## Workflows
 
-Check locks on every pull request:
+### Check pull requests and merge groups
+
+Use a merge queue to check the combined tree before merging changes to shared
+skill sources, dependencies, or packaging configuration. Two pull requests can
+pass separately while their combined inputs invalidate a lock or bundle.
+The queue tests each candidate with the current base and earlier queued changes.
+See GitHub's [merge queue guide](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue).
+
+Check locks on both pull requests and merge groups:
 
 ```yaml
 name: wedge-check
-on: pull_request
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
 permissions:
   contents: read
 jobs:
   check:
+    name: wedge locks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@<sha>
@@ -103,6 +115,38 @@ jobs:
           command: check
           roots: skills
 ```
+
+Configure the target branch after this workflow is available:
+
+1. Require the packaging check for each mode (`wedge locks` in this example) and your normal test checks.
+2. Enable **Require merge queue** in the branch ruleset or branch protection settings, where GitHub supports it.
+3. Ensure every required test workflow handles `merge_group`, not only `pull_request`.
+4. Queue pull requests instead of bypassing the queue or pushing directly to the protected branch.
+
+Keep the event's default checkout. Do not set `ref: main` or the pull request's
+head SHA in the check job: that skips the merge-group tree. Avoid workflow path
+filters or job conditions that omit required packaging checks. If validation
+uses concurrency, include `${{ github.ref }}` in its group so different merge
+groups do not cancel each other.
+GitHub documents the [required `merge_group` trigger](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#merge_group).
+
+The action's `check` command checks legacy locks and launchers only. It
+rejects a skill that ships a direct `.pyz` bundle. For direct bundles, run the
+matching command from the [package guide's check list](../../packages/wedge/README.md#merge-queues-and-publication-races)
+through your pinned wedge installation.
+
+If a queue check finds a stale lock or bundle, update the pull request against
+the current base. Regenerate the affected artifacts with the pinned wedge
+version, commit them, and queue the pull request again. Do not regenerate them
+inside a check job and report success without checking the committed artifacts.
+
+GitHub documents queue support for public organization repositories and private
+organization repositories on Enterprise Cloud. Check availability for your
+repository; workflow YAML alone does not enable a queue. Where queues are
+unavailable, require up-to-date branches and revalidate after each merge.
+Coordinate merges to avoid reusing checks from an older base.
+
+### Publish release assets after merging
 
 Publish after a merge to the default branch. Give `contents: write` only to
 this job. `branch: main` makes `publish` refuse unless `target` resolves to
@@ -130,7 +174,23 @@ jobs:
           branch: main
 ```
 
-Publication is immutable and append-only, so concurrent runs are safe. Do not add cancellation that can drop a pending asset publication.
+Keep `publish` on the trusted post-merge branch, not on `pull_request` or
+`merge_group`. The queue validates integration; it does not serialize publication
+jobs or make release assets available before upload finishes.
+
+Release-asset publication is immutable and append-only, so concurrent runs are
+safe. Preserve each commit's run: an older lock can still need its unique asset.
+Do not add a shared concurrency group that drops pending publication runs.
+With the default concurrency queue, `cancel-in-progress: false` protects only
+the running job; a new pending run replaces the previous pending run.
+See GitHub's [concurrency reference](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+
+A complete, latest-state distribution branch needs a different policy. Publish
+one complete source snapshot and its bundles together. Serialize writers, and
+reject an older source snapshot after a newer snapshot ships. Such a publisher
+can replace pending runs only when a later run includes all missed source
+changes. A merge queue alone does not provide these guarantees.
+See the [easy-cheese publication example](../../packages/wedge/README.md#example-easy-cheese).
 
 Pin every action to a full commit SHA, as GitHub's
 [secure use guide](https://docs.github.com/en/actions/reference/security/secure-use)

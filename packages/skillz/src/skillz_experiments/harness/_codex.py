@@ -6,27 +6,32 @@ import math
 import re
 import shutil
 import stat
+import subprocess
 import tempfile
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import ClassVar, cast, final
+from typing import ClassVar, TypeAlias, cast, final
+
+from tenacity import RetryCallState, Retrying
 
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, CodedError, digest, loads_untrusted, mapping, string
 from skillz_experiments._contract import resolve
 from skillz_experiments.harness._discovery import discover
-from skillz_experiments._evaluation import helper_failure, usage
+from skillz_experiments.harness._codex_events import parse_events
 from skillz_experiments._redact import redact
-from skillz_experiments.evaluation import CheckMemo, answer_schema, evaluate
+from skillz_experiments.evaluation import CheckMemo, CheckResult, Reply, Transcript, answer_schema, evaluate, helper_failure, usage
 from skillz_experiments._budget import Budget, BudgetExhausted
-from skillz_experiments._runtime import halve_call_slots, model_call, process, reset_call_slots
+from skillz_experiments._runtime import (SANDBOX_SECONDS, halve_call_slots, model_call, process, reset_call_slots,
+                                         sandboxed)
 from skillz_experiments.harness._check import Check, credential_row, failed
 from skillz_experiments.harness._isolation import listening, probe
 from skillz_experiments.harness._check import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN
 
+_events = parse_events
 MINIMUM_VERSION = (0, 154, 0)
 MINIMUM_TEXT = ".".join(map(str, MINIMUM_VERSION))
 # The fixed role fingerprint label. The observed `codex --version` string, not this label, gates and records the version.
@@ -81,6 +86,7 @@ MESSAGE_RECORD_COUNT = 10
 MAX_RETRIES = 3
 BACKOFF_SECONDS = 2.0
 _sleep = time.sleep
+_Attempt: TypeAlias = tuple[subprocess.CompletedProcess[str], list[dict[str, object]], dict[str, object] | None]
 _UNITS = r"milliseconds?|ms|seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|d|h|m|s"
 _SCALE = {"ms": 0.001, "s": 1, "m": 60, "h": 3600, "d": 86400}
 _RETRY_AFTER = re.compile(r"(?:retry[ _-]?after|try again (?:in|after)|resets? (?:in|at))\W{0,3}(?P<rest>.*)")
@@ -171,7 +177,6 @@ def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> li
 class Codex:
     claude_sandbox: ClassVar[bool] = False
     refuses_claude_options: ClassVar[bool] = True
-    rejection: str | None = None
     role: str = "task"
 
     def __init__(self, model: str, budget: Budget, checkpoint: Callable[[], None]) -> None:
@@ -283,24 +288,40 @@ class Codex:
                   restage: Callable[[], None]) -> dict[str, object]:
         """Run one claimed call. Each attempt gets the per-call timeout; a rate limit retries within the remaining time."""
         started = time.monotonic()
-        retries = 0
-        while True:
+
+        def attempt() -> _Attempt:
             result = model_call(self.budget, command, cwd=workspace, environment=self._environment(workspace), input_text=prompt)
             events = _events(result.stdout)
             if not (result.returncode or not output.is_file() or output.is_symlink() or output.stat().st_size > 1_000_000):
-                break
-            evidence = failure_details(result.returncode, result.stderr, events)
-            if evidence["reason"] == "rate-limited":
+                return result, events, None
+            return result, events, failure_details(result.returncode, result.stderr, events)
+
+        def last(state: RetryCallState) -> _Attempt:
+            assert state.outcome is not None
+            return cast(_Attempt, state.outcome.result())
+
+        def rate_limited(state: RetryCallState) -> bool:
+            evidence = last(state)[2]
+            limited = evidence is not None and evidence["reason"] == "rate-limited"
+            if limited:
                 _ = halve_call_slots()
-                delay = self._retry_delay(retries, evidence)
-                if delay is not None:
-                    retries += 1
-                    self.budget.retry()
-                    self.checkpoint()
-                    output.unlink(missing_ok=True)
-                    restage()
-                    _sleep(delay)
-                    continue
+            return limited
+
+        def delay(state: RetryCallState) -> float | None:
+            evidence = last(state)[2]
+            return None if evidence is None else self._retry_delay(state.attempt_number - 1, evidence)
+
+        def prepare_retry(_state: RetryCallState) -> None:
+            self.budget.retry()
+            self.checkpoint()
+            output.unlink(missing_ok=True)
+            restage()
+
+        retrying = Retrying(retry=rate_limited, stop=lambda state: delay(state) is None, wait=lambda state: delay(state) or 0.0,
+                            before_sleep=prepare_retry, sleep=lambda seconds: _sleep(seconds), retry_error_callback=last)
+        result, events, evidence = retrying(attempt)
+        retries = cast(int, retrying.statistics["attempt_number"]) - 1
+        if evidence is not None:
             if evidence["reason"] in MODEL_REJECTIONS:
                 raise CodedError("model-unsupported", f"Codex rejected the model {self.model!r} or a feature: "
                                  + _rejection_message(result.stderr, events)[:MESSAGE_LIMIT])
@@ -341,13 +362,14 @@ class Codex:
         return discover(command, workspace, self._environment(workspace), min(30, self.budget.remaining()), skill)
 
     def sandbox(self, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
+        """Run `argv` in the Codex sandbox. A run that reaches the sandbox time limit raises `SandboxTimeout`."""
         safe = ["PATH=/usr/bin:/bin", "HOME=" + str(workspace / "home"),
                 "TMPDIR=" + str(task_tmpdir(workspace)), "LANG=C.UTF-8"]
         command = [str(self.executable), "sandbox", *configuration(workspace, self.executable, []),
                    "-P", "skillz", "--include-managed-config", "-C", str(workspace), "--",
                    "/usr/bin/env", "-i", *safe, *argv]
-        result = process(command, cwd=workspace, timeout=min(20, self.budget.remaining()),
-                         environment=self._environment(workspace))
+        result = sandboxed(command, cwd=workspace, limit=SANDBOX_SECONDS, budget=self.budget,
+                           environment=self._environment(workspace))
         return result.returncode, result.stdout, result.stderr
 
     def reuse_key(self, fingerprint: object) -> str | None:
@@ -371,29 +393,31 @@ class Codex:
         """Codex has no name collision to check."""
         del candidate
 
-    def check_candidate(self, candidate: Candidate) -> bool:
-        self.rejection = None
+    def check_candidate(self, candidate: Candidate) -> CheckResult:
         with tempfile.TemporaryDirectory(prefix="skillz-contract-") as directory:
             workspace = make_workspace(Path(directory) / "workspace")
             rules = resolve(candidate.contract)
             candidate.materialize(workspace / ".agents/skills" / rules.skill)
             if not self._discover(workspace, rules.skill):
-                return False
-            self.rejection = helper_failure(self, workspace, rules)
-            return self.rejection is None
+                return CheckResult(False, None, "fail")
+            return helper_failure(self, workspace, rules)
+
+    def converse(self, request: str, candidate: Candidate, case: Case, holdout: bool,
+                 simulate: Callable[[Transcript], Reply]) -> dict[str, object]:
+        from skillz_experiments.harness._codex_journey import converse
+
+        def command(workspace: Path) -> list[str]:
+            return [str(self.executable), "app-server", "--strict-config",
+                    *configuration(workspace, self.executable, [])]
+
+        return converse(request, candidate, case, holdout, simulate,
+                        budget=self.budget,
+                        checkpoint=self.checkpoint,
+                        role=self.role, model=self.model,
+                        command=command, environment=self._environment)
 
     def evaluate(self, candidate: Candidate, case: Case, *, checks: CheckMemo, holdout: bool = False) -> dict[str, object]:
         return evaluate(self, self, candidate, case, holdout=holdout, checks=checks)
-
-
-def _events(stdout: str) -> list[dict[str, object]]:
-    events: list[dict[str, object]] = []
-    for line in stdout.splitlines():
-        try:
-            events.append(mapping(loads_untrusted(line)))
-        except ValueError:
-            raise RuntimeError("invalid Codex JSON event stream") from None
-    return events
 
 
 def _error_messages(events: list[dict[str, object]]) -> list[str]:

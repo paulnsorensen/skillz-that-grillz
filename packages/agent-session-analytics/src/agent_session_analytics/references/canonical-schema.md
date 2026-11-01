@@ -4,8 +4,9 @@ Contents: [tool_uses](#tool_uses), [tool_results](#tool_results), [stop_events](
 
 The shape every harness adapter normalizes into and every analytics pack queries
 against. `agent-session-analytics ingest` loads one canonical row shape (the Claude envelope plus a
-`harness` tag) into `${XDG_CACHE_HOME:-$HOME/.cache}/dotfiles/session-analytics/sessions.duckdb` by default, then flattens it into
-the tables below. **Pack authors: write SQL against these tables; never reach
+`harness` tag) into `${XDG_CACHE_HOME:-$HOME/.cache}/agent-session-analytics/sessions.duckdb` by default, then flattens it into
+the tables below. If that file is absent, an existing legacy `dotfiles/session-analytics/` database is used.
+**Pack authors: write SQL against these tables; never reach
 into a harness's native format.**
 
 Every session-scoped table carries a `harness` column
@@ -68,8 +69,8 @@ into several raw entries; this table groups them by `message.id`.
 | model | VARCHAR | Model id; omp and pi use `<provider>/<model>`, or the bare model when the log names no provider |
 | stop_reason | VARCHAR | Canonical stop reason; omp and pi `toolUse`/`stop` map to `tool_use`/`end_turn` |
 | error_message | VARCHAR | Provider error text on an `error` stop (omp and pi) |
-| input_tokens / output_tokens / cache_read_tokens / cache_creation_tokens | BIGINT | Token usage for the turn. Codex rows come from `token_count` events: one row per event with a non-null `last_token_usage`, skipping an event whose `total_token_usage` repeats the previous one. Codex `input_tokens` includes cached tokens. Claude `input_tokens` excludes cache reads and cache creation. Only Claude reports `cache_creation_tokens` |
-| context_tokens | BIGINT | One context-size measure for both harnesses. Claude: `input_tokens + cache_read_tokens + cache_creation_tokens`. Other harnesses, including Codex: `input_tokens` |
+| input_tokens / output_tokens / cache_read_tokens / cache_creation_tokens | BIGINT | Token usage for the turn. Codex rows come from `token_count` events: one row per event with a non-null `last_token_usage`, skipping an event whose `total_token_usage` repeats the previous one. Codex `input_tokens` includes cached tokens. Claude, omp, and pi `input_tokens` exclude cache reads and cache creation. Codex reports no `cache_creation_tokens` |
+| context_tokens | BIGINT | One context-size measure for all harnesses. Claude, omp, and pi: `input_tokens + cache_read_tokens + cache_creation_tokens`. Codex: `input_tokens`, which already includes cached tokens |
 | prompt_tokens | BIGINT | Full context size sent for the turn (omp and pi) |
 | duration_ms / ttft_ms | DOUBLE | Model round-trip time and time to first token (omp and pi) |
 | tool_calls | BIGINT | Tool calls issued in the turn; 1 means the turn did not batch. NULL for Codex: its token rows carry no content, so Codex tool calls and `stop_reason` are not measured |

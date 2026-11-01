@@ -42,7 +42,7 @@ def discover() -> int:
             workspace = Path(cast(list[str], params["cwds"])[0])
             skills = sorted((workspace / ".agents/skills").glob("*/SKILL.md"))
             listing = [{"name": skill.parent.name, "enabled": True, "scope": "repo",
-                        "pluginId": None, "path": str(skill)} for skill in skills]
+                        "pluginId": None, "path": str(skill.resolve())} for skill in skills]
             print(json.dumps({"id": 1, "result": {"data": [{"cwd": str(workspace),
                              "errors": [], "skills": listing}]}}), flush=True)
     return 0
@@ -68,7 +68,7 @@ def execute(argv: list[str]) -> int:
         marker_code, _, _ = run_command(marker_command, workspace)
         print(json.dumps({"type": "item.completed", "item": {"type": "command_execution",
               "command": shlex.join(marker_command), "exit_code": marker_code}}), flush=True)
-    elif "score_percent" in fields:
+    elif "criteria" in fields:
         answer, role = judge(prompt, fields), "judge"
     else:
         answer, role = propose(prompt, fields, settings()["mode"]), "reflection"

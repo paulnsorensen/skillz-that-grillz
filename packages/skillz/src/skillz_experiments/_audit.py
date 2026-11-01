@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass
-from typing import cast
+from typing import Literal, cast
 
 from skillz_experiments._cases import Audit, Case, Citation, citation, digest, loads_untrusted, mapping, severity, string
 
@@ -15,6 +15,9 @@ RUBRIC = (
     "Do not return prose, rationales, scores, or additional fields."
 )
 SCORING_POLICY = "detection-f1*(0.5+0.25*severity-accuracy+0.25*actionability);clean-exact;v1"
+# The criteria-level rubric judges (judge, hybrid, journey) score by criterion levels, so they freeze another label.
+CRITERIA_SCORING_POLICY = "criteria-levels;must-below-3-zero;mean-level-minus-1-over-3;v1"
+GraderKind = Literal["audit", "criteria"]
 
 
 def _object(properties: dict[str, object]) -> dict[str, object]:
@@ -54,9 +57,11 @@ def report(value: object, files: dict[str, str]) -> tuple[Finding, ...]:
     return tuple(findings)
 
 
-def identity(model: str) -> dict[str, str]:
+def identity(model: str, grader_kind: GraderKind) -> dict[str, str]:
+    """Return the judge identity that a run freezes. `grader_kind` selects the scoring label."""
+    policy = SCORING_POLICY if grader_kind == "audit" else CRITERIA_SCORING_POLICY
     return {"model": model, "rubric_hash": digest(RUBRIC), "report_schema_hash": digest(REPORT_SCHEMA),
-            "judge_schema_hash": digest(JUDGE_SCHEMA), "scoring_policy": SCORING_POLICY}
+            "judge_schema_hash": digest(JUDGE_SCHEMA), "scoring_policy": policy}
 
 
 def prompt(case: Case, findings: tuple[Finding, ...]) -> str:

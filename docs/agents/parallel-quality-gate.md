@@ -31,15 +31,44 @@ Both settings default to four and require positive integers.
 These limits are separate.
 The four first pytest lanes can each start four workers at the same time.[^5]
 
+## Shared-host limits
+
+When `eatmydata` is on PATH, the five pytest lanes run under it.
+`eatmydata` makes fsync a no-op for the lane process tree.
+The skillz run records fsync each file and its directory, so concurrent gates cause a flush storm on one SSD.
+These lanes write only below the gate temporary root, so a lost flush loses no persistent state.
+The output marks each wrapped lane as `→ <lane> (eatmydata)`.
+Set `GATE_EATMYDATA=0` to keep fsync.
+The preparation steps and the standalone package modes always keep fsync, because `uv sync` writes the shared environment.
+Tests that replace `os.fsync` still see their replacement.
+
+`GATE_HOST_SLOTS` sets how many gates of one user on a host run their lanes at the same time.
+The default is 2, and `0` removes the limit.
+A gate takes a slot after preparation and holds it until its lanes finish.
+Each slot is a `flock` lock on `$XDG_RUNTIME_DIR/skillz-gate/slot-<n>.lock`, or on `~/.cache/skillz-gate/slot-<n>.lock` when that variable is unset.
+A gate that waits prints `… waiting for a host gate slot`.
+The kernel releases the lock when the gate process exits, also after `SIGKILL`.
+On CI, each job has its own runner, so a slot is always free.
+
 ## CI lane split
 
 `GATE_SKIP` holds a comma list of lane names that the scheduler skips.
 An unknown name fails before any work.
 The CI `gate (just ci)` job skips `skillz-e2e-pytest` and `skillz-pytest`.
-The parallel `skillz tests` job runs those two lanes through `just test-skillz`.
+Six parallel `skillz shard (<n>/6)` jobs run those two lanes through `just test-skillz`.
+The required `skillz tests` check passes only when every shard passes.
 Before the split, these lanes set the full wait on all 12 sampled pull-request runs.
 The median full wait was 560.5 seconds.[^10]
 Local `just build` and `just ci` leave `GATE_SKIP` unset and run every lane.
+
+`GATE_SHARD=<index>/<count>` applies only to `run_gate.py skillz`; another mode or a malformed value exits 2.
+It loads the `.github/scripts/pytest_shard.py` plugin into each skillz lane.
+The plugin keeps each test whose collection position modulo `count` equals `index - 1`.
+The plugin runs after the conftest hooks, so the marker checks still see every collected test.
+One unsharded `skillz tests` job took 478 to 509 seconds on four runs.
+The 4-vCPU runner was CPU-bound: a tmpfs on `/tmp` saved about 3 percent.
+With four shards, the shards took 87 to 157 seconds and the full wait was 164 seconds.
+Six shards aim to keep each shard under the gate job's 115 seconds on that run.
 
 ## Resource ownership
 

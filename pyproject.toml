@@ -5,8 +5,21 @@ requires-python = ">=3.11"
 dependencies = ["fromargs>=0.2.0,<0.3"]
 
 [dependency-groups]
-dev = ["basedpyright==1.40.2", "pytest>=8", "pyyaml==6.0.3", "types-PyYAML==6.0.12.20260906", "typing-extensions==4.16.0", "vulture==2.16"]
+dev = [
+    "basedpyright==1.40.2",
+    "coverage==7.17.0",
+    "diff-cover==11.0.0",
+    "hypothesis>=6.170.12",
+    "jsonschema>=4.26.0",
+    "pytest>=8",
+    "pyyaml==6.0.3",
+    "types-PyYAML==6.0.12.20260906",
+    "typing-extensions==4.16.0",
+    "vulture==2.16",
+]
 experiments = ["gepa==0.1.4"]
+# Keep this pin inside packages/skillz/pyproject.toml's tenacity range; the skillz-experiment bundle carries it.
+retry = ["tenacity==9.2.1"]
 # skills/skillz/wedge.toml bundles the wedge CLI. Keep this pin equal to packages/wedge/pyproject.toml:
 # shiv writes its version into every archive it builds.
 wedge = ["shiv==1.0.8"]
@@ -28,7 +41,9 @@ pythonVersion = "3.11"
 venvPath = "."
 venv = ".venv"
 include = ["packages", "skills"]
-exclude = ["**/.venv", "**/__pycache__", "**/.pytest_cache", "**/.mypy_cache"]
+exclude = ["**/.venv", "**/__pycache__", "**/.pytest_cache", "**/.mypy_cache",
+  # Byte-for-byte legacy gate source (gh-367): its bytes fix a content hash, so it stays untyped.
+  "packages/skillz/tests/skillz_experiments/fixtures/evals/gates"]
 extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/agent-session-analytics/src", "packages/fromargs/src", "packages/fromargs/examples"]
 typeCheckingMode = "recommended"
 failOnWarnings = true
@@ -38,9 +53,26 @@ root = "packages/fromargs"
 extraPaths = ["packages/fromargs/src", "packages/fromargs/examples"]
 
 [[tool.basedpyright.executionEnvironments]]
+root = "packages/skillz/tests/skillz_experiments/fixtures/mode/evals/gates"
+extraPaths = ["packages/skillz/tests/skillz_experiments/fixtures/mode/evals/gates/mode"]
+# Each mode gate runs as a script from its own directory, so it imports its sibling helpers by bare name.
+reportImplicitRelativeImport = false
+
+[[tool.basedpyright.executionEnvironments]]
 root = "packages/skillz/tests/skillz_experiments"
 extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/agent-session-analytics/src", "packages/fromargs/src", "packages/fromargs/examples"]
 # The test files share helper modules (`fake_provider`) from their own directory; it has no package marker.
+reportImplicitRelativeImport = false
+
+[[tool.basedpyright.executionEnvironments]]
+root = "packages/skillz/tests/skillz_live"
+extraPaths = ["packages/wedge/src", "packages/skillz/src", "packages/fromargs/src"]
+# The live tests share `fromargs_benefit` and `semver_oracle` from their own directory; it has no package marker.
+reportImplicitRelativeImport = false
+
+[[tool.basedpyright.executionEnvironments]]
+root = "skills/skillz/evals/gates"
+# Each gate runs as a script from its own directory, so it imports its sibling helpers by bare name.
 reportImplicitRelativeImport = false
 
 [tool.vulture]
@@ -53,3 +85,70 @@ ignore_decorators = [
   "@pytest.fixture", "@override",
 ]
 ignore_names = ["pytestmark", "pytest_collection_modifyitems"]
+
+# Coverage gate (.github/scripts/check_coverage.py): `just build` combines the pytest lane data, then checks the
+# project floor, whole-symbol dead code, and the coverage of the lines that a change adds.
+[tool.coverage.run]
+# Measure the xdist workers and the CLI tests that start Python subprocesses.
+patch = ["subprocess"]
+# Most measured processes run no package code; a warning on their stderr breaks the tests that parse it.
+disable_warnings = ["no-data-collected", "module-not-imported", "module-not-measured"]
+
+[tool.coverage.report]
+# The measured total at adoption, rounded down. Raise it when the gate says so; never lower it to pass.
+fail_under = 96
+exclude_also = ["if TYPE_CHECKING:", "@overload", "@abstractmethod", "raise NotImplementedError"]
+
+[tool.skillz.coverage]
+# The floor for the source lines that a change adds or edits, as codecov/patch measures them in milknado.
+diff_fail_under = 95
+
+# Whole-symbol dead code (.github/scripts/check_dead_code_coverage.py) exempts these `module:qualname` entries.
+# Each entry says why no offline test runs it. The entries below are the adoption baseline; remove one when a test reaches it.
+[tool.skillz.dead-code]
+allow = [
+  # Package data: `scaffold` copies the file into a skill, and the journey grader runs it there with `python3 -I`.
+  "skillz_experiments._journey_gate:agent_turn",
+  "skillz_experiments._journey_gate:main",
+  # Called only in the failure message of test_schemas.py.
+  "skillz_experiments._schemas:regenerate_command",
+  # The `os.walk` error callback; no test makes a directory unreadable.
+  "skillz_experiments.harness._claude._options:_holds_socket.onerror",
+  # Harness adapter interface members that only a live run calls on these adapters.
+  "skillz_experiments.harness._codex:Codex.resume",
+  "skillz_experiments.harness._command:Command.credential_kind",
+  "skillz_experiments.harness._command:Command.host_checks",
+  "skillz_experiments.harness._command:Command.resume",
+  # The entry of the built inspect-skill archive (skills/skillz/wedge.toml); the tests run the archive.
+  "skillz_inspect._cli:main",
+]
+
+# File-size ratchet (.github/scripts/check_file_lengths.py): a ceiling only goes down; run `tighten` after a file shrinks.
+[tool.skillz.file-size]
+max_lines = 300
+
+[tool.skillz.file-size.exceptions]
+"packages/agent-session-analytics/src/agent_session_analytics/_adapters/codex.py" = { max_lines = 376, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/agent-session-analytics/src/agent_session_analytics/_emitters.py" = { max_lines = 455, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/agent-session-analytics/src/agent_session_analytics/_tables.py" = { max_lines = 301, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/fromargs/src/fromargs/_app.py" = { max_lines = 333, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/_cases.py" = { max_lines = 423, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/_cli.py" = { max_lines = 312, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/_contract.py" = { max_lines = 370, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/_facts.py" = { max_lines = 390, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/_graders.py" = { max_lines = 326, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/_intake.py" = { max_lines = 431, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/harness/_claude/_events.py" = { max_lines = 386, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/harness/_claude/_preflight.py" = { max_lines = 305, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/harness/_claude/_transport.py" = { max_lines = 679, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/harness/_codex.py" = { max_lines = 519, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/run/_export.py" = { max_lines = 329, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/run/_outcomes.py" = { max_lines = 333, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/run/_plan.py" = { max_lines = 302, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/run/_run.py" = { max_lines = 406, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/run/_search_phase.py" = { max_lines = 423, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/run/_session.py" = { max_lines = 356, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/run/_wedge_targets.py" = { max_lines = 820, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/search/_history.py" = { max_lines = 334, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/wrapper/_gemini.py" = { max_lines = 492, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/wedge/src/wedge/_build.py" = { max_lines = 755, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }

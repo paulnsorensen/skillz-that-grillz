@@ -2,6 +2,8 @@
 __pycache__/
 *.pyc
 .venv/
+# Hypothesis example database: local runs only. With CI set, Hypothesis loads its built-in `ci` profile, which has no database.
+.hypothesis/
 
 # OS / editor
 .DS_Store
@@ -12,6 +14,9 @@ __pycache__/
 # Workflow scratch (age/cure/press reports, planning notes)
 .cheese/
 .context/
+
+# Skill archives: build output. `just build` writes them; CI publishes them on dist (ADR-012).
+skills/*/scripts/*.pyz
 
 # Skill-creator iteration workspaces (eval runs, benchmarks, viewer HTML)
 skills/*-workspace/

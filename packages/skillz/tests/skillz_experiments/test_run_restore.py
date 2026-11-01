@@ -19,7 +19,9 @@ from typing import cast, final
 import pytest
 from typing_extensions import override
 
+from skillz_experiments._audit import CRITERIA_SCORING_POLICY, SCORING_POLICY
 from skillz_experiments._candidate import Candidate
+from skillz_experiments.evaluation import CheckResult
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._cli import main
@@ -32,14 +34,15 @@ from skillz_experiments._budget import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, B
 from skillz_experiments.search import Edit, overshoot
 from skillz_experiments.run import Stop, export, run, summary
 from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM
-from skillz_experiments.run._session import Factory
+from skillz_experiments.run._state import Factory
 from skillz_experiments.run._plan import (
     _command_seconds as command_seconds,  # pyright: ignore[reportPrivateUsage]
     _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
     plan_estimate,
 )
-from skillz_experiments.run._session import Session, engine_hash
-from fake_provider import FakeProvider, ProviderCrash
+from skillz_experiments.run._open import engine_hash
+from skillz_experiments.run._session import Session
+from fake_provider import PASSED, FakeRunProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -91,16 +94,17 @@ class State:
         return lambda _model, budget, _checkpoint: _Fake(self, budget if self.claims else None)
 
 
-class _Fake(FakeProvider):
+class _Fake(FakeRunProvider):
     def __init__(self, state: State, budget: Budget | None = None) -> None:
+        super().__init__()
         self.state: State = state
         self.budget: Budget | None = budget
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
         if self.budget is not None:
             self.budget.claim()
-        return self.state.preflight(None)
+        return self.state.preflight(recorded)
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -136,9 +140,9 @@ def _harness(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: State) -> C
         del self
         return _Fake(state).invoke(prompt, candidate, case, holdout=holdout, schema=schema)
 
-    def check_candidate(self: Harness, candidate: Candidate) -> bool:
+    def check_candidate(self: Harness, candidate: Candidate) -> CheckResult:
         del self, candidate
-        return not state.reject_baseline
+        return CheckResult(False, None, "fail") if state.reject_baseline else PASSED
 
     monkeypatch.setattr(Harness, "preflight", preflight)
     monkeypatch.setattr(Harness, "check_candidate", check_candidate)
@@ -339,9 +343,9 @@ def test_a_resume_with_another_installed_codex_version_stops_as_environment_diff
 
     monkeypatch.setattr(Codex, "preflight", preflight)
 
-    def accept(self: Codex, candidate: Candidate) -> bool:
+    def accept(self: Codex, candidate: Candidate) -> CheckResult:
         del self, candidate
-        return True
+        return PASSED
 
     monkeypatch.setattr(Codex, "check_candidate", accept)
     monkeypatch.setattr(Harness, "evaluate", evaluate)
@@ -358,8 +362,8 @@ def test_a_resume_with_another_installed_codex_version_stops_as_environment_diff
     assert run(target, out, MODEL, live=True, configuration=configuration)["phase"] == "complete"
 
 
-def _changed_judge(model: str) -> dict[str, str]:
-    return {"model": model, "changed": "yes"}
+def _changed_judge(model: str, grader_kind: str) -> dict[str, str]:
+    return {"model": model, "grader_kind": grader_kind, "changed": "yes"}
 
 
 def test_a_changed_judge_stops_a_resume_and_an_export(
@@ -370,7 +374,7 @@ def test_a_changed_judge_stops_a_resume_and_an_export(
     out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state)
     assert read(out / "run.json")["judge"]
     with monkeypatch.context() as patch:
-        patch.setattr("skillz_experiments.run._session.judge_identity", _changed_judge)
+        patch.setattr("skillz_experiments.run._open.judge_identity", _changed_judge)
         with pytest.raises(ValueError, match="judge differs"):
             _ = run(target, out, MODEL, live=True, factory=state.factory())
     assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
@@ -378,6 +382,32 @@ def test_a_changed_judge_stops_a_resume_and_an_export(
         patch.setattr("skillz_experiments.run._export.judge_identity", _changed_judge)
         with pytest.raises(ValueError, match="judge differs"):
             _ = export(out, tmp_path / "export")
+    assert not (tmp_path / "export").exists()
+
+
+@pytest.mark.ac("gh-301:AC-2")
+def test_a_run_frozen_with_the_audit_label_for_a_rubric_judge_stops_a_resume_and_an_export(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    shutil.rmtree(target / "evals")
+    out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state)
+
+    def frozen(label: str) -> str:
+        record = read(out / "run.json")
+        judge = cast(dict[str, str], record["judge"])
+        current, judge["scoring_policy"] = judge["scoring_policy"], label
+        write(out / "run.json", record)
+        return current
+
+    criteria_label = frozen(SCORING_POLICY)
+    assert criteria_label == CRITERIA_SCORING_POLICY
+    with pytest.raises(ValueError, match="judge differs"):
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    _ = frozen(criteria_label)
+    assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
+    _ = frozen(SCORING_POLICY)
+    with pytest.raises(ValueError, match="judge differs"):
+        _ = export(out, tmp_path / "export")
     assert not (tmp_path / "export").exists()
 
 
@@ -527,7 +557,7 @@ def test_a_task_case_without_the_helper_input_stops_as_cases_invalid(tmp_path: P
 def test_a_draft_with_a_small_holdout_stops_with_cases_too_few(
         tmp_path: Path, make_target: Maker) -> None:
     target, out, state = make_target(tmp_path), tmp_path / "run", State()
-    sizes = {"a": 1, "b": 1, "c": 2}
+    sizes = {"a": 2, "b": 2, "c": 2, "d": 2, "e": 2}
     out.mkdir(mode=0o700)
     draft = out / "cases.draft.json"
     cases = [{"id": f"{family}-{index}", "family": family, "kind": "task", "request": f"request-{family}-{index}-end",
@@ -545,7 +575,7 @@ def test_the_cli_reports_budget_exhaustion_with_its_code(
     def exhausted(*_arguments: object, **_options: object) -> dict[str, object]:
         raise BudgetExhausted("global deadline exhausted")
 
-    monkeypatch.setattr("skillz_experiments._cli.run_workflow", exhausted)
+    monkeypatch.setattr("skillz_experiments.run.run", exhausted)
     assert main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "run"), "--model", MODEL]) == 1
     error = cast(dict[str, object], json.loads(capsys.readouterr().err))
     assert error["code"] == "budget-exhausted" and error["error"] == "global deadline exhausted"
@@ -560,6 +590,45 @@ def test_an_out_directory_open_to_other_users_is_refused_before_any_call(
         _ = run(target, out, MODEL, live=True, factory=state.factory())
     assert caught.value.code == "out-unsafe" and "0700" in str(caught.value)
     assert state.evaluated == [] and not (out / "run.json").exists()
+
+
+@pytest.mark.ac("gh-493:AC-1")
+@pytest.mark.ac("gh-493:AC-4")
+def test_an_out_directory_inside_the_target_is_refused_at_start_before_any_call(
+        tmp_path: Path, make_target: Maker) -> None:
+    target, state = make_target(tmp_path), State()
+    out = target / "run"
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    assert caught.value.code == "out-inside-target" and "mktemp -d" in str(caught.value)
+    assert state.evaluated == [] and state.preflights == [] and not out.exists()
+
+
+@pytest.mark.ac("gh-493:AC-2")
+@pytest.mark.ac("gh-493:AC-4")
+def test_a_run_directory_moved_inside_the_target_is_refused_on_resume_before_any_call(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, state = make_target(tmp_path), State()
+    prepared = _prepared(tmp_path, target, write_draft, approvals)
+    out = target / "run"
+    _ = shutil.move(prepared, out)
+    with pytest.raises(CodedError) as caught:
+        _ = run(target, out, MODEL, live=True, factory=state.factory())
+    assert caught.value.code == "out-inside-target" and "mktemp -d" in str(caught.value)
+    assert state.evaluated == [] and state.preflights == []
+    assert read(out / "run.json")["phase"] == "prepared"
+
+
+@pytest.mark.ac("gh-493:AC-3")
+def test_a_sibling_out_directory_that_shares_the_target_name_prefix_passes_the_guard(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    sibling = target.parent / f"{target.name}-runs"
+    _ = write_draft(sibling)
+    case_hash, calls = approvals(target, sibling)
+    with pytest.raises(Stop) as caught:
+        _ = run(target, sibling, MODEL, approve_cases=case_hash, approve_budget=calls)
+    assert caught.value.code == "live-required"
 
 
 def test_a_symlinked_out_directory_is_refused(tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
@@ -587,21 +656,22 @@ def test_a_symlinked_run_lock_is_refused_and_its_target_stays_intact(
     assert victim.read_text() == "keep me" and state.evaluated == []
 
 
-class _Spending(FakeProvider):
+class _Spending(FakeRunProvider):
     """A fake that claims the budget for each call and spends `delay` seconds on each search call.
 
     Its preflight reads the time left, as the real transports do through the sandbox probe.
     """
 
     def __init__(self, state: State, budget: Budget, delay: float) -> None:
+        super().__init__()
         self.state: State = state
         self.budget: Budget = budget
         self.delay: float = delay
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
         _ = self.budget.remaining()
-        return self.state.preflight(None)
+        return self.state.preflight(recorded)
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -838,7 +908,7 @@ def test_the_cli_passes_each_repeated_sandbox_read_to_run(
         seen.update(options)
         return {}
 
-    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    monkeypatch.setattr("skillz_experiments.run.run", fake)
     assert main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "run"), "--model", MODEL,
                  "--sandbox-read", "/opt/a", "--sandbox-read", "/opt/b", "--effort", "high", "--sandbox-seconds", "90"]) == 0
     assert (seen["sandbox_read"], seen["effort"], seen["sandbox_seconds"]) == (["/opt/a", "/opt/b"], "high", 90)
@@ -920,12 +990,14 @@ def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reser
 
 
 def test_the_search_shrinks_until_the_sandbox_time_fits_the_time_cap_and_a_fixed_cost_over_it_stops() -> None:
-    plain = plan_run(30, 30, 6, 1, 3)
-    shrunk = [plan_run(30, 30, 6, 1, 3, seconds) for seconds in (30, 40, 60)]
+    # Each validation case runs twice (gh-500), so the plan admits 10 validation cases here, not 20.
+    # The six preflight calls (gh-176) leave no search under the time cap at 60 sandbox seconds, so the top step is 50.
+    plain = plan_run(20, 10, 6, 1, 3)
+    shrunk = [plan_run(20, 10, 6, 1, 3, seconds) for seconds in (30, 40, 50)]
     assert all(plan.sized.seconds <= APPROVED_SECONDS for plan in shrunk)
     assert shrunk[0].metric_calls < plain.metric_calls and shrunk[2].metric_calls < shrunk[0].metric_calls
     with pytest.raises(Stop, match="sandbox time alone need") as caught:
-        _ = plan_run(30, 30, 6, 1, 3, 600)
+        _ = plan_run(20, 10, 6, 1, 3, 600)
     assert caught.value.code == "budget-unapproved"
 
 
@@ -1091,8 +1163,8 @@ def test_a_preflight_that_fails_after_its_claim_saves_the_count(
 
     class Failing(_Fake):
         @override
-        def preflight(self) -> dict[str, object]:
-            _ = super().preflight()
+        def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+            _ = super().preflight(recorded)
             raise EnvironmentDiffers("the environment changed after the claim")
 
     def factory(_model: str, budget: Budget, _checkpoint: Callable[[], None]) -> Failing:

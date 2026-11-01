@@ -57,20 +57,26 @@ just build   # autofix, then verify formats, Python types/dead code, and tests
 just ci      # the same gate with no autofixes — what CI runs
 ```
 
-CI splits the skillz pytest lanes into a parallel `skillz tests` job (`just test-skillz`).
+CI splits the skillz pytest lanes into six parallel `skillz shard` jobs (`GATE_SHARD=<n>/6 just test-skillz`).
 The `gate (just ci)` job sets `GATE_SKIP` to skip those lanes.
-The `skillz tests` job covers them, and local runs still include them.
+The required `skillz tests` check passes when every shard passes, and local runs still include every lane.
 
 `just build` runs format fixes and prepares Python environments before parallel checks.
 Set `GATE_JOBS` to bound concurrent checks and `TEST_WORKERS` to bound each pytest suite.
 Both settings default to 4.
 Set `GATE_SKIP` to a comma list of lane names to skip those lanes; an unknown name fails before any work.
+On a shared host, the pytest lanes run under `eatmydata` when it is on PATH; set `GATE_EATMYDATA=0` to keep fsync.
+Set `GATE_HOST_SLOTS` to limit how many gates of one user on a host run their lanes at the same time (default 2, `0` for no limit).
 
 Run `just build` and verify 0 failures before opening a PR.
 
 ## Submitting a pull request
 
 1. Fork the repo and create a topic branch from `main`.
+   Open the PR against `main`, not the default branch. `dist` is the
+   default branch: CI publishes it, and it shares no history with
+   `main`. With the GitHub CLI, run `gh pr create --base main`. In the
+   web UI, set the base branch to `main`.
 2. Make your change. Keep commits focused; one concern per commit is
    easier to review than a kitchen-sink commit.
 3. Use [Conventional Commits](https://www.conventionalcommits.org)

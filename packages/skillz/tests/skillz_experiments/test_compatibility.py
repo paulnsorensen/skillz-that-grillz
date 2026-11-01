@@ -16,14 +16,15 @@ from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments._records import read
 from skillz_experiments.harness._harness import Configuration
 from skillz_experiments.run import compare, export
-from skillz_experiments.run._session import SCORING_FILES, leakage_digest, scoring_digest
+from skillz_experiments.run._open import SCORING_FILES, leakage_digest, scoring_digest
 
 if TYPE_CHECKING:
     from .conftest import JudgedRun
 
 PACKAGE = Path(skillz_experiments.__file__).parent
 FIELDS = {"contract_hash", "skill", "adapter", "task_model", "judge_model", "claude_options", "edit",
-          "repeats", "statistics", "split_digest", "scoring_digest", "leakage_digest"}
+          "repeats", "statistics", "validation_policy", "split_digest", "scoring_digest", "leakage_digest"}
+CRITERIA = [{"id": "answer", "text": "THE answer SHALL meet the request."}]
 
 
 def _judged_run(base: Path, judge_model: str, make_target: Callable[..., Path],
@@ -49,7 +50,7 @@ def _judged_run(base: Path, judge_model: str, make_target: Callable[..., Path],
         out.mkdir(mode=0o700)
         cases = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request-t{family}-{index}-end",
                   "files": {"fixture.md": "hello\n"}, "expected": expected, "source": "skill"}
-                 for family in range(5) for index in range(2)]
+                 for family in range(6) for index in range(2)]
         _ = (out / DRAFT_NAME).write_text(json.dumps(cases), encoding="utf-8")
     result = approved_run(target, out, model="task-model", configuration=Configuration.load(config, "task-model"))
     return out, read(out / "run.json"), result
@@ -71,7 +72,7 @@ def test_a_run_freezes_its_fingerprint_and_an_equal_run_compares_clean(
     _, second, _ = _judged_run(tmp_path / "b", "judge-a", make_target, approved_run)
     saved = cast(list[dict[str, object]], json.loads((out / "cases.json").read_text())["cases"])
     fields = _fields(first)
-    assert set(fields) == FIELDS and len(fields) == 12
+    assert set(fields) == FIELDS and len(fields) == 13
     assert _frozen(first)["fingerprint"] == digest(fields)
     assert fields["task_model"] == "task-model" and fields["judge_model"] == "judge-a"
     assert fields["adapter"] == "command"
@@ -144,7 +145,7 @@ def test_compare_names_every_differing_field_including_one_present_on_one_side()
 @pytest.mark.ac("gh-235:AC-5")
 def test_an_export_carries_the_fingerprint_and_no_case_text(
         tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
-    out, record, _ = _judged_run(tmp_path / "a", "judge-a", make_target, approved_run, expected={"marker": "expected-sentinel"})
+    out, record, _ = _judged_run(tmp_path / "a", "judge-a", make_target, approved_run, expected={"marker": "expected-sentinel", "criteria": CRITERIA})
     destination = Path(cast(str, export(out, tmp_path / "export")["export"]))
     text = (destination / "report.json").read_text()
     report = cast(dict[str, object], json.loads(text))
@@ -156,7 +157,7 @@ def test_an_export_carries_the_fingerprint_and_no_case_text(
 
 @pytest.mark.ac("gh-235:AC-6")
 def test_the_scoring_files_are_pinned_and_exist() -> None:
-    assert SCORING_FILES == ("evaluation/_evaluator.py", "evaluation/_memo.py", "_evaluation.py", "_graders.py", "_audit.py", "_contract.py")
+    assert SCORING_FILES == ("evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "_graders.py", "_audit.py", "_contract.py")
     assert [name for name in SCORING_FILES if not (PACKAGE / name).is_file()] == []
 
 
@@ -168,7 +169,7 @@ def copied(tmp_path: Path) -> Path:
 
 
 @pytest.mark.ac("gh-235:AC-6")
-@pytest.mark.parametrize("module", ["gate/_rules.py", "gate/_statistics.py", "evaluation/_evaluator.py", "evaluation/_memo.py", "_evaluation.py", "_graders.py",
+@pytest.mark.parametrize("module", ["gate/_rules.py", "gate/_statistics.py", "evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "_graders.py",
                                     "_audit.py", "_contract.py"])
 def test_a_scoring_module_edit_changes_the_scoring_digest(copied: Path, module: str) -> None:
     before = scoring_digest(copied)
@@ -201,3 +202,13 @@ def test_only_an_edit_to_the_leakage_check_changes_the_leakage_digest(copied: Pa
     path = copied / module
     _ = path.write_text(path.read_text() + "\n# changed\n")
     assert (leakage_digest(copied) != before) == (module == "search/_leakage.py")
+
+
+# `leakage_digest` of the release before the `harness-token` rule (commit 56baea1c).
+PREVIOUS_LEAKAGE_DIGEST = "e9edc411a505c6a6975c9accf8418b61057bce2acd4f9c3bc4e783f696e51305"
+
+
+@pytest.mark.ac("gh-499:AC-5")
+def test_the_harness_token_rule_starts_a_new_leakage_cohort() -> None:
+    assert "harness-token" in (PACKAGE / "search/_leakage.py").read_text()
+    assert leakage_digest(PACKAGE) != PREVIOUS_LEAKAGE_DIGEST

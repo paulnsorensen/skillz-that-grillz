@@ -35,7 +35,17 @@ requires an MCP server.
    `just build` a hard stop.
 5. **Skill design.** Apply `.github/instructions/skills.instructions.md` to
    every `SKILL.md`.
-6. **Scope creep.** New abstractions without a demonstrated need. Coupling
+6. **Architecture drift.** Semantic drift in `packages/*/src/` that the
+   layout tests cannot see. The "Architecture (Sliced Bread)" section in
+   `AGENTS.md` holds the rules. Do not flag what `test_layout.py` or
+   `check_architecture.py` already enforces. Flag these changes:
+   - A method that mixes lifetimes.
+   - A new protocol or registry with one implementation.
+   - Logic in a crust `__init__.py`.
+   - A new cross-slice dependency that belongs in the kernel.
+   - New methods on a class that was just split, such as `Session` or
+     `ClaudeCode`. Suggest a collaborator in the slice.
+7. **Scope creep.** New abstractions without a demonstrated need. Coupling
    between `wedge` and `fromargs` beyond ADR-006 in
    `docs/agents/decisions/wedge-skill-packaging.md`.
 
@@ -68,6 +78,9 @@ finding, do these checks:
   `validate_skills.py`. `just build` runs them in CI.
 - Prose style in Simplified Technical English. Short sentences and repeated
   terms are deliberate.
+- Sliced Bread growth that `AGENTS.md` allows: a concept that stays in one
+  file, and a split for one consumer that puts real pressure on the code.
+  Also file or function size alone. A number is not pressure.
 
 ## How to write review comments
 

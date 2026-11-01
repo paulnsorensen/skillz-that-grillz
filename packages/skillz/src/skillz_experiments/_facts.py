@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 from skillz_experiments._cases import CodedError, repo_root
-from skillz_experiments._wedge_targets import audit_targets
+from skillz_experiments.run import audit_targets
 
 SCHEMA_VERSION = 1
 MAX_BYTES = 262144
@@ -29,8 +29,8 @@ SEPARATOR = re.compile(r"—|–|--|\s-\s|:(?=\s)")
 CONDITION = re.compile(
     r"\b(?:when|whenever|if|once|until|while|before|after|only|fires?|needs?|absent|selects?|flags?|opts?)\b", re.I)
 START_VERB = re.compile(r"(?:^|[;.])[\s`]*(?:read|load|use|run|open|consult)\b", re.I)
-COMMENT = re.compile(r"\s+#.*$")
-QUOTED = re.compile(r"^([\"'])(.*)\1\s*(?:#.*)?$", re.S)
+COMMENT = re.compile(r"(?:^|\s+)#.*$")
+QUOTED = re.compile(r"^([\"'])(.*?)\1\s*(?:#.*)?$", re.S)
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 SPAN = re.compile(r"(`{1,16}).+?\1")
 FLOW_INTERNAL = re.compile(r"[{,]\s*internal:\s*[\"']?true[\"']?\s*[,}]")

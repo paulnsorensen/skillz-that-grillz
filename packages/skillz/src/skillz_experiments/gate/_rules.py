@@ -115,6 +115,11 @@ def _reaches(value: float, limit: float) -> bool:
     return value >= limit or close(value, limit)
 
 
+def _loss_se(values: Sequence[float], se_floor: float) -> float:
+    """Return the SE of the case losses (`min(delta, 0)`), never below `se_floor`."""
+    return max(statistics.stdev([min(value, 0.0) for value in values]) / math.sqrt(len(values)), se_floor)
+
+
 def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statistics = DEFAULT_STATISTICS,
             families: Mapping[str, str] | None = None,
             tokens: Mapping[str, tuple[float | None, float | None]] | None = None,
@@ -127,14 +132,18 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     A family whose mean delta plus twice its standard error is below the negative budget turns any verdict
     into `reject`, and `reasons` gets `family-regression:<name>`.
     `skipped_families` lists each family that the rule skipped, on every path.
+    A delta that is not finite gives `inconclusive` with NaN `delta` and `se` and reason `non-finite-delta`.
+    The family rule still runs on the finite families, so a breach still turns it into `reject`.
     `tokens` maps each case id to its (baseline, winner) mean task tokens; it needs deltas keyed by the same case ids.
     The token rule runs only when `max_token_increase_per_gain` or `min_token_saving` is set. It runs after the
     floors and before the families:
     a score `promote` whose mean token change exceeds `max_token_increase_per_gain * delta` becomes `reject`
     with reason `token-cost`;
     a score `inconclusive` (the delta is inside the band, from -2*se to 2*se) becomes `promote-cheaper` when
-    `min_token_saving` is set, the delta is at least 0, `delta - 2*se` is at least `-max_quality_loss`, the tokens
-    drop by more than twice the token SE, and the drop is at least `min_token_saving`. A None `max_quality_loss`
+    `min_token_saving` is set, the delta is at least 0, `delta - 2*se_loss` is at least `-max_quality_loss`, the tokens
+    drop by more than twice the token SE, and the drop is at least `min_token_saving`. `se_loss` is the SE of the
+    case losses alone, `max(stdev(min(delta_i, 0)) / sqrt(n), se_floor)`, so a case that the candidate fixes does not
+    widen it. A None `max_quality_loss`
     turns `promote-cheaper` off. The floors do not gate `promote-cheaper`.
     Unknown usage turns a `promote` into `inconclusive` with reason `unknown-usage`. It adds the same reason to
     a band result when `min_token_saving` is set. An active token rule with no `tokens` is unknown usage.
@@ -156,12 +165,14 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
            and (planned <= 0 or count / planned < thresholds.min_coverage))
     cover = ["low-coverage"] if low else []
     breached, skipped = _family_rule(deltas if isinstance(deltas, Mapping) else {}, families, thresholds)
+    regressions = [f"family-regression:{family}" for family in breached]
     limit, saving = thresholds.max_token_increase_per_gain, thresholds.min_token_saving
     active = thresholds.token_rule
     change = _token_change(tokens) if active and tokens is not None else None
     token_delta, token_se = change if change is not None else (None, None)
     if not all(math.isfinite(value) for value in values):
-        return Verdict("inconclusive", math.nan, math.nan, count, tuple(cover), skipped_families=skipped,
+        return Verdict("reject" if breached else "inconclusive", math.nan, math.nan, count,
+                       (*cover, "non-finite-delta", *regressions), skipped_families=skipped,
                        token_delta=token_delta, token_se=token_se, se_floor=se_floor, n_shared=count)
     if count < 2:
         return Verdict("inconclusive", statistics.fmean(values) if values else 0.0, se_floor, count,
@@ -205,10 +216,10 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
             if token_delta is None or token_se is None:
                 reasons.append("unknown-usage")
             elif (thresholds.max_quality_loss is not None and delta >= 0
-                  and _reaches(delta - 2 * se, -thresholds.max_quality_loss)
+                  and _reaches(delta - 2 * _loss_se(values, se_floor), -thresholds.max_quality_loss)
                   and _exceeds(-token_delta, 2 * token_se) and _reaches(-token_delta, saving)):
                 name = "promote-cheaper"
     if breached:
         name = "reject"
-        reasons.extend(f"family-regression:{family}" for family in breached)
+        reasons.extend(regressions)
     return Verdict(name, delta, se, count, tuple(reasons), skipped, token_delta, token_se, se_floor, n_shared=count)

@@ -7,8 +7,13 @@
     "brief": "You lead a team of five. You review every change in pairs and ship on Fridays. Answer one question at a time and stay brief.",
     "max_turns": 3,
     "requirements": ["CULT-1", "CULT-2"],
-    "files": {"notes.txt": "Team notes.\n"},
-    "expected": {"forks": ["review habits", "release day"]},
+    "expected": {
+      "must": ["asks about review habits", "asks about release day"],
+      "criteria": [
+        {"id": "must-0", "text": "THE transcript SHALL show that the agent asks about review habits.", "from": "must:0"},
+        {"id": "must-1", "text": "THE transcript SHALL show that the agent asks about release day.", "from": "must:1"}
+      ]
+    },
     "source": "skill"
   }
 ]

@@ -21,8 +21,8 @@ from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._claude import _options, _sandbox, _transport
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments.search import Edit
-from skillz_experiments.run import Stop, _session, run
-from skillz_experiments.run._session import Factory
+from skillz_experiments.run import Stop, _headroom, run
+from skillz_experiments.run._state import Factory
 
 FIXTURES = Path(__file__).parent / "fixtures"
 _REAL_NESTED_USERNS_BLOCKED = _sandbox.nested_userns_blocked
@@ -100,6 +100,18 @@ def umask_022() -> Iterator[None]:
 
 
 @pytest.fixture
+def runner_tempdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Make `tmp_path` the temporary directory of this process and of its child processes, and return it.
+
+    The runner makes each workspace below `tempfile.gettempdir()`, and the Gemini dotenv guard refuses other workspaces.
+    `--basetemp` can put `tmp_path` outside `TMPDIR`: the gate uses `/tmp`, but macOS sets `TMPDIR` below `/var/folders`.
+    """
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    return tmp_path
+
+
+@pytest.fixture
 def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Give each test a fake host login and a private temp dir, so no test touches the real `~/.claude`.
 
@@ -129,10 +141,10 @@ def host_login(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 def headroom_off(monkeypatch: pytest.MonkeyPatch) -> None:
     """Lift the headroom stop for a test whose fake provider scores every seed case at 1.0 and does not test the stop."""
-    monkeypatch.setattr(_session, "HEADROOM_CEILING", 1.1)
+    monkeypatch.setattr(_headroom, "HEADROOM_CEILING", 1.1)
 
 
-def _make_target(tmp_path: Path, *, helper: bool = False) -> Path:
+def _make_target(tmp_path: Path, *, helper: bool = False, surface: dict[str, object] | None = None) -> Path:
     """Copy the echo skill and give it a one-kind contract, so every drafted task case scores with `echo`."""
     target = tmp_path / "echo-skill"
     _ = shutil.copytree(FIXTURES / "echo-skill", target)
@@ -140,6 +152,8 @@ def _make_target(tmp_path: Path, *, helper: bool = False) -> Path:
     contract: dict[str, object] = {
         "schema_version": 1, "status": "approved", "skill": "echo-skill", "invocation": "$echo-skill run",
         "kinds": {"echo": {"grader": "exact-json"}}, "editable": []}
+    if surface is not None:
+        contract["surface"] = surface
     if helper:
         (target / "scripts").mkdir()
         _ = (target / "scripts/echo.py").write_text("import json\nprint(json.dumps({'ok': True}))\n")
@@ -149,14 +163,16 @@ def _make_target(tmp_path: Path, *, helper: bool = False) -> Path:
     return target
 
 
-def _write_draft(out: Path, families: int = 5, per_family: int = 2) -> list[str]:
-    """Write a case draft and return the case ids."""
+def _write_draft(out: Path, families: int = 6, per_family: int = 2) -> list[str]:
+    """Write a case draft and return the case ids. The default fills train 4, validation 2, and holdout 6."""
     cases: list[dict[str, object]] = []
     for family in range(families):
         for index in range(per_family):
             name = f"t{family}-{index}"
             cases.append({"id": name, "family": f"f{family}", "kind": "task", "request": f"request-{name}-end",
-                          "files": {"fixture.md": "hello\n"}, "expected": {}, "source": "skill"})
+                          "files": {"fixture.md": "hello\n"},
+                          "expected": {"criteria": [{"id": "answer", "text": "THE answer SHALL meet the request."}]},
+                          "source": "skill"})
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
     _ = (out / DRAFT_NAME).write_text(json.dumps(cases), encoding="utf-8")
     return [str(case["id"]) for case in cases]

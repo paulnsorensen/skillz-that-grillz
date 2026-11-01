@@ -185,6 +185,7 @@ def test_the_credential_row_names_the_subscription_login_and_needs_no_api_key(
         host_bin: Callable[[str], Path], monkeypatch: pytest.MonkeyPatch) -> None:
     _ = host_bin("ok")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")  # macOS reads the Keychain, which holds no login file to link
     report = _doctor.doctor("claude")
     assert report["ok"] is True
     assert rows(report)["credential"]["status"] == "pass" and rows(report)["credential"]["detail"] == "subscription login"

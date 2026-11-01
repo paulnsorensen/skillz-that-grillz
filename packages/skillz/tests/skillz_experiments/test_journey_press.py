@@ -178,10 +178,18 @@ def contract(surface: dict[str, object] | None = None, argv: list[str] | None = 
     return parse(document, "skill")
 
 
+CRITERIA = [{"id": "must-0", "text": "THE transcript SHALL show the plan.", "from": "must:0"}]
+
+
+def levels(level: int) -> dict[str, object]:
+    return {"criteria": {"must-0": {"level": level, "reason": "graded"}}}
+
+
 def journey_case(tmp_path: Path, rules: Contract, files: dict[str, str], max_turns: int = 8,
                  case_files: dict[str, str] | None = None) -> tuple[Case, Candidate]:
     item = {"id": "j1", "family": "j", "split": "train", "kind": "journey", "request": REQUEST, "brief": BRIEF,
-            "max_turns": max_turns, "files": case_files or {"input.txt": "hello\n"}, "expected": {"secret": EXPECTED},
+            "max_turns": max_turns, "files": case_files or {"input.txt": "hello\n"},
+            "expected": {"must": [EXPECTED], "criteria": CRITERIA},
             "provenance": "test", "provider_approved": True}
     path = tmp_path / "cases.json"
     _ = path.write_text(json.dumps({"schema_version": 1, "cases": [item]}))
@@ -472,7 +480,7 @@ def test_journey_gate_workspace_holds_the_exact_event_stream_and_neither_brief_n
     del local_sandbox
     dump = tmp_path / "dump.json"
     scenario: dict[str, object] = {"turns": [{"write": {"notes.txt": "NOTES_SENTINEL\n"}}, {}]}
-    _, result, judge, task = evaluate_journey(tmp_path, scenario, gate_argv(dump), [*SIMULATE_THEN_DONE, {"score_percent": 70}])
+    _, result, judge, task = evaluate_journey(tmp_path, scenario, gate_argv(dump), [*SIMULATE_THEN_DONE, levels(3)])
     files = cast(dict[str, str], json.loads(dump.read_text()))
     trace = [cast(dict[str, object], json.loads(line)) for line in files["./trace/events.jsonl"].splitlines()]
     assert [event["type"] for event in trace] == ["system", "assistant", "user", "assistant", "result",
@@ -480,11 +488,11 @@ def test_journey_gate_workspace_holds_the_exact_event_stream_and_neither_brief_n
     assert trace[-1]["result"] == "agent-2" and trace[4]["result"] == "agent-1"
     assert files["./input.txt"] == "hello\n" and files["./output/notes.txt"] == "NOTES_SENTINEL\n"
     assert not [name for name, text in files.items() if BRIEF in text or EXPECTED in text or "SENTINEL_9f2c" in text]
-    assert result["score"] == 0.7 and task.budget.calls == 5
+    assert result["score"] == 2 / 3 and task.budget.calls == 5
     sim_one, sim_two, final = judge.prompts
     for prompt in (sim_one, sim_two):
         assert BRIEF in prompt and REQUEST in prompt
-        assert "EXPECTED_SENTINEL" not in prompt and "RUBRIC_SENTINEL" not in prompt and "secret" not in prompt
+        assert "EXPECTED_SENTINEL" not in prompt and "RUBRIC_SENTINEL" not in prompt
     assert "agent-1" in sim_one and "agent-2" not in sim_one
     assert all(text in sim_two for text in ("agent-1", "agent-2", "r1 text"))
     assert all(text in final for text in (BRIEF, REQUEST, "agent-1", "agent-2", "NOTES_SENTINEL", EXPECTED, "r1 text"))
@@ -507,8 +515,8 @@ def test_journey_gate_score_of_zero_or_less_or_an_invalid_score_skips_the_judge(
 def test_journey_gate_score_just_above_zero_reaches_the_judge(tmp_path: Path, local_sandbox: None) -> None:
     del local_sandbox
     _, result, judge, _ = evaluate_journey(tmp_path, {}, gate_argv(stdout='{"score": 0.0001}'),
-                                           [*SIMULATE_THEN_DONE, {"score_percent": 40}])
-    assert result["score"] == 0.4 and len([prompt for prompt in judge.prompts if "RUBRIC:" in prompt]) == 1
+                                           [*SIMULATE_THEN_DONE, levels(2)])
+    assert result["score"] == 1 / 3 and len([prompt for prompt in judge.prompts if "RUBRIC:" in prompt]) == 1
 
 
 def test_journey_that_needs_more_calls_than_the_search_share_is_refused_before_any_process_starts(
@@ -519,9 +527,9 @@ def test_journey_that_needs_more_calls_than_the_search_share_is_refused_before_a
         _ = evaluate_journey(tmp_path / "short", {}, gate_argv(), SIMULATE_THEN_DONE, 3, Budget(10, 120, 5))
     assert not (tmp_path / "short/bin/claude.attack.log").exists()
     # 10 - 3 reserved leaves exactly 7: the journey completes inside the share, with at most 7 claims.
-    answers: list[dict[str, object]] = [{"reply": "a", "done": False}, {"reply": "b", "done": False}, {"score_percent": 50}]
+    answers: list[dict[str, object]] = [{"reply": "a", "done": False}, {"reply": "b", "done": False}, levels(2)]
     _, result, _, task = evaluate_journey(tmp_path / "fits", {}, gate_argv(), answers, 3, Budget(10, 120, 3))
-    assert result["score"] == 0.5 and task.budget.calls == 6 <= contract().calls("journey", 3) == 7
+    assert result["score"] == 1 / 3 and task.budget.calls == 6 <= contract().calls("journey", 3) == 7
 
 
 # AC-7: companions stay read-only for the task, and the journey leaves nothing behind.
@@ -586,15 +594,16 @@ def test_a_contract_without_a_surface_keeps_the_pre_change_claude_argv(tmp_path:
 
 def draft_items(**changes: object) -> list[dict[str, object]]:
     base: dict[str, object] = {"id": "a", "family": "fa", "kind": "journey", "request": "r", "source": "skill",
-                               "files": {"f.txt": "x"}, "expected": "ref", "brief": "wants plan"}
-    others = [base | {"id": name, "family": "f" + name} for name in ("b", "c")]
+                               "files": {"f.txt": "x"}, "expected": {"must": ["ref"], "criteria": CRITERIA},
+                               "brief": "wants plan"}
+    others = [base | {"id": name, "family": "f" + name} for name in ("b", "c", "d")]
     return [base | changes, *others]
 
 
 def hash_of(tmp_path: Path, **changes: object) -> str:
     path = tmp_path / DRAFT_NAME
     _ = path.write_text(json.dumps(draft_items(**changes)), encoding="utf-8")
-    cases = split_cases(load_draft(path), 7, "journey")
+    cases = split_cases(load_draft(path), 7, None, ["journey"])
     return case_hash(cases, 7)
 
 
@@ -602,7 +611,7 @@ def test_case_hash_changes_with_the_brief_the_turn_limit_and_the_order_of_requir
     base = hash_of(tmp_path, requirements=["R1", "R2"])
     assert hash_of(tmp_path, requirements=["R1", "R2"]) == base
     variants = [hash_of(tmp_path, requirements=["R2", "R1"]), hash_of(tmp_path, requirements=["R1"]),
-                hash_of(tmp_path, requirements=["R1", "R2", "R2"]), hash_of(tmp_path, requirements=["R1", "R2"], brief="wants plan."),
+                hash_of(tmp_path, requirements=["R1", "R2", "R3"]), hash_of(tmp_path, requirements=["R1", "R2"], brief="wants plan."),
                 hash_of(tmp_path, requirements=["R1", "R2"], max_turns=7)]
     assert len({base, *variants}) == 6
     assert hash_of(tmp_path, max_turns=8) == hash_of(tmp_path)
@@ -636,13 +645,13 @@ def test_a_journey_without_a_usable_brief_is_rejected_with_brief_missing(tmp_pat
 
 def test_frozen_journey_keeps_the_brief_the_turn_limit_and_the_requirement_order_through_load_cases(tmp_path: Path) -> None:
     path = tmp_path / DRAFT_NAME
-    _ = path.write_text(json.dumps(draft_items(requirements=["R2", "R1", "R2"])), encoding="utf-8")
-    cases = split_cases(load_draft(path), 7, "journey")
+    _ = path.write_text(json.dumps(draft_items(requirements=["R2", "R1", "R3"])), encoding="utf-8")
+    cases = split_cases(load_draft(path), 7, None, ["journey"])
     out = tmp_path / "cases.json"
     freeze(out, cases, 7, case_hash(cases, 7))
     loaded = {case.identifier: case for case in load_cases(out, {"journey": "journey"})}
     journey = loaded["a"].journey
-    assert journey is not None and (journey.brief, journey.max_turns, journey.requirements) == ("wants plan", 8, ("R2", "R1", "R2"))
+    assert journey is not None and (journey.brief, journey.max_turns, journey.requirements) == ("wants plan", 8, ("R2", "R1", "R3"))
     assert loaded["a"].kind == "journey" and all(case.journey is not None for case in loaded.values())
 
 

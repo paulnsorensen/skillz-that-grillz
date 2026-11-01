@@ -10,8 +10,10 @@ from typing import cast
 
 from skillz_experiments._candidate import snapshot_outputs
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
-from skillz_experiments._evaluation import usage
-from skillz_experiments.harness._claude._constants import AUTH_FAILED, PROBE_PREFIX
+from skillz_experiments._frontmatter import read_frontmatter
+from skillz_experiments.evaluation import usage
+from skillz_experiments.harness._claude._constants import AUTH_FAILED, HOST_FILE, PROBE_PREFIX
+from skillz_experiments.harness._claude._pairs import blocks, tool_pairs
 from skillz_experiments.harness._claude._sandbox import sandbox_fix, SandboxUnavailable
 from skillz_experiments.harness._claude._settings import Declared
 
@@ -45,8 +47,12 @@ def declared_commands(events: list[dict[str, object]]) -> tuple[frozenset[str], 
 
 
 def parse_events(stdout: str) -> list[dict[str, object]]:
+    """Read one JSON object per line. Raise `RuntimeError` when a nonblank line is not a JSON object.
+
+    Split only on `\\r` and `\\n`: JSON escapes them in strings, but Claude Code writes U+0085, U+2028, and U+2029 raw.
+    """
     events: list[dict[str, object]] = []
-    for line in stdout.splitlines():
+    for line in re.split(r"[\r\n]", stdout):
         if not line.strip():
             continue
         try:
@@ -155,35 +161,25 @@ def not_loaded(workspace: Path, started: float, trace: list[dict[str, object]]) 
 
 def event_trace(events: list[dict[str, object]]) -> list[dict[str, object]]:
     """Turn Bash tool calls into completed command events. A tool error means exit code 1."""
-    commands: dict[str, str] = {}
     trace: list[dict[str, object]] = []
-    for event in events:
-        message = event.get("message")
-        content = cast(dict[str, object], message).get("content") if isinstance(message, dict) else None
-        if not isinstance(content, list):
-            continue
-        for block in (cast(dict[str, object], item) for item in cast(list[object], content) if isinstance(item, dict)):
-            if block.get("type") == "tool_use" and block.get("name") == "Bash" and isinstance(block.get("id"), str):
-                command = mapping(block.get("input")).get("command") if isinstance(block.get("input"), dict) else None
-                if isinstance(command, str):
-                    commands[cast(str, block["id"])] = command
-            elif block.get("type") == "tool_result" and block.get("tool_use_id") in commands:
-                trace.append({"type": "item.completed", "item": {
-                    "type": "command_execution", "command": commands[cast(str, block["tool_use_id"])],
-                    "exit_code": 1 if block.get("is_error") is True else 0}})
+    for use, result in tool_pairs(events, "Bash"):
+        command = _input(use).get("command")
+        if result is not None and isinstance(command, str):
+            trace.append({"type": "item.completed", "item": {
+                "type": "command_execution", "command": command, "exit_code": 1 if result.get("is_error") is True else 0}})
     return trace
 
 
-def _blocks(content: object) -> list[dict[str, object]]:
-    """Return the object blocks of a content list, or none when `content` is not a list."""
-    items = cast(list[object], content) if isinstance(content, list) else []
-    return [cast(dict[str, object], item) for item in items if isinstance(item, dict)]
+def _input(use: dict[str, object]) -> dict[str, object]:
+    """Return the input of a tool use, or none when it is not an object."""
+    raw = use.get("input")
+    return cast(dict[str, object], raw) if isinstance(raw, dict) else {}
 
 
 def _result_text(content: object) -> str:
     """Join the text of a tool result. Claude Code sends it as a string or as a list of text blocks."""
     return content if isinstance(content, str) else "\n".join(
-        str(block.get("text", "")) for block in _blocks(content) if block.get("type") == "text")
+        str(block.get("text", "")) for block in blocks(content) if block.get("type") == "text")
 
 
 def tool_transcript(events: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -191,17 +187,13 @@ def tool_transcript(events: list[dict[str, object]]) -> list[dict[str, object]]:
 
     A tool use with no result keeps `result` and `is_error` as None.
     """
-    uses: dict[str, dict[str, object]] = {}
-    for event in events:
-        message = event.get("message")
-        for block in _blocks(cast(dict[str, object], message).get("content") if isinstance(message, dict) else None):
-            if block.get("type") == "tool_use" and isinstance(block.get("id"), str):
-                uses[cast(str, block["id"])] = {"tool": block.get("name"), "input": block.get("input"),
-                                                "result": None, "is_error": None}
-            elif block.get("type") == "tool_result" and block.get("tool_use_id") in uses:
-                uses[cast(str, block["tool_use_id"])] |= {"result": _result_text(block.get("content")),
-                                                         "is_error": block.get("is_error") is True}
-    return list(uses.values())
+    transcript: dict[str, dict[str, object]] = {}
+    for use, result in tool_pairs(events):
+        if result is None:
+            transcript[cast(str, use["id"])] = {"tool": use.get("name"), "input": use.get("input"), "result": None, "is_error": None}
+        else:
+            transcript[cast(str, use["id"])] |= {"result": _result_text(result.get("content")), "is_error": result.get("is_error") is True}
+    return list(transcript.values())
 
 
 def token_events(final: dict[str, object]) -> list[dict[str, object]]:
@@ -228,34 +220,21 @@ def token_events(final: dict[str, object]) -> list[dict[str, object]]:
 
 def declares(text: str, skill: str) -> bool:
     """Check that the SKILL.md frontmatter names the contract skill, has a description, and declares no hooks."""
-    lines = text.splitlines()
-    if not lines or lines[0] != "---" or "---" not in lines[1:]:
+    try:
+        parsed = read_frontmatter(text)
+    except ValueError:
         return False
-    fields: dict[str, str] = {}
-    for line in lines[1:lines.index("---", 1)]:
-        if not line or line[0].isspace():
-            continue
-        key, _, value = line.partition(":")
-        key = key.strip().removeprefix("? ").strip().strip("\"'").strip().lower()
-        fields[key] = value.strip().strip("\"'")
+    fields = {key.lower(): value for key, value in parsed.items()}
     return (fields.get("name") == skill and bool(fields.get("description"))
             and "hooks" not in fields and "user-invocable" not in fields)
 
 
 def _bash_control_passed(events: list[dict[str, object]], command_marker: str, control_token: str) -> bool:
     """Accept the control token only from the Bash `tool_result` that answers the `cat` of the control file."""
-    uses: set[str] = set()
-    for event in events:
-        message = event.get("message")
-        content = cast(dict[str, object], message).get("content") if isinstance(message, dict) else None
-        for block in cast(list[object], content) if isinstance(content, list) else []:
-            item = mapping(block)
-            if item.get("type") == "tool_use" and item.get("name") == "Bash":
-                command = mapping(item.get("input", {})).get("command")
-                if isinstance(command, str) and command_marker in command and isinstance(item.get("id"), str):
-                    uses.add(cast(str, item["id"]))
-            if item.get("type") == "tool_result" and item.get("tool_use_id") in uses and control_token in json.dumps(item):
-                return True
+    for use, result in tool_pairs(events, "Bash"):
+        command = _input(use).get("command")
+        if result is not None and isinstance(command, str) and command_marker in command and control_token in json.dumps(result):
+            return True
     return False
 
 
@@ -264,17 +243,7 @@ APPROVAL_BLOCK = re.compile(r"(?:requires|needs) approval", re.IGNORECASE)
 
 def approval_blocked(events: list[dict[str, object]]) -> bool:
     """Return True when a Bash tool result says that the command needs approval, so the sandbox never ran it."""
-    uses: set[str] = set()
-    for event in events:
-        message = event.get("message")
-        content = cast(dict[str, object], message).get("content") if isinstance(message, dict) else None
-        for block in cast(list[object], content) if isinstance(content, list) else []:
-            item = mapping(block)
-            if item.get("type") == "tool_use" and item.get("name") == "Bash" and isinstance(item.get("id"), str):
-                uses.add(cast(str, item["id"]))
-            elif item.get("type") == "tool_result" and item.get("tool_use_id") in uses and APPROVAL_BLOCK.search(json.dumps(item)):
-                return True
-    return False
+    return any(APPROVAL_BLOCK.search(json.dumps(result)) for _, result in tool_pairs(events, "Bash") if result is not None)
 
 
 APPROVAL_MESSAGE = ("the preflight Bash commands hit an approval block: Claude Code asked for approval of a Bash command, "
@@ -297,30 +266,50 @@ def read_failure(events: list[dict[str, object]], sealed_token: str, sealed: str
     return None
 
 
-def read_tool_failure(events: list[dict[str, object]], sealed_token: str, sealed: Path, *, evidence: bool) -> str | None:
-    """Judge the Read-tool probe. The Read tool must try the sealed host file and fail to return its token.
+def read_tool_failure(events: list[dict[str, object]], sealed_token: str, sealed: Path, link: Path, control_token: str,
+                      control_file: Path, *, evidence: bool) -> str | None:
+    """Judge the Read-tool probe. The Read tool must fail on the sealed host file, on the host file `HOST_FILE`, and on
+    the workspace symlink `link` to the sealed file. It must read the workspace file `control_file`.
 
-    Without `evidence`, only a returned token fails. With it, a missing Read call also fails.
+    A sealed-file or symlink result that holds the token fails. A host-file result without `is_error: true` fails
+    closed, so a result that returns content cannot pass. Without `evidence`, only these leaks fail. With it, a missing
+    answer for the sealed file or the symlink, a missing refusal for the host file, or a failed control read also fails.
+    The control read proves that the setting does not also block the workspace.
 
-    Claude Code's `claude -p` has no flag that confines the Read tool to the workspace, so only this probe proves it.
+    The `blockReadsOutsideWorkingDirectories` setting confines the Read tool, and this probe proves that it holds.
     """
-    uses: set[str] = set()
-    answered = False
-    for event in events:
-        message = event.get("message")
-        content = cast(dict[str, object], message).get("content") if isinstance(message, dict) else None
-        for block in cast(list[object], content) if isinstance(content, list) else []:
-            item = mapping(block)
-            if item.get("type") == "tool_use" and item.get("name") == "Read" and isinstance(item.get("id"), str):
-                target = mapping(item.get("input", {})).get("file_path")
-                if isinstance(target, str) and Path(target).resolve() == sealed.resolve():
-                    uses.add(cast(str, item["id"]))
-            if item.get("type") == "tool_result" and item.get("tool_use_id") in uses:
-                if sealed_token in json.dumps(item):
-                    return "read isolation failed: the Read tool reached a path outside the workspace"
-                answered = True
-    if evidence and not answered:
+    answered = refused = linked = controlled = False
+    for use, result in tool_pairs(events, "Read"):
+        target = _input(use).get("file_path")
+        if result is None or not isinstance(target, str):
+            continue
+        text = json.dumps(result)
+        if Path(target) == link:
+            if sealed_token in text:
+                return "read isolation failed: the Read tool followed a workspace symlink to a path outside the workspace"
+            linked = True
+            continue
+        path = Path(target).resolve()
+        if path == Path(HOST_FILE).resolve():
+            if result.get("is_error") is not True:
+                return f"read isolation failed: the Read tool read the host file {HOST_FILE}"
+            refused = True
+        elif path == sealed.resolve():
+            if sealed_token in text:
+                return "read isolation failed: the Read tool reached a path outside the workspace"
+            answered = True
+        elif path == control_file.resolve():
+            controlled = controlled or (result.get("is_error") is not True and control_token in text)
+    if not evidence:
+        return None
+    if not answered:
         return "read-tool probe has no evidence: no Read tool call answered for the sealed host file"
+    if not refused:
+        return f"read-tool probe has no evidence: no Read tool call was refused for the host file {HOST_FILE}"
+    if not linked:
+        return "read-tool probe has no evidence: no Read tool call answered for the workspace symlink to the sealed file"
+    if not controlled:
+        return "read-tool probe has no positive control: the Read tool cannot read a workspace file"
     return None
 
 
@@ -374,11 +363,10 @@ def assistant_text(events: list[dict[str, object]]) -> str:
     for event in events:
         message = event.get("message")
         content = cast(dict[str, object], message).get("content") if event.get("type") == "assistant" and isinstance(message, dict) else None
-        for block in cast(list[object], content) if isinstance(content, list) else []:
-            if isinstance(block, dict) and cast(dict[str, object], block).get("type") == "text":
-                text = cast(dict[str, object], block).get("text")
-                if isinstance(text, str):
-                    texts.append(text)
+        for block in blocks(content):
+            text = block.get("text")
+            if block.get("type") == "text" and isinstance(text, str):
+                texts.append(text)
     final = final_event(events)
     return "\n".join(texts) or (str(final.get("result", "")) if final else "")
 

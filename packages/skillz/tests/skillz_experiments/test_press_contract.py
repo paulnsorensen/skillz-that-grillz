@@ -35,7 +35,7 @@ def run_intake(tmp_path: Path, target: Path, capsys: pytest.CaptureFixture[str])
     out.mkdir(mode=0o700)
     cases = [{"id": f"c{family}-{index}", "family": f"f{family}", "kind": "task", "request": "Echo hello",
               "files": {"input.txt": "hello\n"}, "expected": {"echo": "hello"}, "source": "skill"}
-             for family in range(5) for index in range(2)]
+             for family in range(6) for index in range(2)]
     _ = (out / "cases.draft.json").write_text(json.dumps(cases))
     command = ["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose"]
     code = main(command)
@@ -215,9 +215,8 @@ def test_evaluator_prompt_expands_placeholders_once_and_never_in_the_request() -
     from skillz_experiments._cases import Case
     from skillz_experiments.evaluation._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
     rules = parse(BASE | {"invocation": "{skill} at {path} {skill}"}, "skill")
-    candidate = Candidate({"SKILL.md": "seed"}, ("SKILL.md",), contract=rules)
     case = Case("one", "one", "train", "Use {skill} and {path}.", {}, {"echo": 1}, "t", True)
-    prompt = _prompt(rules, candidate, "Return JSON.", case)
+    prompt = _prompt(rules, "Return JSON.", case)
     first = prompt.splitlines()[0]
     assert first == "echo-skill at .agents/skills/echo-skill echo-skill"
     assert prompt.endswith("Use {skill} and {path}.")
@@ -241,6 +240,21 @@ def test_capture_skips_nested_ignored_directories_with_undecodable_files(tmp_pat
     _ = (target / "build/out.bin").write_bytes(b"\xc3\x28")
     candidate = Candidate.capture(target, ["SKILL.md"])
     assert set(candidate.files) == {"SKILL.md"}
+
+
+def test_capture_keeps_an_ignored_built_archive_of_a_declared_target(tmp_path: Path) -> None:
+    """Main ignores built archives (ADR-012), but the skill runs them, so capture freezes them."""
+    target = echo_skill(tmp_path)
+    git_repo(target, "scripts/*.pyz\n")
+    _ = (target / "wedge.toml").write_text('name = "note"\nentry = "note:main"\nsource = "note.py"\nrepo = "o/n"\n')
+    _ = (target / "note.py").write_text("def main() -> None: ...\n")
+    _ = (target / "pyproject.toml").write_text('[project]\nname = "p"\nversion = "0"\n')
+    _ = (target / "uv.lock").write_text("version = 1\n")
+    (target / "scripts").mkdir()
+    _ = (target / "scripts/note.pyz").write_bytes(b"PK\x03\x04\x00")
+    _ = (target / "scripts/stray.pyz").write_bytes(b"PK\x03\x04\x00")
+    candidate = Candidate.capture(target, ["SKILL.md"])
+    assert set(candidate.frozen) == {"scripts/note.pyz"}
 
 
 def test_capture_skips_an_ignored_directory_that_holds_a_symlink_loop(tmp_path: Path) -> None:

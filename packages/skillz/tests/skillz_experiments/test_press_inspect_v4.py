@@ -19,18 +19,19 @@ from typing import cast, final
 import pytest
 
 from skillz_experiments.harness._claude import _constants, _sandbox, _transport
-import skillz_experiments._evaluation as evaluation_module
+import skillz_experiments.evaluation._scoring as evaluation_module
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._command import Command
 from skillz_experiments._contract import HELPER_FIXTURES, load_contract, resolve
-from skillz_experiments._evaluation import fixture_failure, helper_failure
+from skillz_experiments.evaluation._scoring import fixture_failure, helper_failure
+from skillz_experiments.evaluation import CheckResult
 from skillz_experiments._graders import Sandbox
 from skillz_experiments.harness import Configuration, Harness
 from skillz_experiments._budget import Budget
-from skillz_experiments._runtime import process as run_process
-from skillz_experiments._wedge_targets import Rebuilder, plan_targets, reopen, seal, settle
+from skillz_experiments.harness._seatbelt import command_profile
+from skillz_experiments.run._wedge_targets import Rebuilder, plan_targets, reopen, seal, settle
 
 ROOT = Path(__file__).resolve().parents[4]
 REAL_SKILL = ROOT / "skills/skillz"
@@ -204,7 +205,7 @@ def stub_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[tu
         return subprocess.CompletedProcess(command, code, stdout, stderr)
 
     monkeypatch.setattr(Codex, "_discover", discover)
-    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
+    monkeypatch.setattr("skillz_experiments.harness._codex.sandboxed", process)
     return adapter
 
 
@@ -220,11 +221,14 @@ def stub_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[tu
     ([(0, SUCCESS, ""), (3, "", "bwrap: setting up uid map: Permission denied")], False),
     ([(1, "", "bwrap: No permissions to create new namespace")], False),
 ])
+@pytest.mark.ac("gh-312:AC-1")
 def test_codex_check_candidate_applies_the_v4_fixtures_in_order(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answers: list[tuple[int, str, str]], accepted: bool) -> None:
     inputs: list[str] = []
     adapter = stub_codex(tmp_path, monkeypatch, answers, inputs)
-    assert adapter.check_candidate(real_candidate()) is accepted
+    result = adapter.check_candidate(real_candidate())
+    assert isinstance(result, CheckResult)
+    assert (result.passed, result.kind, result.reason is None) == (accepted, "pass" if accepted else "fail", accepted)
     assert len(set(inputs)) == 1
 
 
@@ -234,7 +238,7 @@ def test_codex_sandbox_returns_the_real_stderr_as_the_third_value(tmp_path: Path
     def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 3, "out", "err\n")
 
-    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
+    monkeypatch.setattr("skillz_experiments.harness._codex.sandboxed", process)
     assert adapter.sandbox(tmp_path / "workspace", ["x"]) == (3, "out", "err\n")
 
 
@@ -244,6 +248,7 @@ def test_codex_sandbox_returns_the_real_stderr_as_the_third_value(tmp_path: Path
     ([(0, SUCCESS, ""), (3, "", "bwrap: noise\n" + ERROR)], True),
     ([(0, SUCCESS, ""), (3, "", ERROR + "\nbwrap: late\n")], False),
 ])
+@pytest.mark.ac("gh-312:AC-1")
 def test_command_check_candidate_reads_the_stderr_of_the_sandbox_response(
         monkeypatch: pytest.MonkeyPatch, answers: list[tuple[int, str, str]], accepted: bool) -> None:
     adapter = object.__new__(Command)
@@ -259,7 +264,9 @@ def test_command_check_candidate_reads_the_stderr_of_the_sandbox_response(
 
     monkeypatch.setattr(Command, "_discover", discover)
     monkeypatch.setattr(Command, "sandbox", sandbox)
-    assert adapter.check_candidate(real_candidate()) is accepted
+    result = adapter.check_candidate(real_candidate())
+    assert isinstance(result, CheckResult)
+    assert (result.passed, result.kind, result.reason is None) == (accepted, "pass" if accepted else "fail", accepted)
 
 
 def command_config(tmp_path: Path, body: str) -> Path:
@@ -299,7 +306,7 @@ def test_command_adapter_runs_the_real_pyz_through_a_wrapper_and_checks_stderr(
         tmp_path: Path, transform: str, accepted: bool) -> None:
     session = offline_session(command_config(tmp_path, WRAPPER_TAIL % transform))
     try:
-        assert session.transports["task"].check_candidate(real_candidate()) is accepted
+        assert session.transports["task"].check_candidate(real_candidate()).passed is accepted
     finally:
         session.close()
 
@@ -353,7 +360,7 @@ FORGERIES = {
 @needs_bwrap
 def test_claude_check_candidate_accepts_the_real_pyz_through_the_production_sandbox(claude: Harness) -> None:
     try:
-        assert claude.transports["task"].check_candidate(real_candidate()) is True
+        assert claude.transports["task"].check_candidate(real_candidate()).passed is True
     finally:
         claude.close()
 
@@ -363,7 +370,7 @@ def test_claude_check_candidate_accepts_the_real_pyz_through_the_production_sand
 def test_a_helper_that_forges_a_setup_line_fails_the_fixtures_without_raising_sandbox_unavailable(
         claude: Harness, name: str) -> None:
     try:
-        assert claude.transports["task"].check_candidate(with_helper(real_candidate(), FORGERIES[name])) is False
+        assert claude.transports["task"].check_candidate(with_helper(real_candidate(), FORGERIES[name])).passed is False
     finally:
         claude.close()
 
@@ -380,28 +387,53 @@ def test_claude_sandbox_returns_the_helper_stderr_and_leaves_no_capture_file(tmp
     assert not any(path.name in {".skillz-stderr", "stderr"} for path in workspace.rglob("*"))
 
 
-def test_claude_sandbox_on_macos_returns_the_sandbox_exec_stderr_unchanged(
+def test_claude_sandbox_on_macos_returns_the_command_stderr_from_the_capture_file(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, claude: Harness) -> None:
     commands: list[list[str]] = []
 
-    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
-                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-        del cwd, timeout, environment, input_text
+    def process(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
         commands.append(command)
-        return subprocess.CompletedProcess(command, 3, "out", "err line\n")
+        assert Path(command[6]).write_text("err line\n") == len("err line\n")
+        return subprocess.CompletedProcess(command, 3, "out", "")
 
     monkeypatch.setattr(sys, "platform", "darwin")
     def which(name: str) -> str | None:
         return f"/usr/bin/{name}"
 
     monkeypatch.setattr(shutil, "which", which)
-    monkeypatch.setattr(_transport, "process", process)
+    monkeypatch.setattr(_transport, "sandboxed", process)
     try:
         result = cast(Sandbox, cast(object, claude.transports["task"])).sandbox(make_workspace(tmp_path / "w"), ["x"])
     finally:
         claude.close()
     assert result == (3, "out", "err line\n")
     assert commands[0][0] == "/usr/bin/sandbox-exec"
+    capture = Path(commands[0][6]).parent
+    assert commands[0][3:6] == ["/bin/sh", "-c", 'exec "$@" 2>"$0"']
+    assert f'(allow file-write* (subpath "{capture.resolve()}"))' in commands[0][2].splitlines()
+
+
+@pytest.mark.ac("gh-395:AC-1")
+def test_macos_sandbox_argv_allows_writes_to_the_resolved_capture_directory(tmp_path: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    argv = _sandbox.sandbox_argv("darwin", "/usr/bin/sandbox-exec", tmp_path / "w", ["x"], {}, capture=link)
+    assert link.resolve() != link
+    assert argv[3:7] == ["/bin/sh", "-c", 'exec "$@" 2>"$0"', f"{real.resolve()}/stderr"]
+    lines = argv[2].splitlines()
+    assert f'(allow file-write* (subpath "{real.resolve()}"))' in lines
+    assert f'(allow file-write* (subpath "{link}"))' not in lines
+
+
+@pytest.mark.ac("gh-395:AC-1")
+def test_seatbelt_profile_has_a_capture_write_allow_only_when_given_a_capture(tmp_path: Path) -> None:
+    workspace = tmp_path / "w"
+    capture = tmp_path / "cap"
+    assert f'(allow file-write* (subpath "{capture}"))' in command_profile(workspace, (), capture).splitlines()
+    assert str(capture) not in command_profile(workspace, (), None)
+    assert command_profile(workspace, (), None) == command_profile(workspace)
 
 
 @needs_bwrap
@@ -462,7 +494,7 @@ def test_claude_check_candidate_does_not_crash_when_the_helper_replaces_the_capt
     source = "import os, sys\nos.unlink('/run/skillz-capture/stderr')\nos.mkdir('/run/skillz-capture/stderr')\nsys.exit(3)\n"
     helper = "#!/usr/bin/python3\n" + source
     try:
-        assert claude.transports["task"].check_candidate(with_helper(real_candidate(), helper)) is False
+        assert claude.transports["task"].check_candidate(with_helper(real_candidate(), helper)).passed is False
     finally:
         claude.close()
 
@@ -532,7 +564,7 @@ def test_the_sandbox_removes_its_capture_directory_even_when_setup_fails(
         locked.chmod(0)
         return subprocess.CompletedProcess(command, 3, "", "bwrap: setting up uid map: Permission denied")
 
-    monkeypatch.setattr(_transport, "process", process)
+    monkeypatch.setattr(_transport, "sandboxed", process)
     monkeypatch.setattr(tempfile, "mkdtemp", mkdtemp)
     monkeypatch.setattr(sys, "platform", "linux")
     def which(name: str) -> str:
@@ -550,21 +582,18 @@ def test_the_sandbox_removes_its_capture_directory_even_when_setup_fails(
 
 def test_claude_sandbox_setup_failure_never_reaches_fixture_result(monkeypatch: pytest.MonkeyPatch, claude: Harness) -> None:
     real_which = shutil.which
-    real_process = run_process
     seen: list[object] = []
     bwrap_calls: list[int] = []
 
-    def process(command: list[str], *, cwd: Path, timeout: float, environment: dict[str, str],
-                input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-        if not command[0].endswith("bwrap"):
-            return real_process(command, cwd=cwd, timeout=timeout, environment=environment, input_text=input_text)
+    def sandboxed(command: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        assert command[0].endswith("bwrap")
         bwrap_calls.append(3)
         return subprocess.CompletedProcess(command, 3, "", "bwrap: setting up uid map: Permission denied")
 
     def spy(*args: object, **kwargs: object) -> None:
         seen.append((args, kwargs))
 
-    monkeypatch.setattr(_transport, "process", process)
+    monkeypatch.setattr(_transport, "sandboxed", sandboxed)
     monkeypatch.setattr(evaluation_module, "fixture_failure", spy)
     monkeypatch.setattr(sys, "platform", "linux")
     def which(name: str) -> str | None:
@@ -609,7 +638,8 @@ def test_helper_failure_names_the_failing_fixture_and_stream(
         tmp_path: Path, answers: list[tuple[int, str, str]], detail: str | None) -> None:
     rules = resolve(load_contract(REAL_SKILL))
     sandbox = cast(Sandbox, cast(object, _ScriptedSandbox(answers)))
-    assert helper_failure(sandbox, make_workspace(tmp_path / "w"), rules) == detail
+    result = helper_failure(sandbox, make_workspace(tmp_path / "w"), rules)
+    assert result == (CheckResult(True, None, "pass") if detail is None else CheckResult(False, detail, "fail"))
 
 
 def test_the_autoimprove_contract_loads_and_names_the_inspector_as_its_helper() -> None:

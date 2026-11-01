@@ -7,7 +7,7 @@ import os
 import stat
 import threading
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, cast, final
 
@@ -15,21 +15,27 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments.evaluation import CheckMemo
+from skillz_experiments.evaluation import CheckMemo, CheckResult
 from skillz_experiments.harness import Configuration, EnvironmentDiffers, Harness
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments._intake import intake_contract
 from skillz_experiments._records import read
 from skillz_experiments._records import write
+from skillz_experiments._redact import redact
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
 from skillz_experiments.search import overshoot
-from skillz_experiments.run import _session
+from skillz_experiments.run import _outcomes, _session
 from skillz_experiments.run import Stop, export, run
-from skillz_experiments.run._plan import PREFLIGHT_CALLS
+from skillz_experiments.run._plan import PREFLIGHT_CALLS, VALIDATION_REPEATS
 from typing_extensions import override
 from skillz_experiments.search._history import DIFFERENT, EARLIER_INTRO, NOTES_INTRO, REJECTED_INTRO
-from skillz_experiments.run._history_store import UNREADABLE, store_path
-from fake_provider import FakeProvider, ProviderCrash
+from skillz_experiments.run._history_store import UNREADABLE, FileHistoryStore, store_path
+from skillz_experiments.run._ports import Ports
+from skillz_experiments.run._reflections import ReflectionLog
+from skillz_experiments.run._search_phase import SearchPhase
+from skillz_experiments.run._state import RunState
+from skillz_experiments.search import Edit
+from fake_provider import PASSED, FakeRunProvider, ProviderCrash
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -77,21 +83,25 @@ class Search:
         self.omit_hypothesis = False
         # When set, a proposal changes only this component and returns the parent text of every other one.
         self.only: str | None = None
+        # Fields that every train and validation outcome adds, such as a `gate_diagnostic`.
+        self.extra: dict[str, object] = {}
 
     def factory(self, _model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Provider(self, budget, checkpoint)
 
 
 @final
-class Provider(FakeProvider):
+class Provider(FakeRunProvider):
     def __init__(self, state: Search, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        super().__init__()
         self.state = state
         self.budget = budget
         self.checkpoint = checkpoint
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
         """Claim the live calls once. A resume reuses the recorded pass, as the real harness does."""
+        del recorded
         if self.state.preflight_error is not None:
             raise self.state.preflight_error
         if self.budget.calls == 0:
@@ -165,7 +175,8 @@ class Provider(FakeProvider):
         if state.score_of is not None:
             chosen = state.score_of(candidate.files["SKILL.md"], case.split)
             score = score if chosen is None else chosen
-        return {"score": score, "candidate_hash": candidate.identity, "case_hash": case.identifier}
+        extra = {} if holdout else state.extra
+        return {"score": score, "candidate_hash": candidate.identity, "case_hash": case.identifier} | extra
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
@@ -204,7 +215,7 @@ class Provider(FakeProvider):
 
 def _start(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
            approvals: Callable[..., tuple[str, int]], noise: int = 0,
-           families: int = 5) -> tuple[Path, Path, Search, str, int]:
+           families: int = 6) -> tuple[Path, Path, Search, str, int]:
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out, families=families)
     case_hash, calls = approvals(target, out)
@@ -228,7 +239,7 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    state.exhaust_after_improved = len(_validation(out))
+    state.exhaust_after_improved = _validation_runs(out)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert _core(result) == {
         "reason": "budget-exhausted-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
@@ -237,7 +248,8 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
 def _core(result: dict[str, object]) -> dict[str, object]:
     """Return the search fields that the attempt record and the evaluation counts did not add. `test_search_faults.py` covers the counts."""
     search = cast(dict[str, object], result["search"])
-    assert set(search) - {"scored", "failed", "failed_by_reason"} == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped", "history"}
+    # A search that compared a challenger with the incumbent also holds `comparisons` (gh-500).
+    assert set(search) - {"scored", "failed", "failed_by_reason", "comparisons"} == {"reason", "stop_trigger", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped", "history"}
     return {key: search[key] for key in ("reason", "retained_seed", "leakage_rejections", "proposal_over_budget")}
 
 
@@ -250,9 +262,9 @@ LAST_PROPOSAL = "This may be the last proposal, so prefer one small, safe change
 
 
 def _seed_pass(out: Path) -> int:
-    """Return the evaluations of the headroom pass: one for each train and validation case."""
+    """Return the evaluations of the headroom pass: one for each train case and one per repeat of each validation case."""
     cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
-    return sum(case["split"] in ("train", "validation") for case in cases)
+    return sum({"train": 1, "validation": VALIDATION_REPEATS}.get(cast(str, case["split"]), 0) for case in cases)
 
 
 def _headroom(out: Path) -> int:
@@ -267,7 +279,7 @@ def _allowance(out: Path) -> int:
     The last iteration can pass it by up to that margin.
     """
     planned = cast(int, cast(dict[str, object], read(out / "run.json")["estimate"])["metric_calls"])
-    return planned + _headroom(out) - overshoot(len(_validation(out)))
+    return planned + _headroom(out) - overshoot(_validation_runs(out))
 
 
 @pytest.mark.ac("gh-239:AC-1")
@@ -321,7 +333,7 @@ def test_the_over_budget_count_survives_a_resume(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.edit_offset = 1
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     before = state.proposals
@@ -335,6 +347,11 @@ def test_the_over_budget_count_survives_a_resume(
 def _validation(out: Path) -> list[str]:
     cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
     return [str(case["id"]) for case in cases if case["split"] == "validation"]
+
+
+def _validation_runs(out: Path) -> int:
+    """Return the validation runs of one candidate: each validation case once per repeat."""
+    return VALIDATION_REPEATS * len(_validation(out))
 
 
 def test_one_failed_evaluation_scores_zero_and_does_not_abort_the_search(
@@ -435,7 +452,7 @@ def test_a_resumed_search_gets_the_metric_calls_that_the_record_left_plus_the_ou
     spent = sum(item.get("arm") == "search" and item.get("split") in ("train", "validation")
                 for item in cast(list[dict[str, object]], record["outcomes"]))
     reusable = len(_search_pairs(record))
-    margin = overshoot(len(_validation(out)))
+    margin = overshoot(_validation_runs(out))
     state.search_log.clear()
     _ = run(target, out, MODEL, live=True, factory=state.factory)
     # GEPA counts a reused outcome as a metric call, so the engine bound adds each reusable outcome to the share that the record left.
@@ -461,22 +478,36 @@ def test_a_run_without_an_interrupt_calls_the_model_once_for_each_recorded_searc
     assert Counter(state.search_log) == Counter(_search_pairs(read(out / "run.json")))
 
 
-def test_one_search_scores_each_candidate_case_and_split_once(
+@pytest.mark.ac("gh-500:AC-1")
+def test_one_search_scores_each_train_pair_once_and_each_validation_pair_once_per_repeat(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     """GEPA scores the parent again on each minibatch. The session serves the repeat from the recorded outcome."""
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    repeated = {pair: count for pair, count in Counter(state.search_log).items() if count > 1}
-    assert not repeated
+    expected = {"train": 1, "validation": VALIDATION_REPEATS}
+    assert {pair: count for pair, count in Counter(state.search_log).items() if count != expected[pair[1]]} == {}
     assert Counter(_search_pairs(read(out / "run.json"))) == Counter(state.search_log)
+    outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+    repeats: dict[tuple[str, str], list[object]] = {}
+    for item in outcomes:
+        if item.get("arm") == "search" and item.get("split") == "validation":
+            repeats.setdefault((cast(str, item["search_candidate"]), cast(str, item["case_id"])), []).append(item.get("repeat"))
+    # Each (candidate, case) holds its own outcome for repeat 0 and repeat 1, not one outcome served twice.
+    assert repeats and all(sorted(cast(list[int], found)) == [0, 1] for found in repeats.values())
 
 def test_a_resume_evaluates_a_recorded_failed_evaluation_again(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, _ = _interrupt(tmp_path, make_target, write_draft, approvals)
     record = read(out / "run.json")
-    failed = next(item for item in cast(list[dict[str, object]], record["outcomes"]) if item.get("arm") == "search")
+    # A resume keeps the recorded headroom pass, so fail a seed outcome that the first minibatch asks for again:
+    # the case that the first proposal scores.
+    train = [item for item in cast(list[dict[str, object]], record["outcomes"])
+             if item.get("arm") == "search" and item.get("split") == "train"]
+    seed = train[0]["search_candidate"]
+    asked = next(item["case_id"] for item in train if item["search_candidate"] != seed)
+    failed = next(item for item in train if item["search_candidate"] == seed and item["case_id"] == asked)
     failed |= {"status": "evaluation-failed", "score": 0.0, "failure": "provider fell over"}
     write(out / "run.json", record)
     pair = (cast(str, failed["search_candidate"]), cast(str, failed["split"]), cast(str, failed["case_id"]))
@@ -512,7 +543,7 @@ def test_a_resume_after_a_validated_proposal_calls_no_validation_pair_that_the_r
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     recorded = _search_pairs(read(out / "run.json"))
@@ -529,14 +560,14 @@ def test_a_resume_with_recorded_outcomes_that_the_search_never_asks_for_again_ma
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     planned = cast(int, cast(dict[str, object], record["estimate"])["metric_calls"]) + _headroom(out)
-    margin = overshoot(len(_validation(out)))
     # A live model proposes new candidates on resume, so the outcomes of an old candidate are never asked for again.
-    ghosts = 3 * margin
+    # The ghost count stays the pre-gh-500 size, which leaves the resumed search some allowance.
+    ghosts = 3 * overshoot(len(_validation(out)))
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     outcomes.extend({"arm": "search", "split": "train", "case_id": f"ghost-{number}", "score": 0.0,
                      "search_candidate": "ghost"} for number in range(ghosts))
@@ -560,7 +591,8 @@ def test_a_resumed_identical_proposal_keeps_the_gain_of_the_candidate_that_the_i
     state.fixed_number = 1
     _ = run(target, out, MODEL, live=True, factory=state.factory)
     record = read(out / "run.json")
-    observations = _session.stall_observations(cast(list[dict[str, object]], record["outcomes"]), set(_validation(out)))
+    observations = _outcomes.stall_observations(cast(list[dict[str, object]], record["outcomes"]), set(_validation(out)),
+                                                VALIDATION_REPEATS)
     # The first window ends at the interrupt. The second window holds the same proposal, which now completes its validation.
     assert len(observations) >= 2 and observations[1] is not None and observations[1] > 0
 
@@ -570,7 +602,7 @@ def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     validation = _validation(out)
-    state.abort_after_improved = len(validation)
+    state.abort_after_improved = VALIDATION_REPEATS * len(validation)
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
@@ -588,7 +620,7 @@ def test_a_resume_with_a_real_allowance_keeps_the_pre_abort_candidate_over_worse
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    state.abort_after_improved = len(_validation(out))
+    state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     state.score_of = lambda text, _split: 0.0 if "improved" in text and "improved 1 " not in text else None
@@ -607,7 +639,9 @@ def test_a_validated_candidate_below_the_seed_leaves_the_seed_as_the_winner(
     state.score_of = lambda text, split: (0.1 if split == "validation" else 0.9) if "improved" in text else 0.5
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
-    assert "best_validated" in record
+    # The seed stays the incumbent: each comparison rejects the challenger, so no `best_validated` is written.
+    comparisons = cast(list[dict[str, object]], cast(dict[str, object], record["search"])["comparisons"])
+    assert "best_validated" not in record and comparisons and {item["verdict"] for item in comparisons} == {"reject"}
     assert _core(result) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "reason" not in cast(dict[str, object], record["gate"])
 
@@ -618,8 +652,11 @@ def test_a_validated_candidate_that_ties_the_seed_leaves_the_seed_as_the_winner(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.score_of = lambda text, split: (0.5 if split == "validation" else 0.9) if "improved" in text else 0.5
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    kept = cast(dict[str, object], read(out / "run.json")["best_validated"])
-    assert kept["mean"] == pytest.approx(0.5)
+    record = read(out / "run.json")
+    # A tie is inside the 2-SE band, so the seed stays the incumbent.
+    comparisons = cast(list[dict[str, object]], cast(dict[str, object], record["search"])["comparisons"])
+    assert "best_validated" not in record and comparisons
+    assert {(item["verdict"], item["delta"]) for item in comparisons} == {("inconclusive", 0.0)}
     assert _core(result) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
 
 
@@ -664,7 +701,7 @@ def test_a_lasting_reflection_fault_on_the_last_iteration_still_stops_the_run(
     real = _session.pareto_search  # pyright: ignore[reportPrivateLocalImportUsage]
 
     def tiny(*args: Any, **kwargs: Any) -> Any:  # pyright: ignore[reportAny, reportExplicitAny]
-        return real(*args, **{**kwargs, "metric_calls": len(cast(list[object], args[3])) + 2})  # pyright: ignore[reportAny]
+        return real(*args, **{**kwargs, "metric_calls": VALIDATION_REPEATS * len(cast(list[object], args[3])) + 2})  # pyright: ignore[reportAny]
 
     monkeypatch.setattr(_session, "pareto_search", tiny)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
@@ -718,7 +755,7 @@ def test_the_run_record_stays_small_across_many_proposals(
     _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     kept = cast(dict[str, object], record["best_validated"])
-    assert "candidates" not in record and set(kept) == {"identity", "mean", "files"}
+    assert "candidates" not in record and set(kept) == {"identity", "mean", "files", "comparison"}
     assert state.proposals >= 2
     text = (out / "run.json").read_text()
     stored = {number for number in range(1, state.proposals + 1) if f"improved {number} " in text}
@@ -819,9 +856,9 @@ class _Task:
     def __init__(self) -> None:
         self.seen: list[Candidate] = []
 
-    def check_candidate(self, candidate: Candidate) -> bool:
+    def check_candidate(self, candidate: Candidate) -> CheckResult:
         self.seen.append(candidate)
-        return False
+        return CheckResult(False, "fixture", "fail")
 
 
 def test_harness_check_candidate_delegates_to_the_task_transport(
@@ -832,7 +869,7 @@ def test_harness_check_candidate_delegates_to_the_task_transport(
     harness.configuration = cast(object, _Identity())  # pyright: ignore[reportAttributeAccessIssue]
     harness.identity = {}
     harness.transports = cast(dict[str, object], {"task": task})  # pyright: ignore[reportAttributeAccessIssue]
-    assert harness.check_candidate(seed) is False
+    assert harness.check_candidate(seed) == CheckResult(False, "fixture", "fail")
     assert task.seen == [seed]
 
 
@@ -1135,9 +1172,9 @@ def test_a_full_codex_run_ends_model_unsupported_after_the_first_rejected_call(
 
     monkeypatch.setattr(Codex, "preflight", preflight)
 
-    def accept(self: Codex, candidate: Candidate) -> bool:
+    def accept(self: Codex, candidate: Candidate) -> CheckResult:
         del self, candidate
-        return True
+        return PASSED
 
     monkeypatch.setattr(Codex, "check_candidate", accept)
     target, out = make_target(tmp_path), tmp_path / "run"
@@ -1161,17 +1198,24 @@ FIXTURE = "ledger-fixture.md"
 
 
 def _leak_start(tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
-                seed_extra: str = "") -> tuple[Path, Path, Search, str, int]:
-    """Start a run whose first case holds a long request, a long expected answer, and a named fixture."""
+                seed_extra: str = "", request_tail: str = "", harness_phrases: tuple[str, ...] = (),
+                ) -> tuple[Path, Path, Search, str, int]:
+    """Start a run whose first case holds a long request, a long expected answer, and a named fixture.
+
+    `request_tail` ends every request, and `harness_phrases` go into the contract.
+    """
     target, out = make_target(tmp_path), tmp_path / "run"
+    if harness_phrases:
+        contract = target / "evals/autoimprove.json"
+        _ = contract.write_text(json.dumps(json.loads(contract.read_text()) | {"harness_phrases": list(harness_phrases)}))
     if seed_extra:
         with (target / "SKILL.md").open("a", encoding="utf-8") as handle:
             _ = handle.write("\n" + seed_extra + "\n")
     cases: list[dict[str, object]] = []
-    for family in range(5):
+    for family in range(6):
         for index in range(2):
             name = f"t{family}-{index}"
-            cases.append({"id": name, "family": f"f{family}", "kind": "task", "request": f"please {SPAN} payment {name} today",
+            cases.append({"id": name, "family": f"f{family}", "kind": "task", "request": f"please {SPAN} payment {name} today{request_tail}",
                           "files": {FIXTURE: "hello\n"}, "expected": {"answer": ANSWER}, "source": "skill"})
     out.mkdir(mode=0o700, parents=True)
     _ = (out / "cases.draft.json").write_text(json.dumps(cases), encoding="utf-8")
@@ -1196,9 +1240,10 @@ def _spy_feedback(monkeypatch: pytest.MonkeyPatch) -> list[tuple[float, dict[str
     return seen
 
 
+# t3-1 is a train case. The denylist skips holdout cases.
 @pytest.mark.parametrize(("suffix", "rule"), [
     (" " + SPAN, "request-span"), (" " + ANSWER, "expected-answer"),
-    (" see case t1-1 here", "case-id"), (f" open {FIXTURE} first", "fixture-name")])
+    (" see case t3-1 here", "case-id"), (f" open {FIXTURE} first", "fixture-name")])
 def test_a_leaking_proposal_scores_zero_without_a_task_or_judge_call_and_is_counted(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
         monkeypatch: pytest.MonkeyPatch, suffix: str, rule: str) -> None:
@@ -1236,6 +1281,174 @@ def test_a_proposal_that_adds_a_runner_term_to_a_wedge_free_target_is_rejected(
     assert list(rejections) == ["runner-term"] and 0 < rejections["runner-term"] <= state.proposals
     assert any(feedback.get("rule") == "runner-term" and score == 0.0 for score, feedback in seen)
 
+
+@pytest.mark.ac("gh-499:AC-5")
+@pytest.mark.parametrize("suffix", [" Write the plan to output/plan.json.", " Do not run git or gh."])
+def test_a_proposal_that_adds_harness_text_is_rejected_and_counted_under_harness_token(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
+        monkeypatch: pytest.MonkeyPatch, suffix: str) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals, request_tail=" in output/plan.json",
+                                                       harness_phrases=("do not run git or gh",))
+    state.suffix = suffix
+    seen = _spy_feedback(monkeypatch)
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    rejections = cast(dict[str, int], cast(dict[str, object], result["search"])["leakage_rejections"])
+    assert state.proposals > 0 and state.improved_calls == 0
+    assert list(rejections) == ["harness-token"] and 0 < rejections["harness-token"] <= state.proposals
+    assert any(feedback.get("rule") == "harness-token" and score == 0.0 for score, feedback in seen)
+    assert cast(dict[str, object], read(out / "run.json")["search"])["leakage_rejections"] == rejections
+
+
+@pytest.mark.ac("gh-501:AC-2")
+def test_the_feedback_request_masks_harness_text_on_the_scored_and_the_rejected_path(
+        tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]],
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals,
+                                                       request_tail=" in output/plan.json. Do not run git or gh.",
+                                                       harness_phrases=("do not run git or gh",))
+    state.suffix = " " + ANSWER
+    seen = _spy_feedback(monkeypatch)
+    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    rejected = [feedback for _, feedback in seen if feedback.get("reason") == "candidate-leakage-rejected"]
+    scored = [feedback for _, feedback in seen if "rejected" not in feedback]
+    assert rejected and scored
+    for feedback in rejected + scored:
+        request = cast(str, feedback["request"])
+        assert request.endswith(" in [harness]. [harness].")
+        assert "output/plan.json" not in request and "git or gh" not in request.lower()
+
+
+@pytest.mark.ac("gh-501:AC-4")
+def test_a_recorded_gate_diagnostic_reaches_the_feedback_on_the_fresh_and_the_reuse_path(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    state.extra = {"gate_diagnostic": "assertion failed: total [redacted]"}
+    fault_at = _seed_pass(out) + 3
+    state.evaluate_fault = lambda number: (
+        EnvironmentDiffers("runtime environment differs from the frozen record") if number == fault_at else None)
+    with pytest.raises(EnvironmentDiffers):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    seen = _spy_feedback(monkeypatch)
+    state.search_log.clear()
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    # GEPA reflects on train cases. A validation case gets the mean of its repeats, with no failure evidence.
+    train = {cast(str, case["id"]) for case in cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+             if case["split"] == "train"}
+    scored = [feedback for _, feedback in seen if feedback.get("case_id") in train and "rejected" not in feedback]
+    live = [entry for entry in state.search_log if entry[1] == "train"]
+    # More train feedback than live train calls: the resume served some feedback from recorded outcomes.
+    assert len(scored) > len(live)
+    assert {feedback.get("gate_feedback") for feedback in scored} == {"assertion failed: total [redacted]"}
+
+
+def _reflection_records(out: Path) -> dict[int, bytes]:
+    return dict(sorted((int(path.stem), path.read_bytes()) for path in (out / "reflections").glob("*.json")))
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_each_reflection_call_writes_a_private_redacted_record_without_holdout_text_and_a_resume_continues_the_numbers(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    state.suffix = " api_key=sk-live-REFLECTSECRET"
+    state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
+    with pytest.raises(CodedError):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    first = _reflection_records(out)
+    assert list(first) == [1]
+    assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+    records = _reflection_records(out)
+    outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+    reflections = [item for item in outcomes if item.get("split") == "reflection"]
+    # One record per answered call, named by its count of reflection outcomes; the resume adds names and keeps the first.
+    answered = [index + 1 for index, item in enumerate(reflections) if "usage" in item]
+    assert list(records) == answered and len(records) > 1 and records[1] == first[1]
+    cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+    held = [cast(str, case["request"]) for case in cases if case["split"] == "holdout"]
+    train = [cast(str, case["request"]) for case in cases if case["split"] == "train"]
+    assert held and any(request in data.decode() for request in train for data in records.values())
+    asked = {redact(prompt) for prompt in state.prompts}
+    for ordinal, data in records.items():
+        path = out / "reflections" / f"{ordinal}.json"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600 and len(data) <= 64 * 1024
+        record = cast(dict[str, object], json.loads(data))
+        assert record["ordinal"] == ordinal and record["prompt"] in asked
+        text = data.decode()
+        assert "REFLECTSECRET" not in text and not any(request in text for request in held)
+    # The secret did reach the prompts, so the check above sees redaction, not absence.
+    assert any("REFLECTSECRET" in prompt for prompt in state.prompts)
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_the_reflection_record_is_prepared_while_another_thread_holds_the_session_lock(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    locks: list[threading.RLock] = []
+    original_init = SearchPhase.__init__
+    original_record = ReflectionLog.record
+
+    def capture(self: SearchPhase, run_state: RunState, *, edit: Edit, search_cases: Mapping[str, Case],
+                built: Callable[[Candidate], Candidate]) -> None:
+        locks.append(run_state.lock)
+        original_init(self, run_state, edit=edit, search_cases=search_cases, built=built)
+
+    ordinals: list[int] = []
+    acquired: list[bool] = []
+
+    def paused_record(self: ReflectionLog, ordinal: int, prompt: str, answer: object) -> None:
+        ordinals.append(ordinal)
+        entered = threading.Event()
+        outcome: list[bool] = []
+
+        def other() -> None:
+            lock = locks[-1]
+            got = lock.acquire(timeout=3)
+            outcome.append(got)
+            if got:
+                lock.release()
+            entered.set()
+
+        thread = threading.Thread(target=other)
+        thread.start()
+        # The log preparation stays paused until the other thread has tried to take the lock.
+        _ = entered.wait(10)
+        thread.join()
+        acquired.append(bool(outcome and outcome[0]))
+        original_record(self, ordinal, prompt, answer)
+
+    monkeypatch.setattr(SearchPhase, "__init__", capture)
+    monkeypatch.setattr(ReflectionLog, "record", paused_record)
+    monkeypatch.setattr(ReflectionLog, "record", paused_record)
+    assert run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
+               factory=state.factory)["phase"] == "complete"
+    assert len(acquired) > 1 and all(acquired)
+    assert len(set(ordinals)) == len(ordinals) and ordinals == sorted(ordinals)
+    assert list(_reflection_records(out)) == ordinals
+
+
+@pytest.mark.ac("gh-501:AC-6")
+def test_a_reflection_record_write_error_still_ends_the_run_and_a_resume_never_reuses_its_number(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+
+    def failing_record(self: ReflectionLog, ordinal: int, prompt: str, answer: object) -> None:
+        del self, prompt, answer
+        raise CodedError("reflection-record-failed", f"cannot write record {ordinal}")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(ReflectionLog, "record", failing_record)
+        with pytest.raises(CodedError) as caught:
+            _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert caught.value.code == "reflection-record-failed"
+    # The outcome was checkpointed before the record, so the failed call still counts.
+    outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
+    assert [item for item in outcomes if item.get("split") == "reflection" and "usage" in item]
+    assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+    records = _reflection_records(out)
+    assert records and 1 not in records
 
 def test_a_run_record_and_export_hold_the_counts_but_no_denylist_text(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
@@ -1307,6 +1520,7 @@ def _search_spent(out: Path) -> int:
 
 
 @pytest.mark.ac("gh-240:AC-4")
+@pytest.mark.ac("gh-500:AC-7")
 def test_a_search_that_stalls_for_eight_proposals_stops_converged_stalled_and_still_runs_the_gate(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -1315,6 +1529,7 @@ def test_a_search_that_stalls_for_eight_proposals_stops_converged_stalled_and_st
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert state.proposals == 9 and _search_spent(out) < _allowance(out)
     assert cast(dict[str, object], result["search"])["reason"] == "converged-stalled"
+    assert cast(dict[str, object], read(out / "run.json")["search"])["stop_trigger"] == "stall"
     assert result["phase"] == "complete" and state.holdout_calls > 0
     assert "improved 1 " in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
 
@@ -1392,8 +1607,8 @@ def test_proposals_whose_evaluations_all_fail_never_stop_the_search(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
     # The fault rule of gh-316 would stop this run first. Lift it, so that the test isolates the stall rule.
-    monkeypatch.setattr(_session, "FAULT_MIN_FINISHED", 10**9)
-    monkeypatch.setattr(_session, "FAULT_STREAK", 10**9)
+    monkeypatch.setattr(_outcomes, "FAULT_MIN_FINISHED", 10**9)
+    monkeypatch.setattr(_outcomes, "FAULT_STREAK", 10**9)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     seed_calls = _seed_pass(out)
     # The headroom pass scores the seed on the validation cases only. Its train cases fail, so the feedback stays unscored.
@@ -1477,7 +1692,7 @@ def test_each_proposal_observes_the_rise_of_its_own_candidate_over_every_earlier
                 _reflection("c"), _failed_train("c"), _validated("c", "v1", 1.0), _validated("c", "v2", 1.0),
                 _reflection(),
                 _reflection("d"), _validated("d", "v1", 1.0)]
-    assert _session.stall_observations(outcomes, {"v1", "v2"}) == [pytest.approx(0.25), 0.0, 0.0, 0.0, None, 0.0, 0.0]
+    assert _outcomes.stall_observations(outcomes, {"v1", "v2"}) == [pytest.approx(0.25), 0.0, 0.0, 0.0, None, 0.0, 0.0]
 
 
 def test_a_proposal_that_repeats_text_the_seed_already_holds_is_not_rejected(
@@ -1536,8 +1751,8 @@ def test_the_search_record_holds_the_reason_the_counts_the_attempts_and_the_drop
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
-    assert set(search) == {"reason", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts", "text_dropped",
-                           "scored", "failed", "failed_by_reason", "history"}
+    assert set(search) == {"reason", "stop_trigger", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts",
+                           "text_dropped", "scored", "failed", "failed_by_reason", "history", "comparisons"}
     saved = cast(dict[str, object], read(out / "run.json")["search"])
     # The exported summary drops the proposer journal; run.json keeps it.
     assert set(saved) == set(search) | {"journal"} and {key: saved[key] for key in search if key != "attempts"} == {
@@ -2158,16 +2373,19 @@ class _Killed(BaseException):
 @pytest.mark.ac("gh-243:AC-5")
 def test_a_resume_at_the_searched_phase_without_a_history_block_writes_the_store(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
-        approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
+        approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
 
-    def killed(*_args: object, **_kwargs: object) -> str | None:
-        raise _Killed
+    @final
+    class KilledStore(FileHistoryStore):
+        @override
+        def write(self, skill: str, target_root: str, record: Mapping[str, object], run_id: str,
+                  attempts: Sequence[Mapping[str, object]]) -> str | None:
+            raise _Killed
 
-    with monkeypatch.context() as patch:
-        patch.setattr("skillz_experiments.run._run.write_history", killed)
-        with pytest.raises(_Killed):
-            _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    with pytest.raises(_Killed):
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
+                ports=Ports(history=KilledStore()))
     assert read(out / "run.json")["phase"] == "searched" and "history" not in cast(dict[str, object], read(out / "run.json")["search"])
     assert not _store(out).exists()
     result = run(target, out, MODEL, live=True, factory=state.factory)

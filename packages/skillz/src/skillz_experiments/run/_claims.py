@@ -8,7 +8,8 @@ from typing import cast
 
 from skillz_experiments._cases import Case, mapping
 from skillz_experiments.gate import holdout_deltas
-from skillz_experiments.run._session import by_repeat_order, holdout_scores, record_outcomes
+from skillz_experiments.run._outcomes import by_repeat_order, holdout_scores, holdout_unscored
+from skillz_experiments.run._record_fields import record_outcomes
 
 ARMS = ("baseline", "winner")
 
@@ -26,18 +27,24 @@ def _runner_claim(record: dict[str, object], outcomes: Sequence[Mapping[str, obj
                   bound: int | None) -> dict[str, object]:
     repeats = cast(int, record.get("repeats"))
     same = record.get("winner_hash") == record.get("seed_hash")
+    # A retained seed scores its baseline alone, so only the baseline slots can be missing.
+    scored = ["baseline"] if same else list(arms)
+    # A failed evaluation or a final check timeout leaves its slot unscored with a recorded reason.
     failed = {(item.get("arm"), item.get("case_id"), item.get("repeat")) for item in outcomes
-              if item.get("split") == "holdout" and item.get("status") == "evaluation-failed"}
-    missing = [(arm, case.identifier, repeat) for arm in arms for case in holdout
+              if item.get("split") == "holdout" and holdout_unscored(item)}
+    missing = [(arm, case.identifier, repeat) for arm in scored for case in holdout
                for repeat in range(repeats) if repeat not in arms[arm].get(case.identifier, {})]
     coverage = "pass" if not missing else "unknown" if all(slot in failed for slot in missing) else "fail"
+    gate = mapping(record.get("gate", {}))
+    if same and ("baseline_scores" not in gate or "baseline_skipped" in gate):
+        coverage = "unknown"
     calls, budget = record.get("calls"), mapping(record.get("budget", {}))
     approved = budget.get("maximum")
     checks = {
         "preflight": "pass" if isinstance(record.get("preflight"), dict) else "fail",
         "holdout-isolated": "fail" if any(item.get("arm") == "search" and item.get("split") == "holdout"
                                           for item in outcomes) else "pass",
-        "holdout-coverage": "unknown" if same else coverage,
+        "holdout-coverage": coverage,
         "calls-within-approval": ("unknown" if type(calls) is not int or type(approved) is not int
                                   else "pass" if calls <= approved else "fail"),
         "calls-within-bound": ("unknown" if bound is None or type(calls) is not int

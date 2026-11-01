@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import cast
 
-from wedge._config import TARGET_KEYS, ConfigError, WedgeConfig, parse_targets
+from wedge import TARGET_KEYS, ConfigError, WedgeConfig, parse_targets
 
 from skillz_experiments._candidate import NEW_CLI, TEXT_FILE_LIMIT
 from skillz_experiments._cases import CodedError
@@ -54,7 +54,7 @@ def parse_value(value: str) -> NewCli:
         raise CodedError("new-cli-module-size", f"@new-cli has {len(value)} characters; the limit is {VALUE_LIMIT}")
     try:
         table = tomllib.loads(value)
-    except tomllib.TOMLDecodeError as error:
+    except ValueError as error:  # a TOMLDecodeError, or an integer past the digit limit of Python ints
         raise CodedError("new-cli-malformed", f"@new-cli is not valid TOML: {error}") from None
     except (RecursionError, MemoryError):
         raise CodedError("new-cli-malformed", "@new-cli is nested too deeply to read as TOML") from None

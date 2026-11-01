@@ -73,8 +73,10 @@ A consumer that queries the database directly runs
 - `SESSIONS_DB` names the database. A relative value joins the current
   directory. The package does not expand `~` in a set value.
 - Otherwise an absolute `XDG_CACHE_HOME` selects
-  `<cache>/dotfiles/session-analytics/sessions.duckdb`. A relative or unset
-  value uses `~/.cache`.
+  `<cache>/agent-session-analytics/sessions.duckdb`. A relative or unset
+  value uses `~/.cache`. If that file does not exist and the legacy
+  `<cache>/dotfiles/session-analytics/sessions.duckdb` exists, the package uses
+  the legacy file. It never moves, copies, or deletes the legacy file.
 - `SESSIONS_DUCKDB_MEMORY_LIMIT` sets the DuckDB memory limit, from 16MiB up to
   but not including 16EiB. The default is `4GB`.
 - `SESSIONS_DUCKDB_THREADS` sets the DuckDB thread count, from 1 to 256. The

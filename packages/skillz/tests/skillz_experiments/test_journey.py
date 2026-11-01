@@ -38,9 +38,12 @@ def contract() -> Contract:
                  "skill")
 
 
+LEVEL_3: dict[str, object] = {"criteria": {"must-0": {"level": 3, "reason": "mostly"}}}
+
 def journey_case(tmp_path: Path, rules: Contract, max_turns: int = 8) -> tuple[Case, Candidate]:
     item = {"id": "j1", "family": "j", "split": "train", "kind": "journey", "request": REQUEST, "brief": BRIEF,
-            "max_turns": max_turns, "files": {"input.txt": "hello\n"}, "expected": {"secret": EXPECTED},
+            "max_turns": max_turns, "files": {"input.txt": "hello\n"},
+            "expected": {"must": [EXPECTED], "criteria": [{"id": "must-0", "text": "THE transcript SHALL show the plan."}]},
             "provenance": "test", "provider_approved": True}
     path = tmp_path / "cases.json"
     _ = path.write_text(json.dumps({"schema_version": 1, "cases": [item]}))
@@ -150,7 +153,7 @@ def test_converse_stream_loop_fails_when_the_process_ends_before_any_result(tmp_
 
 
 def test_a_journey_error_result_names_a_stable_reason_not_the_turn_word(tmp_path: Path) -> None:
-    from skillz_experiments.run._session import _fault_reason  # pyright: ignore[reportPrivateUsage]
+    from skillz_experiments.run._outcomes import fault_reason as _fault_reason
     with pytest.raises(RuntimeError, match="Claude Code fails") as caught:
         _ = run(tmp_path, "journey-error-result", 3, [Reply("again", False)])
     assert _fault_reason(caught.value) == "error-result"
@@ -203,7 +206,7 @@ class Talker(FakeProvider):
 
 def test_simulator_prompt_holds_the_brief_the_request_and_replies_but_never_expected_or_the_rubric(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    judge = Judge([{"reply": "yes", "done": True}, {"score_percent": 60}])
+    judge = Judge([{"reply": "yes", "done": True}, LEVEL_3])
     task = Talker()
     transports = {"task": task, "judge": judge, "reflection": judge}
 
@@ -220,10 +223,10 @@ def test_simulator_prompt_holds_the_brief_the_request_and_replies_but_never_expe
     prompt = judge.prompts[0]
     assert judge.schemas[0] == SIMULATOR_SCHEMA
     assert BRIEF in prompt and REQUEST in prompt and "ASSISTANT_SENTINEL one" in prompt
-    assert EXPECTED not in prompt and "RUBRIC_SENTINEL" not in prompt and "secret" not in prompt
+    assert EXPECTED not in prompt and "RUBRIC_SENTINEL" not in prompt
     assert "untrusted data" in prompt
     assert judge.prompts[1].count(RUBRIC) == 1 and BRIEF in judge.prompts[1]
-    assert result["score"] == 0.6
+    assert result["score"] == 2 / 3
 
 
 @pytest.mark.parametrize("sim_input", [10, None])
@@ -238,7 +241,7 @@ def test_simulator_tokens_are_recorded_apart_and_never_charged_as_task_tokens(
                 result["usage"] = TOKENS | {"input_tokens": sim_input}
             return result
 
-    judge = Simulating([{"reply": "yes", "done": True}, {"score_percent": 60}])
+    judge = Simulating([{"reply": "yes", "done": True}, LEVEL_3])
     task = Talker()
     transports = {"task": task, "judge": judge, "reflection": judge}
 

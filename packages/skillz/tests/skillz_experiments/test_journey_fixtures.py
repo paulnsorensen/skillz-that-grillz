@@ -21,6 +21,7 @@ from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.harness import ClaudeOptions, Configuration, Harness
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments._intake import DRAFT_NAME, case_hash, freeze, load_draft, split_cases
+from skillz_experiments._seed import seed_cases
 from skillz_experiments._records import read
 from skillz_experiments._budget import (
     JOURNEY_CALLS,
@@ -33,14 +34,14 @@ from skillz_experiments._budget import (
     estimate,
 )
 from skillz_experiments.run import Stop, run
-from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, PREFLIGHT_CALLS
+from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, PREFLIGHT_CALLS, VALIDATION_REPEATS
 from skillz_experiments.run._plan import (
     _command_seconds as command_seconds,  # pyright: ignore[reportPrivateUsage]
     _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
     size_plan,
 )
 from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeProvider, FakeRunProvider
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FAKE = FIXTURES / "fake_claude.py"
@@ -74,12 +75,12 @@ def stage(name: str, destination: Path) -> Path:
 
 
 def frozen_case(target: Path, contract: Contract, tmp_path: Path) -> Case:
-    # Intake wants three task families; the fixture's single case is copied into two more families.
-    draft = cast(list[dict[str, str]], json.loads((target / "evals/journeys.json").read_text()))
-    copies = [draft[0] | {"id": f"{draft[0]['id']}-{n}", "family": f"{draft[0]['family']}-{n}"} for n in (1, 2)]
+    # Intake wants four scored families; the fixture's single case is copied into three more families.
+    draft = [journey_seed(target)]
+    copies = [draft[0] | {"id": f"{draft[0]['id']}-{n}", "family": f"{draft[0]['family']}-{n}"} for n in (1, 2, 3)]
     drafted = tmp_path / DRAFT_NAME
     _ = drafted.write_text(json.dumps([*draft, *copies]), encoding="utf-8")
-    cases = split_cases(load_draft(drafted), 7, "journey")
+    cases = split_cases(load_draft(drafted), 7, None, ["journey"])
     out = tmp_path / "cases.json"
     freeze(out, cases, 7, case_hash(cases, 7))
     return load_cases(out, contract.grader_types())[0]
@@ -157,12 +158,15 @@ def tool_use(name: str, **fields: object) -> dict[str, object]:
 
 
 GOOD: list[dict[str, object]] = [{"reply": "We review in pairs.", "done": False}, {"reply": "We ship on Fridays.", "done": True}]
+CULTURE_LEVELS: dict[str, object] = {"criteria": {"must-0": {"level": 4, "reason": "asked"},
+                                                  "must-1": {"level": 3, "reason": "mostly asked"}}}
+MOLD_LEVELS: dict[str, object] = {"criteria": {"must-0": {"level": 3, "reason": "mostly asked"}}}
 
 
 def test_culture_journey_runs_end_to_end_and_scores_the_clean_transcript(tmp_path: Path, local_sandbox: None) -> None:
     del local_sandbox
-    result, judge, executable = journey(tmp_path, "culture-journey", "journey-culture", [*GOOD, {"score_percent": 90}])
-    assert result["score"] == 0.9
+    result, judge, executable = journey(tmp_path, "culture-journey", "journey-culture", [*GOOD, CULTURE_LEVELS])
+    assert result["score"] == pytest.approx(5 / 6)
     assert len(judge.prompts) == 3 and not judge.answers
     assert "We review in pairs." in judge.prompts[-1] and "You lead a team of five" in judge.prompts[0]
     messages = [json.loads(line)["message"] for line in executable.with_name("claude.journey.log").read_text().splitlines()]
@@ -172,9 +176,9 @@ def test_culture_journey_runs_end_to_end_and_scores_the_clean_transcript(tmp_pat
 def test_culture_journey_scores_zero_when_the_seeded_bad_transcript_writes_a_source_file(
         tmp_path: Path, local_sandbox: None) -> None:
     del local_sandbox
-    result, judge, _ = journey(tmp_path, "culture-journey", "journey-culture-bad", [*GOOD, {"score_percent": 90}])
+    result, judge, _ = journey(tmp_path, "culture-journey", "journey-culture-bad", [*GOOD, CULTURE_LEVELS])
     assert result["score"] == 0.0
-    assert len(judge.prompts) == 2 and judge.answers == [{"score_percent": 90}]
+    assert len(judge.prompts) == 2 and judge.answers == [CULTURE_LEVELS]
 
 
 @pytest.mark.parametrize(("events", "expected"), [
@@ -195,8 +199,8 @@ def test_mold_journey_gate_finds_the_mcp_tool_call_and_the_companion_skill_call_
     assert contract.surface is not None
     assert contract.surface.mcp_config == "mcp/docs.json" and contract.surface.companions == ("skills/helper-skill",)
     result, judge, executable = journey(tmp_path / "run", "mold-journey", "journey-mold",
-                                        [{"reply": "Weekly reports.", "done": True}, {"score_percent": 80}])
-    assert result["score"] == 0.8 and not judge.answers
+                                        [{"reply": "Weekly reports.", "done": True}, MOLD_LEVELS])
+    assert result["score"] == 2 / 3 and not judge.answers
     argv = cast(list[str], json.loads(executable.with_name("claude.log").read_text().splitlines()[-1])["argv"])
     assert "--mcp-config" in argv and argv[argv.index("--tools") + 1].endswith("mcp__docs__search")
 
@@ -256,20 +260,29 @@ def test_journey_budget_ceiling_stops_at_28800_seconds() -> None:
     inside.claim()
 
 
-def write_journeys(out: Path, max_turns: int, families: int = 5) -> None:
-    brief = cast(list[dict[str, object]], json.loads((FIXTURES / "culture-journey/evals/journeys.json").read_text()))[0]
+def journey_seed(target: Path) -> dict[str, object]:
+    """Return the first journey case that the target's checked-in `evals/journeys.json` seeds."""
+    seeded = seed_cases(target)
+    assert seeded is not None
+    return seeded[0]
+
+
+def write_journeys(target: Path, out: Path, max_turns: int, families: int = 6) -> None:
+    brief = journey_seed(target)
     cases = [brief | {"id": f"j{family}-{index}", "family": f"f{family}", "max_turns": max_turns,
                       "request": f"/culture request-{family}-{index}"}
              for family in range(families) for index in range(2)]
+    cases[0] |= {"id": brief["id"], "request": brief["request"]}
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
     _ = (out / DRAFT_NAME).write_text(json.dumps(cases), encoding="utf-8")
 
 
 @final
-class Provider(FakeProvider):
+class Provider(FakeRunProvider):
     """A fake provider that claims the budget of a journey like the real harness. `improved` text scores best."""
 
     def __init__(self, contract: Contract, budget: Budget, checkpoint: Callable[[], None], prompts: list[str]) -> None:
+        super().__init__()
         self.contract = contract
         self.budget = budget
         self.checkpoint = checkpoint
@@ -277,7 +290,8 @@ class Provider(FakeProvider):
         self.lock = threading.Lock()
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         if self.budget.calls == 0:
             for _ in range(PREFLIGHT_CALLS):
                 self.budget.claim()
@@ -307,7 +321,7 @@ class Provider(FakeProvider):
 
 def start(tmp_path: Path, max_turns: int) -> tuple[Path, Path, str, Callable[..., Provider], list[str]]:
     target, out = stage("culture-journey", tmp_path / "target"), tmp_path / "run"
-    write_journeys(out, max_turns)
+    write_journeys(target, out, max_turns)
     contract = load_contract(target)
     prompts: list[str] = []
 
@@ -321,7 +335,8 @@ def start(tmp_path: Path, max_turns: int) -> tuple[Path, Path, str, Callable[...
 
 
 def test_journey_budget_estimate_shows_a_separate_journey_line_and_asks_once(tmp_path: Path) -> None:
-    target, out, approved, factory, _ = start(tmp_path, 7)
+    # Six turns, because the six preflight calls (gh-176) leave no search for seven turns under the journey cap.
+    target, out, approved, factory, _ = start(tmp_path, 6)
     with pytest.raises(Stop) as asked:
         _ = run(target, out, MODEL, live=True, approve_cases=approved)
     assert asked.value.code == "budget-unapproved"
@@ -407,18 +422,20 @@ def test_a_mixed_task_and_journey_plan_sizes_the_search_from_the_mean_case_cost_
     assert (task_cost, journey_cost) == (1, 17)
     cases = [_mixed_case(split, f"{split}-{n}", journey=n == 0 and split != "train")
              for split in ("train", "validation", "holdout") for n in range(6)]
-    plan = size_plan(contract, cases, 2, ClaudeOptions())
-    searched = [task_cost] * 6 + [journey_cost] + [task_cost] * 5
+    plan = size_plan(contract, cases, 1, ClaudeOptions())
+    # Each validation case counts once per repeat in the mean (gh-500).
+    searched = [task_cost] * 6 + VALIDATION_REPEATS * ([journey_cost] + [task_cost] * 5)
     mean = -(-sum(searched) // len(searched))
     holdout = [journey_cost] + [task_cost] * 5
     retry = 2 * HOLDOUT_RETRIES_PER_ARM * max(holdout)
-    assert plan.retry_calls == retry and plan.holdout_calls == 2 * 2 * sum(holdout) + retry
+    assert plan.retry_calls == retry and plan.holdout_calls == 2 * sum(holdout) + retry
     assert plan.sized.journey
     sandbox = command_seconds(contract, cases, ClaudeOptions())
-    at_maximum = plan_run(6, 6, 6, journey_cost, 2, sandbox, journey=True)
-    at_mean = plan_run(6, 6, 6, mean, 2, sandbox, journey=True, holdout_costs=holdout, headroom_costs=[task_cost] * 6)
+    at_mean = plan_run(6, 6, 6, mean, 1, sandbox, journey=True, holdout_costs=holdout, headroom_costs=[task_cost] * 6)
     assert plan == at_mean and 1 < mean < journey_cost
-    assert plan.sized.calls < at_maximum.sized.calls and plan.holdout_calls < at_maximum.holdout_calls
+    # At the journey maximum, the two runs of each validation case leave no search room at all.
+    with pytest.raises(Stop, match="too few calls are left for a search"):
+        _ = plan_run(6, 6, 6, journey_cost, 1, sandbox, journey=True)
 
 
 def test_at_three_repeats_the_mean_cost_plan_fits_while_the_journey_maximum_plan_has_too_few_calls(
@@ -473,9 +490,10 @@ def test_a_mold_journey_run_launches_the_task_with_the_surface_and_stages_the_co
     The live preflight sends its isolation probe through the real OS sandbox, so the test needs a working `bwrap`.
     """
     target, out = stage("mold-journey", tmp_path / "target"), tmp_path / "run"
-    brief = cast(list[dict[str, object]], json.loads((target / "evals/journeys.json").read_text()))[0]
+    brief = journey_seed(target)
     drafted = [brief | {"id": f"m{family}-{index}", "family": f"f{family}", "request": f"/mold shape {family}-{index}"}
-               for family in range(5) for index in range(2)]
+               for family in range(6) for index in range(2)]
+    drafted[0] |= {"id": brief["id"], "request": brief["request"]}
     out.mkdir(mode=0o700)
     _ = (out / DRAFT_NAME).write_text(json.dumps(drafted), encoding="utf-8")
     executable, configuration = install_fake(tmp_path, "journey-mold")

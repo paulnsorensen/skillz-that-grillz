@@ -20,15 +20,25 @@ from skillz_experiments._budget import (
 from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX
 from skillz_experiments._cases import Case, CodedError, Split
 from skillz_experiments._contract import Contract
-from skillz_experiments._wedge_targets import TargetPlan, mcp_text, never_editable
+from skillz_experiments.run._wedge_targets import TargetPlan, mcp_text, never_editable
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._stop import Stop
-from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, overshoot
+from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, search_allowance
 
-PREFLIGHT_CALLS = 3
+PREFLIGHT_CALLS = 6
+"""Three roles, each with two preflight calls: the Bash sandbox check and the Read file-access check (gh-176)."""
 
 
 SEARCH_CASE_FACTOR = 4
+
+
+VALIDATION_REPEATS = 2
+"""The runs of one search candidate on one validation case. `run.json` freezes it as `validation_policy.repeats`."""
+
+
+def repeat_indices(split: str) -> tuple[int | None, ...]:
+    """Return the repeat index of each search run of a case on `split`. A train case runs once, with no repeat index."""
+    return tuple(range(VALIDATION_REPEATS)) if split == "validation" else (None,)
 
 
 JOURNEY_SEARCH_CALLS = 460
@@ -99,10 +109,13 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     The search shrinks until both the call cap and the time cap hold, sandbox time included.
     `journey` is True when a scored case is a journey. The run then gets the journey ceiling in place of the standard cap.
     A journey run also sizes the search from `JOURNEY_SEARCH_CALLS` model calls, so the search holds as many metric calls
-    as that allowance buys at `per_evaluation`. A task-only run keeps `SEARCH_CASE_FACTOR` metric calls per searched case.
+    as that allowance buys at `per_evaluation`. A task-only run keeps `SEARCH_CASE_FACTOR` metric calls per searched run:
+    one run per train case and `VALIDATION_REPEATS` runs per validation case. The admission check, the search
+    allowance, and its overshoot margin count the same `VALIDATION_REPEATS` runs per validation case.
     `holdout_costs` lists the model calls of each holdout case. The default is `per_evaluation` for each of `holdout` cases.
     A retry costs the costliest holdout case, so the reserve covers one failed attempt of any case.
-    The headroom pass scores the seed once on each train and validation case. Its validation scores stand in for the seed
+    The headroom pass scores the seed once on each train case and `VALIDATION_REPEATS` times on each validation case.
+    Its validation scores stand in for the seed
     validation pass that GEPA already pays inside `metric_calls`, so only the train cases add cost. `headroom_costs` lists
     the model calls of each train case; the default is `per_evaluation` for each of `train` cases. The sum is
     `headroom_calls`. It adds to `sized.calls`, so the approved total and the ceilings include it. The count of train
@@ -143,14 +156,18 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
         raise Stop("budget-unapproved", "the preflight, the holdout gate, the replay, the headroom pass, and their sandbox "
                    + f"time alone need {bare.seconds + sandbox_total(0)} seconds; the cap is {max_seconds}"
                    + f"{seconds_cap_note(journey)}; lower --repeats, the holdout size, or --sandbox-seconds", {})
-    metric = SEARCH_CASE_FACTOR * (train + validation)
+    validation_runs = VALIDATION_REPEATS * validation
+    metric = SEARCH_CASE_FACTOR * (train + validation_runs)
     if journey:
         metric = max(metric, JOURNEY_SEARCH_CALLS // per_evaluation)
     while metric > 0 and not fits(metric):
         metric -= 1
-    if metric < overshoot(validation) + MINIMUM_SEARCH_MARGIN:
-        raise Stop("budget-unapproved", "too few calls are left for a search under the cap; "
-                   + "lower --repeats or the holdout size", {})
+    allowance = search_allowance(metric, validation_runs)
+    if allowance < MINIMUM_SEARCH_MARGIN:
+        raise Stop("budget-unapproved", f"too few calls are left for a search under the cap: {metric} metric calls leave "
+                   + f"{allowance} after the seed pass over {validation} validation cases and the overshoot margin, "
+                   + f"and the search needs {MINIMUM_SEARCH_MARGIN}; lower --repeats or the holdout size, "
+                   + "or change --seed or the case set", {})
     sandbox_gate = math.ceil(holdout_evaluations * sandbox_seconds / MAX_CONCURRENT_CALLS)
     sized, total = size(metric), sandbox_total(metric)
     return _Plan(metric_calls=metric, reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls=holdout_calls,
@@ -162,12 +179,13 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
 def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions) -> _Plan:
     """Size the run from per-case call costs. `_prepare` and `_verify_budget` share this, so their estimates match.
 
-    The holdout reserve sums the holdout case costs. A search metric call costs the mean of the train and validation cases.
+    The holdout reserve sums the holdout case costs. A search metric call costs the mean over the searched runs:
+    each train case once and each validation case `VALIDATION_REPEATS` times.
     The headroom pass charges the train case costs only. GEPA pays the validation pass of the seed in its own calls.
     """
     split = {name: [case_calls(contract, case) for case in cases if case.split == name]
              for name in cast(tuple[str, ...], get_args(Split))}
-    searched = split["train"] + split["validation"]
+    searched = split["train"] + VALIDATION_REPEATS * split["validation"]
     per_evaluation = max(1, math.ceil(sum(searched) / len(searched))) if searched else 1
     return _plan(len(split["train"]), len(split["validation"]), len(split["holdout"]), per_evaluation, repeats,
                  _command_seconds(contract, cases, options), journey=any(case.journey is not None for case in cases),
@@ -196,10 +214,12 @@ def editable_files(files: Mapping[str, str], contract: Contract, edit: Edit, fro
             raise CodedError("editable-needs-cli", f"the contract editable list names {', '.join(code_names)}, which "
                              + "are not Markdown; run with --edit prose+cli or remove them from editable")
     if helper is not None and helper not in files and (plan is None or plan.helper_target(contract) is None):
-        if helper in frozen:
+        if helper in frozen and edit != "prose":
             raise CodedError("helper-frozen", f"the contract helper {helper} is a frozen file (binary, not UTF-8, "
-                             + "or over the text limit) and not the .pyz of an own wedge target, so no proposal can edit it")
-        raise CodedError("helper-file-missing", f"the contract helper {helper} is missing from the target")
+                             + "or over the text limit) and not the .pyz of an own wedge target, so no proposal can edit it; "
+                             + "pass --edit prose when you want no helper edit")
+        elif helper not in frozen:
+            raise CodedError("helper-file-missing", f"the contract helper {helper} is missing from the target")
     mcp = mcp_text(files, contract)
     named = [*contract.editable, *([helper] if helper is not None else [])]
     run = [name for name in named if contract.read_only(name, mcp)]
@@ -233,22 +253,40 @@ def editable_files(files: Mapping[str, str], contract: Contract, edit: Edit, fro
     return names
 
 
-def _scored_kind(contract: Contract) -> str:
+def _default_kinds(contract: Contract) -> tuple[str, ...]:
+    journeys = contract.journey_kinds()
     if "task" in contract.kinds:
-        return "task"
+        return ("task",)
+    if journeys and len(journeys) == len(contract.kinds):
+        return journeys
     if len(contract.kinds) == 1:
-        return next(iter(contract.kinds))
+        return tuple(contract.kinds)
     raise CodedError("contract-kinds", f"the contract declares the kinds {', '.join(sorted(contract.kinds))}; "
-                     + "run needs a contract with a `task` kind or exactly one kind")
+                     + "run needs a contract with a `task` kind, only journey kinds, or exactly one kind; "
+                     + "name the scored kinds with `--kind KIND` (repeat the flag for more)")
 
 
-def supported_kind(contract: Contract) -> str:
-    """Return the scored kind. Stop on an audit-graded kind: intake never reviews labels, so no case is eligible."""
-    kind = _scored_kind(contract)
-    if contract.kinds[kind].type == "audit":
-        raise CodedError("contract-audit-unsupported", f"the scored kind {kind!r} uses the audit grader; "
-                         + "run does not support audit-graded kinds yet")
-    return kind
+def scored_kinds(contract: Contract, requested: Sequence[str] = ()) -> tuple[str, ...]:
+    """Return the scored kinds: the `--kind` selection, else the contract default.
+
+    Stop on an undeclared kind and on an audit-graded kind: intake never reviews labels, so no case is eligible.
+    Stop when the selection names more than one kind without the journey grader: every draft task case takes one
+    grading kind, so a second such kind would never score as itself.
+    """
+    chosen = tuple(dict.fromkeys(requested)) or _default_kinds(contract)
+    plain = [kind for kind in chosen if kind in contract.kinds and kind not in contract.journey_kinds()]
+    if len(plain) > 1:
+        raise CodedError("contract-kinds", f"--kind names {', '.join(plain)}; a run scores at most one kind "
+                         + "that does not use the journey grader")
+    for kind in chosen:
+        if kind not in contract.kinds:
+            raise CodedError("contract-kinds", f"--kind {kind} names no declared kind; "
+                             + f"the contract declares {', '.join(sorted(contract.kinds))}")
+        # Audit grading is internal and deferred: it will ship with activation grading for trigger and near-miss cases (`_intake.py`).
+        if contract.kinds[kind].type == "audit":
+            raise CodedError("contract-audit-unsupported", f"the scored kind {kind!r} uses the audit grader; "
+                             + "run does not support audit-graded kinds yet")
+    return chosen
 
 
 def plan_estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object]:

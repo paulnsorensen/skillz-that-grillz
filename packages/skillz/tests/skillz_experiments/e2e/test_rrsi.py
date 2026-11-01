@@ -8,7 +8,8 @@ from typing import cast
 
 import pytest
 
-from support import BUNDLE, CLI, call_cli, carries_answer, command_adapter, make_scenario, read_cases, read_events, read_record, run_scenario
+from support import (BUNDLE, CLI, CRITERIA, call_cli, carries_answer, command_adapter, export_and_apply, make_scenario,
+                     read_cases, read_events, read_record, run_scenario)
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-2")
@@ -55,18 +56,19 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
     assert len(shown) == 2 and len({item["case_id"] for item in shown}) == 2 and {item["case_id"] for item in shown} <= train
     assert [{key: value for key, value in item.items() if key != "case_id"} for item in shown] == [
         {"task_correct": 0.0, "request": "Transform fixture.md according to this skill.",
-         "grader_scores": {"command": 0.0}}
+         "grader_scores": {"command": 0.0}, "gate_feedback": "the grader argv exits with code 0"}
     ] * 2
     estimate = cast(dict[str, object], record["estimate"])
     headroom = cast(dict[str, int], estimate["headroom"])
-    planned = cast(int, estimate["metric_calls"]) + headroom["outcomes"] - (4 + len(validation_ids))
+    # The overshoot margin and the seed pass count each validation case once per repeat (gh-500).
+    planned = cast(int, estimate["metric_calls"]) + headroom["outcomes"] - (4 + 2 * len(validation_ids))
     first_reflection = next(index for index, item in enumerate(outcomes)
                             if item.get("split") == "reflection")
     spent = sum(1 for item in outcomes[:first_reflection]
                 if item.get("arm") == "search" and item.get("split") in ("train", "validation"))
     percent = 100 * spent // planned
     edit_budget = math.floor(1 + 2.5 * (1 + math.cos(math.pi * spent / planned)))
-    assert (headroom["outcomes"], spent, planned, percent, edit_budget) == (2, 4, 12, 33, 4)
+    assert (headroom["outcomes"], spent, planned, percent, edit_budget) == (4, 8, 28, 28, 5)
     assert f"Make at most {edit_budget} edits across all components." in first_prompt
     assert f"Run status: this is proposal 1. Search calls spent: {spent} of {planned} ({percent}%)." in first_prompt
     assert edit_budget < 6
@@ -98,13 +100,33 @@ def test_leak_predicate_trips_on_the_json_escaped_answer() -> None:
     assert not carries_answer("answer-text\n", json.dumps({"prompt": "clean"}))
 
 
+@pytest.mark.ac("gh-499:AC-5")
+def test_proposals_that_copy_harness_text_are_rejected_and_the_winner_holds_none(tmp_path: Path) -> None:
+    scenario = make_scenario(tmp_path)
+    for case in scenario.draft:
+        case["request"] = "Transform fixture.md according to this skill. Write the plan to output/plan.json."
+    contract = scenario.target / "evals/autoimprove.json"
+    _ = contract.write_text(json.dumps(json.loads(contract.read_text()) | {"harness_phrases": ["do not run git or gh"]}))
+    result = run_scenario(scenario, tmp_path, mode="leak-harness")
+    search = cast(dict[str, object], result["search"])
+    assert search["leakage_rejections"] == {"harness-token": 2}
+    assert search["retained_seed"] is False
+    record = read_record(scenario.out)
+    assert cast(dict[str, object], record["search"])["leakage_rejections"] == {"harness-token": 2}
+    winner = cast(dict[str, str], record["winner"])["SKILL.md"]
+    assert "Uppercase fixture.md." in winner
+    applied = export_and_apply(scenario, tmp_path)
+    for text in (winner, (applied / "SKILL.md").read_text()):
+        assert "output/plan.json" not in text and "do not run git or gh" not in text.lower()
+
+
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-4")
 def test_leaky_proposal_is_rejected_before_task_calls_and_redacted(tmp_path: Path) -> None:
     scenario = make_scenario(tmp_path)
     source = "leak_answer_private_12345\n"
     for case in scenario.draft:
         case["files"] = {"fixture.md": source}
-        case["expected"] = {"text": source.upper()}
+        case["expected"] = {"text": source.upper(), "criteria": CRITERIA}
     result = run_scenario(scenario, tmp_path, mode="leak-answer")
     search = cast(dict[str, object], result["search"])
     gate = cast(dict[str, object], result["gate"])
@@ -114,7 +136,7 @@ def test_leaky_proposal_is_rejected_before_task_calls_and_redacted(tmp_path: Pat
 
     record = read_record(scenario.out)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
-    assert not any(item.get("split") == "holdout" for item in outcomes)
+    assert {item.get("arm") for item in outcomes if item.get("split") == "holdout"} == {"baseline"}
     events = read_events(scenario.out)
     tasks = [item for item in events if item["role"] == "task"]
     assert tasks
@@ -142,7 +164,7 @@ def test_invalid_helper_proposal_keeps_the_seed_without_task_inference(tmp_path:
 
     record = read_record(scenario.out)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
-    assert not any(item.get("split") == "holdout" for item in outcomes)
+    assert {item.get("arm") for item in outcomes if item.get("split") == "holdout"} == {"baseline"}
     tasks = [item for item in read_events(scenario.out) if item["role"] == "task"]
     assert tasks
     assert {item["candidate"] for item in tasks} == {record["seed_hash"]}
@@ -170,4 +192,4 @@ def test_edit_budget_is_advisory_and_counts_oversized_proposals(tmp_path: Path) 
     requests = [cast(dict[str, object], item["request"]) for item in events
                 if item["role"] == "reflection"]
     assert len(requests) == 1
-    assert "Make at most 4 edits across all components." in cast(str, requests[0]["prompt"])
+    assert "Make at most 5 edits across all components." in cast(str, requests[0]["prompt"])

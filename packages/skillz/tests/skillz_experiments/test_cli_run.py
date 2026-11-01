@@ -14,16 +14,15 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
-from skillz_experiments import _cli
 from skillz_experiments._cli import main
 from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._codex import Codex
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
-from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import FakeRunProvider
 
 FIXTURES = Path(__file__).parent / "fixtures"
+EXPECTED = {"criteria": [{"id": "answer", "text": "THE answer SHALL meet the request."}]}
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -84,15 +83,12 @@ def test_run_accepts_only_claude_or_codex_and_launches_headless(tmp_path: Path, 
 
 
 @final
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     """A fake provider: the seed scores 0 and any proposal that says `improved` scores 1."""
 
     def __init__(self, budget: Budget, checkpoint: Callable[[], None]) -> None:
+        super().__init__()
         self.budget, self.checkpoint, self.lock = budget, checkpoint, threading.Lock()
-
-    @override
-    def preflight(self) -> dict[str, object]:
-        return {"isolation": "test-provider"}
 
     def evaluate(self, candidate: Candidate, case: Case, *, holdout: bool = False,
                  checks: object = None) -> dict[str, object]:
@@ -143,8 +139,8 @@ def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_pa
     code, missing = call()
     assert code == 1 and cast(dict[str, object], missing["facts"])["name"] == "echo-skill"
     draft = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request-{family}-{index}",
-              "files": {"fixture.md": "hello\n"}, "expected": {}, "source": "skill"}
-             for family in range(5) for index in range(2)]
+              "files": {"fixture.md": "hello\n"}, "expected": EXPECTED, "source": "skill"}
+             for family in range(6) for index in range(2)]
     _ = Path(cast(str, missing["draft"])).write_text(json.dumps(draft))
     _, cases = call()
     case_hash = cast(str, cases["case_hash"])
@@ -178,8 +174,8 @@ def test_missing_builtin_harness_stops_with_a_code_before_any_approval(
     assert main(args) == 1
     _ = capsys.readouterr()
     draft = [{"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task", "request": f"request-{family}-{index}",
-              "files": {"fixture.md": "hello\n"}, "expected": {}, "source": "skill"}
-             for family in range(5) for index in range(2)]
+              "files": {"fixture.md": "hello\n"}, "expected": EXPECTED, "source": "skill"}
+             for family in range(6) for index in range(2)]
     _ = (out / "cases.draft.json").write_text(json.dumps(draft))
     assert main(args) == 1
     assert json.loads(capsys.readouterr().err)["code"] == "harness-missing"
@@ -195,7 +191,7 @@ def test_the_history_flag_reaches_the_run(flag: list[str], history: bool | None,
         seen.append(kwargs["history"])
         return {}
 
-    monkeypatch.setattr(_cli, "run_workflow", fake_run)
+    monkeypatch.setattr("skillz_experiments.run.run", fake_run)
     code = main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "out"), "--model", "m", *flag])
     _ = capsys.readouterr()
     assert code == 0 and seen == [history]

@@ -3,7 +3,8 @@
 
 The mode comes from a sidecar file named `<script>.mode`. Each call appends its argv, working
 directory, settings, standard input, environment, and the entries of its `CLAUDE_CONFIG_DIR` to `<script>.log`.
-An `initialize` control request (the free skill inventory) logs to `<script>.inventory.log` instead.
+An `initialize` control request (the free skill inventory) logs to `<script>.inventory.log` instead,
+and a `/context` prompt (the free memory listing) logs to `<script>.context.log`.
 Like Claude Code 2.1.29x, it lists its own commands and built-in plugins even when bundled skills are off.
 """
 from __future__ import annotations
@@ -171,10 +172,21 @@ def inventory(mode: str, config: dict[str, object]) -> int:
     `inventory-error` sends an error response, `inventory-auth` fails to log in, and `inventory-hang` never answers.
     `inventory-nonzero` sends a valid list and still exits 1. `inventory-crash` exits 3 with stderr and no control response.
 
+    `late-builtin` omits the built-in `design` skill from the first listing only, as a fresh config directory does.
+    `late-plain` lists `design` later as an ordinary skill, and `late-absent` never lists it again.
+
     `builtin-echo` also lists `echo-skill` as a Claude Code command, so the echo candidate name collides with it.
     """
     commands: list[dict[str, object]] = [{"name": name, "description": ""} for name in listed_skills(mode, config)]
     builtin = [*BUILTIN_COMMANDS, *(["echo-skill"] if mode == "builtin-echo" else [])]
+    late = mode.startswith("late-")
+    if late and len(Path(__file__).with_name(Path(__file__).name + ".inventory.log").read_text().splitlines()) == 1:
+        builtin.remove("design")
+    elif mode == "late-plain":
+        builtin.remove("design")
+        commands.append({"name": "design", "description": ""})
+    elif mode == "late-absent":
+        builtin.remove("design")
     commands += [cast(dict[str, object], {"name": name, "description": "", "builtin": True}) for name in builtin]
     if mode == "inventory-hang":
         time.sleep(30)
@@ -197,32 +209,57 @@ def inventory(mode: str, config: dict[str, object]) -> int:
     return 1 if mode == "inventory-nonzero" else 0
 
 
-def read_tool_probe(prompt: str, mode: str) -> list[str]:
-    """Answer the preflight Read-tool step. It denies a path outside the working directory, as the live preflight expects.
+def read_tool_probe(prompt: str, mode: str, config: dict[str, object]) -> list[str]:
+    """Answer each Read step of the preflight file-access call. Like Claude Code 2.1.257 or later, it refuses a path
+    that resolves outside the working directory only when the settings hold
+    `permissions.blockReadsOutsideWorkingDirectories: true`.
 
-    Real `claude -p` behavior is unverified here: the live preflight decides.
-    `read-tool-escape` returns the file content. `read-tool-skipped` never calls the Read tool.
+    The live preflight decides real `claude -p` behavior. `read-tool-escape` returns the content of every file outside
+    the workspace except the host file. `read-tool-host` returns the `/etc/hosts` content. `read-tool-link` follows the
+    workspace symlink to the file outside the workspace. `read-tool-control-denied` refuses the workspace control file.
+    `read-tool-skipped` never calls the Read tool. `read-tool-host-skipped` never calls the Read tool on `/etc/hosts`.
     """
-    found = re.search(r"read the file `([^`]+)` with the Read tool", prompt)
-    if found is None or mode == "read-tool-skipped":
+    if mode == "read-tool-skipped":
         return []
-    path = found.group(1)
-    allowed = _inside(path, [str(Path.cwd()), str(Path.cwd().resolve())])
-    text = Path(path).read_text() if mode == "read-tool-escape" or allowed else "denied"
-    emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "rt1", "name": "Read",
-          "input": {"file_path": path}}]}})
-    emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "rt1",
-          "is_error": text == "denied", "content": text}]}})
-    return [text]
+    permissions = config.get("permissions")
+    blocked = isinstance(permissions, dict) and cast(dict[str, object], permissions).get("blockReadsOutsideWorkingDirectories") is True
+    texts: list[str] = []
+    for index, found in enumerate(re.finditer(r"Read the file `([^`]+)` with the Read tool", prompt)):
+        path = found.group(1)
+        host = path == "/etc/hosts"
+        if host and mode == "read-tool-host-skipped":
+            continue
+        escaped = ((mode == "read-tool-escape" and not host) or (mode == "read-tool-host" and host)
+                   or (mode == "read-tool-link" and path.endswith("/link.txt")))
+        allowed = not blocked or _inside(str(Path(path).resolve()), [str(Path.cwd().resolve())])
+        allowed = allowed and not (mode == "read-tool-control-denied" and path.endswith("/control.txt"))
+        text = Path(path).read_text() if escaped or allowed else "denied"
+        emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"rt{index}", "name": "Read",
+              "input": {"file_path": path}}]}})
+        emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": f"rt{index}",
+              "is_error": text == "denied", "content": text}]}})
+        texts.append(text)
+    return texts
+
+
+def read_call(prompt: str, mode: str, config: dict[str, object]) -> int:
+    """Answer the preflight file-access call. `refuses` answers with text and makes no tool call."""
+    texts = [] if mode == "refuses" else read_tool_probe(prompt, mode, config)
+    emit({"type": "result", "subtype": "success", "is_error": False, "result": " ".join(texts) or "I will not do this.",
+          "usage": USAGE})
+    return 0
 
 
 def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: dict[str, object], prompt: str) -> int:
-    """Answer the preflight read probe. Each target is one `cat` call; modes break the probe in one way."""
-    if mode == "skips-cat":
-        emit({"type": "result", "subtype": "success", "is_error": False, "result": "denied", "usage": USAGE})
+    """Answer the preflight Bash sandbox call. Each target is one `cat` call; modes break the probe in one way.
+
+    `refuses` answers with text and makes no tool call. `skips-cat` skips only the `cat` commands.
+    """
+    if mode == "refuses":
+        emit({"type": "result", "subtype": "success", "is_error": False, "result": "I will not do this.", "usage": USAGE})
         return 0
     texts: list[str] = []
-    for index, path in enumerate(targets):
+    for index, path in enumerate([] if mode == "skips-cat" else targets):
         reads = (mode == "read-host" and index == 0) or (mode not in {"bash-broken", "read-fallback"} and _readable(path, config))
         reads = reads or (mode == "read-fallback" and index == 0 and _readable(path, config))
         text = Path(path).read_text() if reads and Path(path).is_file() else "denied"
@@ -237,10 +274,25 @@ def probe(targets: list[str], writes: list[tuple[str, str]], mode: str, config: 
         emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "r1",
               "is_error": False, "content": Path(targets[-1]).read_text()}]}})
         texts[-1] = Path(targets[-1]).read_text()
-    texts += read_tool_probe(prompt, mode)
     texts += write_probe(writes, mode, config)
     texts += network_probe(prompt, mode)
     emit({"type": "result", "subtype": "success", "is_error": False, "result": " ".join(texts), "usage": USAGE})
+    return 0
+
+
+def context_listing(mode: str) -> int:
+    """Answer the free `/context` listing with no model turn.
+
+    `memory-loads` lists the user memory of the config directory as loaded; `context-broken` sends no report.
+    """
+    if mode == "context-broken":
+        emit({"type": "result", "subtype": "success", "is_error": False, "result": "Unknown skill: context", "usage": USAGE})
+        return 0
+    config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    memory = [config / "CLAUDE.md", *sorted((config / "rules").rglob("*.md"))] if mode == "memory-loads" else []
+    rows = "".join(f"| User | {path} | 9 |\n" for path in memory if path.is_file())
+    report = f"## Context Usage\n\n### Memory Files\n\n| Type | Path | Tokens |\n|------|------|--------|\n{rows}"
+    emit({"type": "result", "subtype": "success", "is_error": False, "result": report, "usage": USAGE})
     return 0
 
 
@@ -334,7 +386,9 @@ def main() -> int:
     for line in prompt.split("\nCAPTURE FILES:\n", 1)[1].splitlines() if "\nCAPTURE FILES:\n" in prompt else []:
         captured[line] = Path(line).read_bytes().hex() if Path(line).is_file() else None
     listing = "--input-format" in argv
-    with script.with_name(script.name + (".inventory.log" if listing else ".log")).open("a") as log:
+    context = not listing and prompt.strip() == "/context"
+    suffix = ".inventory.log" if listing else ".context.log" if context else ".log"
+    with script.with_name(script.name + suffix).open("a") as log:
         _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": prompt,
                                   "environment": dict(os.environ), "config_entries": config_entries(),
                                   "captured": captured, "staged": staged_modes(),
@@ -348,6 +402,8 @@ def main() -> int:
     config = cast(dict[str, object], json.loads(settings or "{}"))
     if listing:
         return inventory(mode, config)
+    if context:
+        return context_listing(mode)
     if mode == "no-init-auth":
         print("Invalid API key - Please run /login", file=sys.stderr)
         return 1
@@ -384,6 +440,8 @@ def main() -> int:
         emit({"type": "result", "subtype": "success", "is_error": True, "result": "Invalid API key - Please run /login",
               "usage": {}})
         return 1
+    if re.search(r"Read the file `[^`]+` with the Read tool", prompt):
+        return read_call(prompt, mode, config)
     targets = re.findall(r"`cat (\S+)` with the Bash tool", prompt)
     if targets:
         writes = re.findall(r"`printf (\S+) > (\S+)` with the Bash tool", prompt)
@@ -392,8 +450,9 @@ def main() -> int:
     properties = cast(dict[str, object], schema.get("properties", {}))
     marker = Path.cwd() / ".agents/skills/skillz/EXPERIMENT_MARKER"
     structured: dict[str, object]
-    if "score_percent" in properties:
-        structured = {"score_percent": 80}
+    if "criteria" in properties:
+        ids = cast(list[str], cast(dict[str, object], properties["criteria"])["required"])
+        structured = {"criteria": {name: {"level": 3, "reason": "fake judge"} for name in ids}}
     elif "reply" in properties:
         structured = {"reply": "Weekly reports.", "done": True}
     else:

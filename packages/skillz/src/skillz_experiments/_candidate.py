@@ -68,6 +68,22 @@ def ignored_files(root: Path) -> set[str]:
     return {name for name in run.stdout.decode("utf-8", errors="replace").split("\0") if name}
 
 
+def _built_archives(root: Path) -> set[str]:
+    """Return the `scripts/<name>.pyz` path of each target that `root/wedge.toml` declares.
+
+    A built archive is build output, so git can ignore it, but the skill runs it, so capture keeps it.
+    A missing or invalid `wedge.toml` gives an empty set.
+    """
+    if not (root / "wedge.toml").is_file():
+        return set()
+    # A lazy import: `wedge` loads fromargs, and the wrapper slice imports this module without a CLI framework.
+    from wedge import ConfigError, bundle_path, load_targets
+    try:
+        return {bundle_path(Path(), config.name).as_posix() for config in load_targets(root)}
+    except (ConfigError, OSError):
+        return set()
+
+
 def _metadata(posix: str) -> bool:
     """Return True for VCS and host metadata and for bytecode caches. Capture skips them."""
     parts = posix.split("/")
@@ -96,7 +112,6 @@ class Candidate:
     files: dict[str, str]
     editable: tuple[str, ...]
     contract: Contract | None = None
-    script: str | None = None
     frozen: dict[str, bytes] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -116,11 +131,13 @@ class Candidate:
                 exclude: tuple[str, ...] = ()) -> Candidate:
         """Read the skill files under `root`. Skip git-ignored files, VCS metadata, bytecode caches, `evals/`, and `exclude`.
 
+        A git-ignored archive of a declared wedge target is not skipped: the skill runs it.
+
         A file that is binary, is not UTF-8, or exceeds `TEXT_FILE_LIMIT` becomes frozen bytes.
         """
         if root.is_symlink():
             raise ValueError("candidate must not contain symlinks")
-        ignored = ignored_files(root)
+        ignored = ignored_files(root) - _built_archives(root)
         files: dict[str, str] = {}
         frozen: dict[str, bytes] = {}
         for path in sorted(root.rglob("*")):
@@ -170,7 +187,7 @@ class Candidate:
         # The new-target component has its own named size check.
         if any(len(text) > TEXT_FILE_LIMIT for name, text in components.items() if name != NEW_CLI):
             raise ValueError("proposal exceeds component size limit")
-        child = Candidate(self.files | components, self.editable, self.contract, self.script, self.frozen)
+        child = Candidate(self.files | components, self.editable, self.contract, self.frozen)
         child.__dict__["frozen_digests"] = self.frozen_digests
         return child
 
@@ -270,8 +287,3 @@ def snapshot_outputs(workspace: Path) -> dict[str, str]:
             break
         files["/".join(parts)] = text
     return files
-
-
-def helper_script(candidate: Candidate, rules: Contract) -> str | None:
-    """Return the helper path that earns credit: the candidate's own script, else the contract's."""
-    return candidate.script or (rules.helper.path if rules.helper is not None else None)

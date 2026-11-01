@@ -13,8 +13,7 @@ from typing import cast, final
 
 import pytest
 
-from skillz_experiments import _cli
-from skillz_experiments.run import _run, _session
+from skillz_experiments.run import _run, _state
 from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
 from skillz_experiments.harness import Configuration, _doctor
@@ -25,7 +24,8 @@ from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, run
 from typing_extensions import override
-from fake_provider import FakeProvider
+from fake_provider import PASSED, FakeRunProvider
+from skillz_experiments.evaluation import CheckResult
 
 FIXTURES = Path(__file__).parent / 'fixtures'
 REPO = Path(__file__).resolve().parents[4]
@@ -109,9 +109,9 @@ def codex_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Calls:
         return {'codex_version': calls.version, 'model': 'm', 'isolation': 'passed', 'credential': self.credential_kind,
                 'live_calls': 0, 'environment_hash': 'h'}
 
-    def check_candidate(self: Codex, candidate: object) -> bool:
+    def check_candidate(self: Codex, candidate: object) -> CheckResult:
         del self, candidate
-        return True
+        return PASSED
 
     def evaluate(self: Codex, candidate: object, case: object, *, holdout: bool = False) -> dict[str, object]:
         del self, candidate, case, holdout
@@ -188,12 +188,14 @@ def test_codexRun_recordsTheCredentialKindOfEveryBuiltInRoleInRunJson(
 # ---------------------------------------------------------------- AC-6 nono records
 
 @final
-class _Provider(FakeProvider):
+class _Provider(FakeRunProvider):
     def __init__(self) -> None:
+        super().__init__()
         self.calls = 0
 
     @override
-    def preflight(self) -> dict[str, object]:
+    def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
+        del recorded
         self.calls += 1
         return {'environment_hash': 'e1', 'isolation': 'passed'}
 
@@ -204,10 +206,10 @@ class _Provider(FakeProvider):
         raise RuntimeError('stop here')
 
 
-def _factory(provider: _Provider) -> _session.Factory:
+def _factory(provider: _Provider) -> _state.Factory:
     def make(_model: str, _budget: object, _checkpoint: object) -> _Provider:
         return provider
-    return cast(_session.Factory, make)
+    return cast(_state.Factory, make)
 
 
 def _prepared_run(tmp_path: Path, target: Path, write_draft: Callable[..., list[str]]) -> Path:
@@ -344,7 +346,7 @@ def test_inlineCommand_withRepeatedDashLeadingElements_buildsOneArgv(
         seen.append(cast('Configuration | None', kwargs['configuration']))
         return {}
 
-    monkeypatch.setattr(_cli, 'run_workflow', fake)
+    monkeypatch.setattr("skillz_experiments.run.run", fake)
     out = tmp_path / 'run'
     code = main(['run', '--target', str(target), '--out', str(out), '--model', 'm', '--edit', 'prose', '--harness', 'command',
                  f'--command={sys.executable}', '--command=-I', '--command=-c', '--command=--version'])
@@ -605,9 +607,9 @@ def _logged(path: Path) -> list[object]:
 
 
 @pytest.fixture
-def workspace(tmp_path: Path) -> Path:
+def workspace(runner_tempdir: Path) -> Path:
     '''A runner-shaped workspace: `<temporary>/skillz-x/workspace` that already holds `.agents`.'''
-    path = tmp_path / 'skillz-x/workspace'
+    path = runner_tempdir / 'skillz-x/workspace'
     (path / '.agents').mkdir(parents=True)
     return path
 
@@ -656,6 +658,13 @@ def test_sandbox_badArgv_raisesValueErrorBeforeAnyRuntimeCall(tmp_path: Path, wo
     assert _logged(directory / 'docker.log') == []
 
 
+@pytest.fixture
+def docker_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    '''The wrapper picks sandbox-exec on macOS. These tests drive the docker shim, so they run as a Linux host.'''
+    monkeypatch.setattr(sys, 'platform', 'linux')
+
+
+@pytest.mark.usefixtures('docker_host')
 @pytest.mark.parametrize('first', ['--privileged', '-v', '--network=host', '--volume=/:/host', '--entrypoint=sh', '-i', '--rm'])
 def test_sandbox_flagLikeArgv_staysAfterTheImageAndNeverBecomesADockerFlag(
         tmp_path: Path, workspace: Path, first: str) -> None:
@@ -663,7 +672,7 @@ def test_sandbox_flagLikeArgv_staysAfterTheImageAndNeverBecomesADockerFlag(
     _ = _gemini.respond(_request('sandbox', workspace, argv=[first, 'second']), bin_dir=directory)
     flags = cast(list[str], _logged(directory / 'docker.log')[0])
     image = flags.index(_gemini.IMAGE)
-    seconds = str(_gemini.TIMEOUTS['sandbox'] + _gemini.CONTAINER_GRACE)
+    seconds = str(_gemini.CONTAINER_SECONDS)
     assert flags[image + 1:image + 5] == ['-s', 'KILL', seconds, '/usr/bin/env']
     assert flags[image + 5 + len(_gemini.CONTAINER_ENV):] == [first, 'second']
     assert flags[:image].count('--entrypoint') == 1 and flags[flags.index('--entrypoint') + 1] == '/usr/bin/timeout'
@@ -677,6 +686,7 @@ def test_sandbox_flagLikeArgv_staysAfterTheImageAndNeverBecomesADockerFlag(
     assert '-v' not in flags[:image] and not any(flag.startswith('--volume') for flag in flags[:image])
 
 
+@pytest.mark.usefixtures('docker_host')
 def test_sandbox_enormousStdout_isReturnedWithoutCrashing(tmp_path: Path, workspace: Path) -> None:
     directory = _bin(tmp_path)
     docker = directory / 'docker'
@@ -685,6 +695,7 @@ def test_sandbox_enormousStdout_isReturnedWithoutCrashing(tmp_path: Path, worksp
     assert result['returncode'] == 0 and len(cast(str, result['stdout'])) == 5_000_000
 
 
+@pytest.mark.usefixtures('docker_host')
 def test_sandbox_nonUtf8Output_doesNotCrashTheWrapper(tmp_path: Path, workspace: Path) -> None:
     '''AC-14: undecodable bytes from the sandboxed command must not kill the wrapper (text=True decodes strictly).'''
     directory = _bin(tmp_path)

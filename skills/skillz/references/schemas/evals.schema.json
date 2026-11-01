@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "evals/evals.json",
+  "type": "object",
+  "required": [
+    "skill_name",
+    "evals"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "skill_name": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "evals": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "prompt",
+          "expected_output",
+          "files",
+          "kind"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "Unique whole number."
+          },
+          "name": {
+            "type": "string",
+            "pattern": "\\S",
+            "description": "Unique case name. It becomes the case id."
+          },
+          "prompt": {
+            "type": "string",
+            "pattern": "\\S",
+            "description": "The request that the user sends."
+          },
+          "expected_output": {
+            "type": "string",
+            "pattern": "\\S",
+            "description": "What a good answer does, in prose."
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^evals/files/"
+            },
+            "description": "Fixture files, each under evals/files/."
+          },
+          "assertions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "\\S"
+            },
+            "description": "Checks for a task entry. Other kinds take none."
+          },
+          "kind": {
+            "enum": [
+              "trigger",
+              "near-miss",
+              "task"
+            ],
+            "description": "trigger: the skill must start. near-miss: it must not. task: it does work."
+          },
+          "family": {
+            "type": "string",
+            "pattern": "\\S",
+            "description": "Group of related cases. Needed for the split."
+          },
+          "expected_skill": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The skill that must start, or null for a near-miss."
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "task"
+                }
+              }
+            },
+            "else": {
+              "properties": {
+                "assertions": {
+                  "maxItems": 0
+                }
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "expected_skill": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "expected_skill"
+              ]
+            },
+            "then": {
+              "properties": {
+                "kind": {
+                  "const": "near-miss"
+                }
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

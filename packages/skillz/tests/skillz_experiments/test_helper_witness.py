@@ -11,7 +11,7 @@ import pytest
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, load_cases
 from skillz_experiments._contract import Contract, parse
-from skillz_experiments._evaluation import witnessed_events
+from skillz_experiments.evaluation._scoring import witnessed_events
 from skillz_experiments.evaluation._evaluator import evaluate
 from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments._protocol import LEDGER_KEY
@@ -29,11 +29,13 @@ INVOKED = f".agents/skills/{SKILL}/{HELPER}"
 
 def rules() -> Contract:
     return parse({"schema_version": 1, "status": "approved", "skill": SKILL, "invocation": f"${SKILL} run",
-                  "kinds": {"echo": {"grader": "exact-json"}, "style": {"grader": "judge", "rubric": "Rate it."}}}, "skill")
+                  "kinds": {"echo": {"grader": "exact-json"}, "style": {"grader": "judge", "rubric": "Rate it."}},
+                  "helper": {"path": HELPER, "input": "input.txt",
+                             "fixtures": [{"input": "hi", "returncode": 0, "output": {"echo": "hello"}}]}}, "skill")
 
 
 def candidate(source: str = HELPER_SOURCE) -> Candidate:
-    return Candidate({"SKILL.md": "seed", HELPER: source}, ("SKILL.md",), contract=rules(), script=HELPER)
+    return Candidate({"SKILL.md": "seed", HELPER: source}, ("SKILL.md",), contract=rules())
 
 
 def case(tmp_path: Path, kind: str = "echo") -> Case:
@@ -236,7 +238,7 @@ def test_the_witness_stages_in_invoke_and_not_in_check_candidate(tmp_path: Path,
         "fake-model", Budget(5, 60, 0), lambda: None)
     try:
         task = adapter.transports["task"]
-        assert task.check_candidate(candidate())
+        assert task.check_candidate(candidate()).passed
         assert staged_for == []
         _ = task.invoke("p", candidate(), case(tmp_path))
         assert staged_for == [HELPER]

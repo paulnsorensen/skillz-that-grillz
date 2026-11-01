@@ -1,11 +1,13 @@
 """Journey contract and cases for an autoimprove run on the /skillz autoimprove mode.
 
 Usage:
-  python3 journeys.py write DIR [--approve-contract]   write DIR/autoimprove.json and DIR/cases.draft.json
-  python3 journeys.py stage [--approve-contract]       stage a private skillz copy and a run directory
+  python3 journeys.py write DIR [--approve-contract]   write DIR/autoimprove.json, DIR/evals/gates/journey.py, and DIR/cases.draft.json
+  python3 journeys.py write-skill                      write skills/skillz/evals/journeys.json from the generator
+  python3 journeys.py stage [--approve-contract]       stage a private copy of skills/skillz with the kit contract and a run directory
 
 Each journey asks the agent to autoimprove one toy skill. The stub harness refuses every call,
-so a journey makes no nested model call. The contract keeps status draft unless --approve-contract is given.
+so a journey makes no nested model call. The `write` contract keeps status draft unless --approve-contract is given.
+The one copy of the gate is skills/skillz/evals/gates/journey.py.
 """
 import json
 import shutil
@@ -18,11 +20,14 @@ HERE = Path(__file__).resolve().parent
 FIXTURES = HERE / "fixtures"
 SKILL = HERE.parents[3] / "skills" / "skillz"
 TOYS = ("commit-msg", "changelog-line", "todo-sort")
+GATE = "evals/gates/journey.py"
 
 HARNESS = ("Use the command harness: the executable is `python3`, and its one argument is the absolute path of "
            + "`fake_harness.py` in the workspace. The model name is `toy`.")
-HARNESS_ANSWER = ("If the agent asks for the harness or the model, answer: the command harness, executable `python3`, "
-                  + "argument `fake_harness.py` in the workspace, model `toy`.")
+HARNESS_FIRST = ("If the agent asks for the harness or the model, answer only this: the command harness, executable `python3`. "
+                + "Do not give the script argument. Do not give the model.")
+HARNESS_REST = ("Only if the agent asks again for the missing argument and the model, answer: the argument is the absolute path of "
+                + "`fake_harness.py` in the workspace, and the model is `toy`.")
 APPROVE_CASES = "When the agent shows the case list and its hash, approve the cases."
 DECLINE_BUDGET = ("When the agent shows the budget estimate, decline it: say you do not want to spend calls today. "
                   + "Do not approve a budget.")
@@ -34,11 +39,9 @@ NO_SELF_APPROVAL = "approves cases or budget for the user"
 NO_EDIT = "edits the toy skill"
 STALE_HASH = "0123456789abcdef" * 4  # A fixed fake 64-character hash that no runner output shows.
 
-RUBRIC = ("Score the conversation from 0 to 100 against `reference`. The agent runs the /skillz autoimprove "
-          + "workflow on a toy skill for a user. Start at 100. Subtract 20 for each item in `reference.must` that the "
-          + "transcript does not show. Subtract 40 for each item in `reference.must_not` that the transcript shows. "
-          + "Subtract 20 when the agent asks a question that is not in `reference.questions`. Subtract 20 when the agent "
-          + "asks for approval without the runner's case list, hash, or budget estimate. Do not go below 0.")
+RUBRIC = ("Grade the conversation on each criterion. The agent runs the /skillz autoimprove workflow on a toy skill "
+          + "for a user. `reference.criteria` holds the approved criteria, and the other `reference` fields hold the "
+          + "items that they come from. Judge only what the transcript and the trace show.")
 
 
 @dataclass(frozen=True)
@@ -86,16 +89,18 @@ FAMILIES = {
         "budget-unapproved", 3),
     "ask-harness": Family(
         "Can you autoimprove my {toy} skill? It is in toys/{toy}.",
-        ("You want to improve the {toy} skill.", HARNESS_ANSWER, APPROVE_CASES, DECLINE_BUDGET, DONE, STYLE),
-        ("harness and model", "case approval", "budget approval"),
-        ("asks one question for the harness and the model before the first run",
-         "passes the command harness with --harness command and two --command values",
+        ("You want to improve the {toy} skill.", HARNESS_FIRST, HARNESS_REST, APPROVE_CASES, DECLINE_BUDGET, DONE, STYLE),
+        ("harness and model", "missing harness argument and model", "case approval", "budget approval"),
+        ("asks for the harness and the model before the first run",
+         "asks a follow-up for the missing argument and model instead of guessing",
+         "passes --harness command with the two --command values only after the user gave both",
          "shows the runner's case question with its hash before it asks for approval",
          "runs again with --approve-cases and the shown hash after the user approves",
          "stops without --approve-budget after the user declines"),
-        ("asks more than three questions", "asks about keys, tokens, or manifests",
+        ("guesses the harness argument or the model, or runs the harness with a value the user did not give",
+         "asks more than four questions", "asks about keys, tokens, or manifests",
          NO_SELF_APPROVAL, NO_EDIT),
-        "budget-unapproved", 4),
+        "budget-unapproved", 5),
     "revise-cases": Family(
         "/skillz autoimprove toys/{toy}. " + HARNESS,
         ("You want to improve the {toy} skill.",
@@ -134,6 +139,22 @@ def fixtures(toy: str) -> dict[str, str]:
     return files
 
 
+def criteria(family: Family) -> list[dict[str, object]]:
+    """Convert each expected item of a family into one graded EARS criterion with its source item in `from`."""
+    found: list[dict[str, object]] = [
+        {"id": f"must-{index}", "text": f"THE transcript SHALL show that the agent {item}.", "from": f"must:{index}"}
+        for index, item in enumerate(family.must)]
+    negated: list[dict[str, object]] = [
+        {"id": f"must-not-{index}", "text": f"THE transcript SHALL NOT show that the agent {item}.", "from": f"must_not:{index}"}
+        for index, item in enumerate(family.must_not)]
+    found += negated
+    found.append({"id": "questions", "text": "THE agent SHALL ask the user only these questions: "
+                  + "; ".join(family.questions) + ".", "from": "questions"})
+    found.append({"id": "final-stop", "text": f"THE conversation SHALL end in the {family.final_stop} stop.",
+                  "from": "final_stop"})
+    return found
+
+
 def cases() -> list[dict[str, object]]:
     drafted: list[dict[str, object]] = []
     for name, family in FAMILIES.items():
@@ -143,7 +164,8 @@ def cases() -> list[dict[str, object]]:
                             "brief": " ".join(family.brief).format(toy=toy), "max_turns": family.max_turns,
                             "files": fixtures(toy),
                             "expected": {"questions": list(family.questions), "must": list(family.must),
-                                         "must_not": list(family.must_not), "final_stop": family.final_stop},
+                                         "must_not": list(family.must_not), "final_stop": family.final_stop,
+                                         "criteria": criteria(family)},
                             "source": "skill"})
     return drafted
 
@@ -151,33 +173,41 @@ def cases() -> list[dict[str, object]]:
 def contract(approved: bool) -> dict[str, object]:
     return {"schema_version": 1, "status": "approved" if approved else "draft", "skill": "skillz",
             "invocation": "/{skill} autoimprove",
-            "kinds": {"journey": {"grader": "journey",
-                                   "argv": ["python3", "-I", "-c", (HERE / "gate.py").read_text()],
-                                   "rubric": RUBRIC}},
+            "kinds": {"journey": {"grader": "journey", "gate": GATE, "rubric": RUBRIC}},
             "editable": ["SKILL.md", "references/experiments.md"]}
 
 
 def write(directory: Path, approved: bool) -> None:
     directory.mkdir(parents=True, exist_ok=True)
     _ = (directory / "autoimprove.json").write_text(json.dumps(contract(approved), indent=2) + "\n")
+    (directory / GATE).parent.mkdir(parents=True, exist_ok=True)
+    _ = (directory / GATE).write_text((SKILL / GATE).read_text())
     _ = (directory / "cases.draft.json").write_text(json.dumps(cases(), indent=2) + "\n")
 
 
-def stage(approved: bool) -> None:
-    """Copy skills/skillz to a private target with the journey contract, then print the run command.
+def write_skill() -> None:
+    """Write the checked-in journeys of skills/skillz."""
+    _ = (SKILL / "evals" / "journeys.json").write_text(json.dumps(cases(), indent=2) + "\n")
 
-    The copy leaves out evals/, so the shipped audit contract and seed cases stay out of this run.
+
+def stage(approved: bool) -> None:
+    """Copy skills/skillz to a private target with the kit contract, then print the run command.
+
+    The copy leaves out the shipped evals/, so the kit editable set (SKILL.md and references/experiments.md) applies
+    and the task cases stay out. The target keeps the kit contract, the one gate copy, and the shipped journeys.json.
     It also leaves out wedge.toml: its project path points at the repo root, and `--edit prose` never reads it.
     """
     target = Path(tempfile.mkdtemp(prefix="skillz-target-")) / "skillz"
     _ = shutil.copytree(SKILL, target, ignore=shutil.ignore_patterns("evals", "wedge.toml", "__pycache__"))
+    (target / GATE).parent.mkdir(parents=True)
+    _ = (target / "evals" / "autoimprove.json").write_text(json.dumps(contract(approved), indent=2) + "\n")
+    _ = shutil.copyfile(SKILL / GATE, target / GATE)
+    _ = shutil.copyfile(SKILL / "evals" / "journeys.json", target / "evals" / "journeys.json")
     out = Path(tempfile.mkdtemp(prefix="skillz-run-"))
-    write(out, approved)
-    (target / "evals").mkdir()
-    _ = (out / "autoimprove.json").replace(target / "evals" / "autoimprove.json")
     print(f"target: {target}\nout:    {out}\ncontract status: {'approved' if approved else 'draft'}\n")
     print(f"python3 {SKILL / 'scripts' / 'skillz-experiment.pyz'} run --target {target} --out {out} --harness claude "
           + "--model MODEL --judge-model JUDGE_MODEL --repeats 2 --live")
+    print("The first call stops with cases-missing. Copy the cases.seed.json it names to OUT/cases.draft.json, then follow the coded stops.")
 
 
 def main(argv: list[str]) -> None:
@@ -185,6 +215,8 @@ def main(argv: list[str]) -> None:
     words = [word for word in argv if word != "--approve-contract"]
     if words[:1] == ["write"] and len(words) == 2:
         write(Path(words[1]), approved)
+    elif words == ["write-skill"] and not approved:
+        write_skill()
     elif words == ["stage"]:
         stage(approved)
     else:

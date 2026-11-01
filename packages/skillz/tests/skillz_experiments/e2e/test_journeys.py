@@ -8,9 +8,9 @@ from typing import cast
 
 import pytest
 
-from support import (BUNDLE, CLI, FIXTURES, Scenario, approve_and_run, assert_promoted, cli_error, command_adapter,
-                     export_and_apply, make_scenario, make_vendor_bin, read_cases, read_events, read_record,
-                     run_scenario, snapshot)
+from support import (BUNDLE, CLI, CRITERIA, FIXTURES, Scenario, assert_promoted, call_cli, cli_error,
+                     command_adapter, export_and_apply, make_scenario, read_cases, read_events,
+                     read_record, run_scenario, snapshot)
 
 
 def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
@@ -28,7 +28,8 @@ def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
         del kinds["task"]
     _ = contract_path.write_text(json.dumps(contract))
     draft: list[dict[str, object]] = []
-    for index in range(10):
+    # gh-300: six families of two give holdout 6, train 4 from 2 families, and validation 2.
+    for index in range(12):
         label = f"maple-{index}"
         topic = "label" if index % 2 else "code"
         draft.append({
@@ -37,7 +38,8 @@ def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
             "brief": f"Value: {label}. Answer only the agent's question.",
             "max_turns": 2,
             "files": {"fixture.md": "seed\n", "question.txt": f"{topic}\n"},
-            "expected": {"text": label.upper() + "\n"},
+            "expected": {"must": [label.upper() + "\n"], "criteria": [
+                {"id": "must-0", "text": "THE transcript SHALL show the asked value in output/result.txt.", "from": "must:0"}]},
             "source": "skill",
         })
     if mixed:
@@ -47,7 +49,7 @@ def journey_scenario(base: Path, *, helper: bool = False, mixed: bool = False,
                 source = f"case-{family}-{index}\n"
                 draft.append({"id": f"t{family}-{index}", "family": f"f{family}", "kind": "task",
                               "request": "Transform fixture.md according to this skill.",
-                              "files": {"fixture.md": source}, "expected": {"text": source.upper()},
+                              "files": {"fixture.md": source}, "expected": {"text": source.upper(), "criteria": CRITERIA},
                               "source": "skill"})
     return Scenario(scenario.target, scenario.out, scenario.export, draft, scenario.original)
 
@@ -129,17 +131,16 @@ def test_failed_journey_command_gate_never_calls_judge(tmp_path: Path) -> None:
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-7")
-@pytest.mark.parametrize("harness", ["codex", "command"])
-def test_unsupported_journey_refuses_before_task_inference(tmp_path: Path, harness: str) -> None:
+@pytest.mark.ac("gh-369:AC-15")
+def test_unsupported_journey_refuses_before_task_inference(tmp_path: Path) -> None:
     scenario = journey_scenario(tmp_path)
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
-            "--model", "offline-test", "--harness", harness, "--live", "--edit", "prose"]
-    bin_dir = None
-    if harness == "command":
-        args += command_adapter(scenario)
-    else:
-        bin_dir = make_vendor_bin(scenario, tmp_path, harness, "normal")
-    code, result, error = approve_and_run(args, tmp_path, scenario, bin_dirs=[bin_dir] if bin_dir else ())
-    assert code == 1 and cli_error(error)["code"] == "journey-unsupported", result
-    assert not any("Ask which value to transform" in json.dumps(entry) for entry in read_events(scenario.out)
-                   if entry.get("role") == "task")
+            "--model", "offline-test", "--harness", "command", "--live", "--edit", "prose",
+            *command_adapter(scenario)]
+    scenario.out.mkdir(mode=0o700, exist_ok=True)
+    _ = (scenario.out / "cases.draft.json").write_text(json.dumps(scenario.draft))
+    code, result, error = call_cli(args, tmp_path)
+    # The stop comes before the case and budget approvals, so no approval data and no task call exist.
+    assert code == 1 and cli_error(error)["code"] == "journey-unsupported", (result, error)
+    assert "case_hash" not in result and not (scenario.out / "run.json").exists()
+    assert not any(entry.get("role") == "task" for entry in read_events(scenario.out))

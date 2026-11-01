@@ -36,7 +36,7 @@ def run_intake(tmp_path: Path, target: Path, capsys: pytest.CaptureFixture[str])
     out.mkdir(mode=0o700)
     cases = [{"id": f"c{family}-{index}", "family": f"f{family}", "kind": "task", "request": "Echo hello",
               "files": {"input.txt": "hello\n"}, "expected": {"echo": "hello"}, "source": "skill"}
-             for family in range(5) for index in range(2)]
+             for family in range(6) for index in range(2)]
     _ = (out / "cases.draft.json").write_text(json.dumps(cases))
     command = ["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose"]
     stops = ("cases-unapproved", "budget-unapproved")
@@ -166,12 +166,12 @@ def test_contract_staging_codex_checks_the_declared_helper(tmp_path: Path, monke
         return subprocess.CompletedProcess(command, 0, reply["stdout"], "")
 
     monkeypatch.setattr(Codex, "_discover", discover)
-    monkeypatch.setattr("skillz_experiments.harness._codex.process", process)
-    assert adapter.check_candidate(candidate)
+    monkeypatch.setattr("skillz_experiments.harness._codex.sandboxed", process)
+    assert adapter.check_candidate(candidate).passed
     assert seen == ["echo-skill"]
     assert commands[0][-2:] == [".agents/skills/echo-skill/scripts/echo.py", "fixtures/nested/input.md"]
     reply["stdout"] = '{"ok": false}'
-    assert not adapter.check_candidate(candidate)
+    assert not adapter.check_candidate(candidate).passed
 
 
 def test_contract_unapproved_stops_a_draft(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -188,7 +188,7 @@ def test_a_contract_without_a_task_kind_and_with_several_kinds_stops_with_a_code
     set_contract(target, kinds={"echo": {"grader": "exact-json"}, "rewrite": {"grader": "exact-json"}})
     code, err = run_intake(tmp_path, target, capsys)
     assert code == 1 and err["code"] == "contract-kinds"
-    assert "echo, rewrite" in str(err["error"]) and "`task` kind or exactly one kind" in str(err["error"])
+    assert "echo, rewrite" in str(err["error"]) and "--kind" in str(err["error"])
     assert not (tmp_path / "run/run.json").exists()
 
 
@@ -362,11 +362,33 @@ def test_contract_surface_files_the_mcp_config_runs_are_read_only_under_prose_cl
     assert editable_files(files, plain, "prose+cli") == ["SKILL.md", "scripts/run.py", "scripts/server.py"]
 
 
-@pytest.mark.parametrize("kinds", [
-    {"journey": {"grader": "judge", "rubric": "r"}},
-    {"conversation": {"grader": "journey", "argv": ["x"], "rubric": "r"}},
-], ids=["journey-kind-other-grader", "journey-grader-other-kind"])
-def test_contract_ties_the_journey_kind_to_the_journey_grader(kinds: dict[str, object]) -> None:
-    with pytest.raises(CodedError, match="go together") as caught:
-        _ = parse(surface_contract(kinds=kinds), "skill")
+def test_contract_ties_the_kind_named_journey_to_the_journey_grader() -> None:
+    with pytest.raises(CodedError, match="takes the journey grader") as caught:
+        _ = parse(surface_contract(kinds={"journey": {"grader": "judge", "rubric": "r"}}), "skill")
     assert caught.value.code == "contract-kinds"
+
+
+PHRASE_CONTRACT: dict[str, object] = {"schema_version": 1, "status": "approved", "skill": "demo", "invocation": "/demo",
+                                     "kinds": {"task": {"grader": "judge", "rubric": "Grade the answer."}}}
+
+
+@pytest.mark.ac("gh-499:AC-6")
+def test_an_empty_or_omitted_harness_phrases_list_keeps_the_contract_hash() -> None:
+    # The data that `Contract.data()` gave before `harness_phrases` existed.
+    before: dict[str, object] = {"schema_version": 1, "status": "approved", "skill": "demo", "invocation": "/demo",
+                                 "kinds": {"task": {"grader": "judge", "rubric": "Grade the answer."}}, "editable": []}
+    omitted = parse(dict(PHRASE_CONTRACT), "skill")
+    empty = parse(PHRASE_CONTRACT | {"harness_phrases": list[str]()}, "skill")
+    assert omitted.identity == empty.identity == digest(before)
+    declared = parse(PHRASE_CONTRACT | {"harness_phrases": ["do not run git or gh"]}, "skill")
+    assert declared.harness_phrases == ("do not run git or gh",)
+    assert declared.identity != omitted.identity
+    assert parse(declared.data(), "skill") == declared
+
+
+@pytest.mark.ac("gh-499:AC-6")
+@pytest.mark.parametrize("phrases", [["dry"], ["dry run", "- run"], ["  output.  "], "do not run git", [7]])
+def test_a_one_word_or_malformed_harness_phrase_fails_contract_loading_with_a_coded_error(phrases: object) -> None:
+    with pytest.raises(CodedError) as caught:
+        _ = parse(PHRASE_CONTRACT | {"harness_phrases": phrases}, "skill")
+    assert caught.value.code == "contract-harness-phrases"

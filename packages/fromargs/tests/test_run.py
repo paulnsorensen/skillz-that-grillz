@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 from collections.abc import Callable, Sequence
@@ -263,9 +264,8 @@ def test_converter_rejection_still_tries_repair(
 
 
 def test_handler_cyclopts_error_is_an_unexpected_envelope(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     app = fromargs.App("t")
 
     @app.command
@@ -277,14 +277,13 @@ def test_handler_cyclopts_error_is_an_unexpected_envelope(
     assert envelope["error"] == "CycloptsError: inner"
     assert envelope["exit_code"] == 1
     traceback_path = Path(str(envelope["traceback"]))
-    assert traceback_path.parent == tmp_path
+    assert traceback_path.parent.parent == tmp_path
     assert "CycloptsError" in traceback_path.read_text()
 
 
 def test_handler_value_error_is_an_unexpected_envelope(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     app = fromargs.App("t")
 
     @app.command
@@ -296,7 +295,7 @@ def test_handler_value_error_is_an_unexpected_envelope(
     assert envelope["error"] == "ValueError: bad shape"
     assert envelope["exit_code"] == 1
     traceback_path = Path(str(envelope["traceback"]))
-    assert traceback_path.parent == tmp_path
+    assert traceback_path.parent.parent == tmp_path
     assert "bad shape" in traceback_path.read_text()
 
 
@@ -324,8 +323,6 @@ def test_traceback_write_failure_removes_the_partial_file(
     tmp_path: Path,
     single_json_line: JsonLine,
 ) -> None:
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-
     def _broken_open(*_args: object, **_kwargs: object) -> object:
         raise OSError("disk full")
 
@@ -339,7 +336,89 @@ def test_traceback_write_failure_removes_the_partial_file(
     assert app.run(["inner"]) == 1
     envelope = single_json_line(capsys.readouterr().err)
     assert envelope == {"error": "ValueError: bad shape", "exit_code": 1}
-    assert list(tmp_path.glob("fromargs-*.traceback")) == []
+    assert list(tmp_path.rglob("fromargs-*.traceback")) == []
+
+
+@pytest.mark.ac("gh-411:AC-1")
+def test_tracebacks_are_bounded_to_the_newest_twenty_in_a_per_user_directory(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    paths: list[Path] = []
+    for index in range(25):
+        assert app.run(["inner"]) == 1
+        path = Path(str(_unexpected_envelope(capsys.readouterr().err)["traceback"]))
+        # Pin distinct, increasing mtimes so coarse filesystem clocks cannot tie.
+        stamp = 1_700_000_000 + index
+        os.utime(path, (stamp, stamp))
+        paths.append(path)
+
+    directory = paths[-1].parent
+    assert directory.parent == tmp_path
+    assert sorted(directory.glob("fromargs-*.traceback")) == sorted(paths[-20:])
+    assert list(tmp_path.iterdir()) == [directory]
+
+
+@pytest.mark.ac("gh-411:AC-2")
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_traceback_directory_is_private_to_the_user(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    assert app.run(["inner"]) == 1
+    directory = Path(str(_unexpected_envelope(capsys.readouterr().err)["traceback"])).parent
+    assert directory.parent == tmp_path
+    assert directory.stat().st_mode & 0o077 == 0
+
+
+@pytest.mark.ac("gh-411:AC-4")
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks and permission bits")
+def test_symlinked_traceback_directory_is_refused_and_its_target_is_untouched(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path, single_json_line: JsonLine
+) -> None:
+    foreign = tmp_path / "foreign"
+    foreign.mkdir()
+    kept = foreign / "x.traceback"
+    _ = kept.write_text("keep")
+    (tmp_path / f"fromargs-{os.getuid()}").symlink_to(foreign, target_is_directory=True)
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    assert app.run(["inner"]) == 1
+    envelope = single_json_line(capsys.readouterr().err)
+    assert envelope == {"error": "ValueError: bad shape", "exit_code": 1}
+    assert list(foreign.iterdir()) == [kept]
+
+
+@pytest.mark.ac("gh-411:AC-4")
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
+def test_existing_open_traceback_directory_is_made_private(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    existing = tmp_path / f"fromargs-{os.getuid()}"
+    existing.mkdir()
+    existing.chmod(0o755)
+    app = fromargs.App("t")
+
+    @app.command
+    def inner() -> None:
+        raise ValueError("bad shape")
+
+    assert app.run(["inner"]) == 1
+    directory = Path(str(_unexpected_envelope(capsys.readouterr().err)["traceback"])).parent
+    assert directory == existing
+    assert existing.stat().st_mode & 0o077 == 0
 
 
 def test_handler_returning_nan_is_an_unexpected_envelope(
@@ -797,10 +876,8 @@ def test_generator_exit_still_propagates() -> None:
 
 
 def test_validator_unexpected_exception_is_an_unexpected_envelope(
-    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
-
     def boom(_type_: object, _value: object) -> None:
         raise RuntimeError("validator boom")
 
