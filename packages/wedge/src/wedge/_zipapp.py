@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
+from wedge._config import BYTECODE_PYTHONS
 from wedge._key import FORMAT_VERSION
 from wedge._main import MAIN_SOURCE
 
@@ -17,7 +18,9 @@ _DATE_TIME = (1980, 1, 1, 0, 0, 0)
 
 def write_archive(site_dir: Path, entry: str, out_path: Path, trees: dict[str, Path] | None = None) -> None:
     environment = json.dumps(
-        {"entry": entry, "format": FORMAT_VERSION}, sort_keys=True, separators=(",", ":")
+        {"entry": entry, "format": FORMAT_VERSION, "python_minors": [minor for minor, _patch in BYTECODE_PYTHONS]},
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode() + b"\n"
     members: dict[str, bytes | Path | None] = {
         "__main__.py": MAIN_SOURCE.encode(),
