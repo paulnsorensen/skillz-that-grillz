@@ -446,7 +446,7 @@ def test_the_cli_passes_both_token_flags_to_run(tmp_path: Path, monkeypatch: pyt
         seen.update(kwargs)
         return {}
 
-    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    monkeypatch.setattr("skillz_experiments.run.run", fake)
     base = ["run", "--target", str(tmp_path / "skill"), "--out", str(tmp_path / "run"), "--model", MODEL]
     assert main([*base, "--max-token-increase-per-gain=1.5", "--min-token-saving=0.25"]) == 0
     assert seen["statistics"] == {"max_token_increase_per_gain": 1.5, "min_token_saving": 0.25}
@@ -733,7 +733,7 @@ def test_the_cli_passes_the_quality_loss_margin_to_run(tmp_path: Path, monkeypat
         seen.update(kwargs)
         return {}
 
-    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    monkeypatch.setattr("skillz_experiments.run.run", fake)
     base = ["run", "--target", str(tmp_path / "skill"), "--out", str(tmp_path / "run"), "--model", MODEL]
     assert main([*base, "--min-token-saving=0.25", "--max-quality-loss=0.02"]) == 0
     assert seen["statistics"] == {"min_token_saving": 0.25, "max_quality_loss": 0.02}

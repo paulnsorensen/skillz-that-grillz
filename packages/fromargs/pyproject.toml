@@ -17,7 +17,7 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
 ]
-dependencies = ["cyclopts>=5,<6"]
+dependencies = ["cyclopts>=5.3.1,<6"]
 
 [project.urls]
 Homepage = "https://github.com/paulnsorensen/skillz-that-grillz/tree/main/packages/fromargs"
@@ -26,10 +26,10 @@ Issues = "https://github.com/paulnsorensen/skillz-that-grillz/issues"
 Changelog = "https://github.com/paulnsorensen/skillz-that-grillz/blob/main/packages/fromargs/CHANGELOG.md"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-xdist>=3", "basedpyright==1.40.2", "hypothesis>=6.170.12"]
+dev = ["pytest>=8", "pytest-xdist>=3", "basedpyright==1.40.2", "hypothesis>=6.170.13"]
 
 [build-system]
-requires = ["hatchling>=1.32.4"]
+requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

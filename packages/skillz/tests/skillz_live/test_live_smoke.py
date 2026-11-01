@@ -208,7 +208,7 @@ def _prose_cli(work: Path, harness: str, model: str) -> Setup:
 
 
 def _journey(work: Path, harness: str, model: str) -> Setup:
-    """Run journey cases. Only the claude task transport holds a conversation, so another harness stops with a code."""
+    """Run journey cases through a persistent task conversation."""
     del model
     kind = {"grader": "journey", "argv": ["/usr/bin/python3", "-I", "-c", "import json; print(json.dumps({'score': 1}))"],
             "rubric": "Pass only when the agent echoed the brief's text back as JSON."}
@@ -220,7 +220,7 @@ def _journey(work: Path, harness: str, model: str) -> Setup:
                 "expected": {"must": [name], "criteria": [{"id": "says-text", "from": "must:0", "must": True,
                                                          "text": f"THE agent SHALL say `{name}` once."}]}}
     return Setup(target, _cases(case), _builtin(harness), ("--harness", harness, "--edit", "prose"),
-                 expect=None if harness == "claude" else "journey-unsupported")
+                 expect=None if harness in {"claude", "codex"} else "journey-unsupported")
 
 
 def _stronger(work: Path, harness: str, model: str) -> tuple[Path, dict[str, object]]:
@@ -285,11 +285,18 @@ NAMES = (*SCENARIOS, "analytics")
 
 
 def _json(text: str) -> dict[str, object]:
-    """Return the JSON object in `text`. Keep the tail of text that is not a JSON object under `text`."""
+    """Return the JSON object in `text`. Keep the tail of text that is not a JSON object under `text`.
+
+    Warning lines can come before the coded error on stderr, so the last non-empty line also counts as the object.
+    """
+    lines = text.strip().splitlines()
     try:
         value = cast(object, json.loads(text))
     except ValueError:
-        return {"text": text[-2000:]} if text.strip() else {}
+        try:
+            value = cast(object, json.loads(lines[-1]))
+        except (ValueError, IndexError):
+            return {"text": text[-2000:]} if text.strip() else {}
     return cast(dict[str, object], value) if isinstance(value, dict) else {"text": text[-2000:]}
 
 

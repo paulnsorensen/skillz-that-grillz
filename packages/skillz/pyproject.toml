@@ -23,11 +23,11 @@ dev = [
     "basedpyright==1.40.2",
     "typing-extensions==4.16.0",
     "jsonschema>=4.26.0",
-    "hypothesis>=6.170.12",
+    "hypothesis>=6.170.13",
 ]
 
 [build-system]
-requires = ["hatchling>=1.32.4"]
+requires = ["hatchling>=1.33.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]

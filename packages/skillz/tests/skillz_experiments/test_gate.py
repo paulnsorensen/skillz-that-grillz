@@ -126,7 +126,7 @@ def test_the_se_floor_turns_a_promote_on_noisy_repeats_into_inconclusive() -> No
     paired = holdout_deltas(baseline, winner)
     assert verdict(paired.deltas).verdict == "promote"
     result = verdict(paired.deltas, se_floor=paired.se_floor)
-    assert paired.se_floor == pytest.approx((4 * (0.1**2 + 0.1**2)) ** 0.5 / 4)
+    assert paired.se_floor == pytest.approx(math.sqrt(4 * (0.1**2 + 0.1**2)) / 4)
     assert result.verdict == "inconclusive" and result.se_floor > verdict(paired.deltas).se
     assert result.se == result.se_floor
 

@@ -86,7 +86,8 @@ def test_action_installs_gh_in_runner_temp_without_sudo(tmp_path: Path) -> None:
     commands = tmp_path / "commands"
     commands.mkdir()
     _write_command(commands, "curl", 'while (($#)); do if [[ "$1" == -o ]]; then output="$2"; fi; shift; done; printf "archive" >"$output"')
-    _write_command(commands, "sha256sum", "exit 0")
+    # Read stdin like the real sha256sum, so the step's `echo | sha256sum` cannot get SIGPIPE under pipefail.
+    _write_command(commands, "sha256sum", "cat >/dev/null; exit 0")
     _write_command(
         commands,
         "tar",

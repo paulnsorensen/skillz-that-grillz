@@ -10,17 +10,13 @@ from typing import Literal, cast
 import fromargs
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments._facts import audit_facts
-from skillz_experiments._scaffold import scaffold
-from skillz_experiments._schemas import SchemaName, render as render_schema
-from skillz_experiments._validate import validate as check_target
 from skillz_experiments.gate import (
     CHEAPER_SCENARIOS, POWER_EFFECTS, simulate as simulate_gate, simulate_cheaper, simulate_power,
 )
+from skillz_experiments._schemas import SchemaName, render as render_schema
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
-from skillz_experiments.run import Stop, export as export_run, run as run_workflow
 from skillz_experiments.harness import Configuration, Effort, configured_selection, doctor, stop_kind
 from skillz_experiments.wrapper import register as register_wrappers
 
@@ -42,12 +38,13 @@ class _Reported(BaseException):
 @contextmanager
 def _coded() -> Generator[None]:
     """Report a `CodedError` as JSON with its `code` on stderr. Then raise `_Reported`.
-
     A `Stop` also prints its question data on stdout, so the outer agent can read it.
     """
     try:
         yield
     except CodedError as error:
+        from skillz_experiments.run import Stop
+
         if isinstance(error, Stop):
             print(json.dumps(error.data))
         report: dict[str, object] = {"error": str(error), "exit_code": 1, "code": error.code}
@@ -70,7 +67,6 @@ def _completed(out: Path) -> bool:
 def _run_harness(model: str, target: Path, harness: RunHarness | None, harness_config: Path | None,
                  command: list[str] | None, out: Path) -> tuple[str, Configuration | None]:
     """Resolve the harness options of `run` before any work. Return the adapter name and the configuration, if any.
-
     `harness` is None when the user gives no `--harness`, so a conflict with `--harness-config` shows.
     A completed run in `out` needs no harness, so a configuration that no longer loads does not stop its summary.
     """
@@ -155,8 +151,9 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
              "min_coverage": min_coverage, "max_quality_loss": max_quality_loss}
     statistics = {name: value for name, value in flags.items() if value is not None}
     with _coded():
+        from skillz_experiments.run import run
         adapter, configuration = _run_harness(model, target, harness, harness_config, command, out)
-        return run_workflow(target, out, model, adapter=adapter, configuration=configuration, live=live, edit=edit,
+        return run(target, out, model, adapter=cast(RunHarness, adapter), configuration=configuration, live=live, edit=edit,
                             repeats=repeats, seed=seed,
                             approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
                             sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read],
@@ -177,6 +174,7 @@ def doctor_command(*, harness: Harness = "claude") -> dict[str, object]:
 @app.command(name="export")
 def export_command(run: Path, *, out: Path) -> dict[str, object]:
     """Write the winner as a private local patch and a redacted report, without installation."""
+    from skillz_experiments.run import export as export_run
     with _coded():
         return export_run(run, out)
 
@@ -184,12 +182,14 @@ def export_command(run: Path, *, out: Path) -> dict[str, object]:
 @app.command(name="audit-facts")
 def audit_facts_command(directory: Path) -> dict[str, object]:
     """Report fixed rubric checks for a skill directory as facts, without grading it."""
+    from skillz_experiments._facts import audit_facts
     return audit_facts(directory)
 
 
 @app.command(name="scaffold")
 def scaffold_command(*, target: Path) -> dict[str, object]:
     """Write a draft journey contract to `<target>/evals/autoimprove.json`. It makes no model call and never replaces a contract."""
+    from skillz_experiments._scaffold import scaffold
     with _coded():
         return scaffold(target)
 
@@ -210,6 +210,8 @@ def validate_command(*, target: Path, draft: Path | None = None, seed: int | Non
     kind
         Contract kind to score. Repeat for more. Same rule as `run --kind`.
     """
+    from skillz_experiments._validate import validate as check_target
+
     report = check_target(target, draft, seed, kind or ())
     if not report["ok"]:
         print(json.dumps(report))
@@ -259,13 +261,11 @@ def _simulation_figure(metric: Metric) -> int | float:
             return simulate_cheaper(loss, margin, fixed=fixed).rate
     return cast(int | float, getattr(simulate_gate(), metric))
 
-
 @app.command(name="self-test")
 def self_test(*, model: str | None = None, preflight_only: bool = False, simulate: bool = False,
               metric: Metric | None = None, harness_config: Path | None = None, max_invocations: int = 20,
               max_seconds: float = 1200) -> dict[str, object] | int | float:
     """Check the harness without a run (--preflight-only) or print the gate's false-promotion rates and power (--simulate).
-
     With --simulate, --metric NAME prints only that number, so `ratchet.py measure` can read it.
     With --preflight-only and no --harness-config, every role runs on Claude Code, as `run` does.
     """

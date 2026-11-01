@@ -290,7 +290,7 @@ def scored_kinds(contract: Contract, requested: Sequence[str] = ()) -> tuple[str
 
 
 def plan_estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object]:
-    """Return the estimate that `run.json` records. `_prepare` writes it and `_verify_budget` rebuilds it."""
+    """Return the `run.json` estimate that `verify_budget` checks. `_prepare` adds the unchecked `reflection` block."""
     journey = ({"journey": {"calls": plan.sized.calls, "seconds": plan.sized.seconds,
                             "ceiling_calls": JOURNEY_CALLS, "ceiling_seconds": JOURNEY_SECONDS}}
                if plan.sized.journey else {})

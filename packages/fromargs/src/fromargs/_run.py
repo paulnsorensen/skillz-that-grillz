@@ -2,15 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import inspect
 import json
-import os
 import stat
 import sys
-import tempfile
-import traceback
 from collections.abc import Callable, Coroutine, Sequence
 from contextlib import nullcontext, redirect_stdout
 from inspect import BoundArguments
@@ -161,6 +156,8 @@ def _await(apps: tuple[App, ...], coroutine: Coroutine[object, object, object]) 
     if backend != "asyncio":
         coroutine.close()
         raise _AsyncContractError(f"async commands need the asyncio backend, not {backend!r}")
+    import asyncio
+
     try:
         _ = asyncio.get_running_loop()
     except RuntimeError:
@@ -206,6 +203,9 @@ def _report_system_exit(exc: SystemExit) -> int:
 
 def _traceback_dir() -> str:
     """Create and return this user's private traceback directory under the temp root."""
+    import os
+    import tempfile
+
     uid = os.getuid() if hasattr(os, "getuid") else None
     # Without getuid (Windows), the temp root is already per-user.
     name = "fromargs" if uid is None else f"fromargs-{uid}"
@@ -222,6 +222,9 @@ def _traceback_dir() -> str:
 
 def _prune_tracebacks(directory: str, keep_path: str) -> None:
     """Delete all but the newest ``_KEEP_TRACEBACKS`` traceback files; never ``keep_path``."""
+    import contextlib
+    import os
+
     with contextlib.suppress(OSError):
         dated: list[tuple[int, str]] = []
         with os.scandir(directory) as entries:
@@ -244,6 +247,11 @@ def _report_unexpected(exc: Exception) -> int:
     while creating or writing that file omits the ``traceback`` key instead
     of escaping the ADR-001 envelope.
     """
+    import contextlib
+    import os
+    import tempfile
+    import traceback
+
     envelope: dict[str, object] = {"error": f"{type(exc).__name__}: {exc}", "exit_code": 1}
     try:
         directory = _traceback_dir()

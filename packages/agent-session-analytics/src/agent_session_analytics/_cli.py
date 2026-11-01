@@ -7,8 +7,6 @@ from importlib import resources
 import fromargs
 
 from agent_session_analytics._db import DB_PATH, DatabaseError
-from agent_session_analytics._ingest import ingest as run_ingest
-from agent_session_analytics._query import run_query
 
 app = fromargs.App(
     "agent-session-analytics",
@@ -25,6 +23,8 @@ def _cli_error(error: DatabaseError) -> fromargs.CliError:
 @app.command
 def ingest(*, force: bool = False) -> dict[str, object]:
     """Build or refresh the session database. A database under one hour old keeps its data."""
+    from agent_session_analytics._ingest import ingest as run_ingest
+
     try:
         return run_ingest(force=force)
     except DatabaseError as error:
@@ -40,6 +40,8 @@ def db_path() -> dict[str, str]:
 @app.command
 def sql(query: str) -> list[dict[str, object]]:
     """Run one read-only query and return its rows. The default database ingests itself when stale."""
+    from agent_session_analytics._query import run_query
+
     try:
         return run_query(query)
     except DatabaseError as error:

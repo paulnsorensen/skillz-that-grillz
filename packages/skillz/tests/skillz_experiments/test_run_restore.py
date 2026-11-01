@@ -575,7 +575,7 @@ def test_the_cli_reports_budget_exhaustion_with_its_code(
     def exhausted(*_arguments: object, **_options: object) -> dict[str, object]:
         raise BudgetExhausted("global deadline exhausted")
 
-    monkeypatch.setattr("skillz_experiments._cli.run_workflow", exhausted)
+    monkeypatch.setattr("skillz_experiments.run.run", exhausted)
     assert main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "run"), "--model", MODEL]) == 1
     error = cast(dict[str, object], json.loads(capsys.readouterr().err))
     assert error["code"] == "budget-exhausted" and error["error"] == "global deadline exhausted"
@@ -908,7 +908,7 @@ def test_the_cli_passes_each_repeated_sandbox_read_to_run(
         seen.update(options)
         return {}
 
-    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    monkeypatch.setattr("skillz_experiments.run.run", fake)
     assert main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "run"), "--model", MODEL,
                  "--sandbox-read", "/opt/a", "--sandbox-read", "/opt/b", "--effort", "high", "--sandbox-seconds", "90"]) == 0
     assert (seen["sandbox_read"], seen["effort"], seen["sandbox_seconds"]) == (["/opt/a", "/opt/b"], "high", 90)

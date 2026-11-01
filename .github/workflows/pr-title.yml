@@ -1,0 +1,38 @@
+name: pr title
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review, converted_to_draft]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-title:
+    name: conventional commits pr title
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Classify Mergify queue draft
+        id: queue
+        run: |
+          set -euo pipefail
+          queue_draft=$(jq -r --arg repo "$GITHUB_REPOSITORY" '
+            if .pull_request.draft == true
+              and .pull_request.user.login == "mergify[bot]"
+              and .pull_request.user.type == "Bot"
+              and .pull_request.head.repo.full_name == $repo
+              and ((.pull_request.head.ref // "") | startswith("mergify/merge-queue/"))
+            then "true" else "false" end
+          ' "$GITHUB_EVENT_PATH")
+          printf 'queue_draft=%s\n' "$queue_draft" >> "$GITHUB_OUTPUT"
+      - name: Validate PR title
+        if: steps.queue.outputs.queue_draft != 'true'
+        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
