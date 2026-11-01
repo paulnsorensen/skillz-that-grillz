@@ -9,7 +9,13 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments._budget import APPROVED_SECONDS, JOURNEY_SECONDS, MAX_CONCURRENT_CALLS, SECONDS_PER_CALL, Estimate
+from skillz_experiments._budget import (
+    APPROVED_SECONDS,
+    ESTIMATE_SECONDS_PER_CALL,
+    JOURNEY_SECONDS,
+    MAX_CONCURRENT_CALLS,
+    Estimate,
+)
 from skillz_experiments._candidate import TEXT_FILE_LIMIT, Candidate
 from skillz_experiments._records import read
 from skillz_experiments.run import Stop, run
@@ -68,7 +74,7 @@ def _estimate(stop: Stop) -> dict[str, object]:
 @pytest.mark.ac("gh-571:AC-1")
 def test_the_reflection_block_charges_each_reflection_call_by_the_editable_size() -> None:
     block, _ = reflection_time(4, 2001, Estimate(100, 1000))
-    assert block == {"calls": 4, "editable_chars": 2001, "seconds": 4 * (60 + 11)}
+    assert block == {"calls": 4, "editable_chars": 2001, "seconds": 4 * (ESTIMATE_SECONDS_PER_CALL + 11)}
 
 
 @pytest.mark.ac("gh-571:AC-1")
@@ -82,21 +88,21 @@ def test_the_budget_question_and_the_run_record_hold_the_reflection_block(
     calls = cast(int, estimate["reflection_calls"])
     assert chars > HUGE_CHARS
     assert estimate["reflection"] == {"calls": calls, "editable_chars": chars,
-                                      "seconds": calls * (60 + math.ceil(chars / 200))}
+                                      "seconds": calls * (ESTIMATE_SECONDS_PER_CALL + math.ceil(chars / 200))}
     assert _estimate(stop)["reflection"] == estimate["reflection"]
 
 
 @pytest.mark.ac("gh-571:AC-2")
 @pytest.mark.ac("gh-571:AC-3")
 def test_the_warning_starts_when_the_projected_seconds_pass_the_cap() -> None:
-    # 4 calls of 70 seconds replace a flat share of ceil(4 * 60 / 2) = 120 seconds: the projection adds 160 seconds.
-    assert reflection_time(4, 2000, Estimate(100, APPROVED_SECONDS - 160))[1] is None
-    warning = cast(str, reflection_time(4, 2000, Estimate(100, APPROVED_SECONDS - 159), advice="do this")[1])
-    assert f"about {4 * 70} seconds" in warning and f"about {APPROVED_SECONDS + 1} of its {APPROVED_SECONDS}" in warning
+    # 4 calls of 40 seconds replace a flat share of ceil(4 * 30 / 2) = 60 seconds: the projection adds 100 seconds.
+    assert reflection_time(4, 2000, Estimate(100, APPROVED_SECONDS - 100))[1] is None
+    warning = cast(str, reflection_time(4, 2000, Estimate(100, APPROVED_SECONDS - 99), advice="do this")[1])
+    assert f"about {4 * 40} seconds" in warning and f"about {APPROVED_SECONDS + 1} of its {APPROVED_SECONDS}" in warning
     assert warning.endswith("before it spends its calls; do this")
     assert cast(str, reflection_time(4, 2000, Estimate(100, APPROVED_SECONDS))[1]).endswith("before it spends its calls")
-    assert reflection_time(4, 2000, Estimate(100, APPROVED_SECONDS - 159, journey=True))[1] is None
-    assert reflection_time(4, 2000, Estimate(100, JOURNEY_SECONDS - 159, journey=True))[1] is not None
+    assert reflection_time(4, 2000, Estimate(100, APPROVED_SECONDS - 99, journey=True))[1] is None
+    assert reflection_time(4, 2000, Estimate(100, JOURNEY_SECONDS - 99, journey=True))[1] is not None
 
 
 @pytest.mark.ac("gh-571:AC-2")
@@ -129,8 +135,8 @@ def test_the_editable_size_changes_no_call_count_second_count_or_budget(
     assert "reflection_time_warning" in huge.data
     totals = [{key: value for key, value in _estimate(stop).items() if key != "reflection"} for stop in (small, huge)]
     assert totals[0] == totals[1]
-    # The seconds stay the flat estimate: every call at SECONDS_PER_CALL over the concurrency, plus the sandbox time.
-    flat = math.ceil(cast(int, totals[1]["calls"]) * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)
+    # The seconds stay the flat estimate: every call at ESTIMATE_SECONDS_PER_CALL over the concurrency, plus the sandbox time.
+    flat = math.ceil(cast(int, totals[1]["calls"]) * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)
     assert totals[1]["seconds"] == flat + cast(int, totals[1].get("sandbox_seconds", 0))
     budgets = [_approve(root, out, stop, hashed)["budget"] for root, out, stop, hashed in (
         (small_target, tmp_path / "small-run", small, small_hash),
@@ -152,7 +158,7 @@ def test_a_run_recorded_without_the_reflection_block_still_resumes(
 
 
 @pytest.mark.ac("gh-571:AC-1")
-@pytest.mark.parametrize(("chars", "per_call"), [(0, 60), (1, 61), (199, 61), (200, 61), (201, 62), (400, 62), (401, 63)])
+@pytest.mark.parametrize(("chars", "per_call"), [(0, 30), (1, 31), (199, 31), (200, 31), (201, 32), (400, 32), (401, 33)])
 def test_the_reflection_seconds_round_each_call_up_to_a_whole_second_per_200_characters(chars: int, per_call: int) -> None:
     block, _ = reflection_time(3, chars, Estimate(100, 1000))
     assert block["seconds"] == 3 * per_call
@@ -168,7 +174,7 @@ def test_no_reflection_calls_add_no_time_and_no_warning() -> None:
 @pytest.mark.ac("gh-571:AC-2")
 @pytest.mark.parametrize(("offer_prose", "names_prose"), [(True, True), (False, False)])
 def test_a_time_warning_without_the_size_warning_gives_the_advice(offer_prose: bool, names_prose: bool) -> None:
-    # 150000 characters stay under the size limit, but 10 calls of 810 seconds pass the cap.
+    # 150000 characters stay under the size limit, but 10 calls of 780 seconds pass the cap.
     notes = ReflectionNotes.size(Candidate({"SKILL.md": "x" * 150_000}, ("SKILL.md",)), "prose+cli", offer_prose=offer_prose)
     _ = notes.time(10, Estimate(100, APPROVED_SECONDS))
     assert set(notes.warnings) == {"reflection_time_warning"}
@@ -183,7 +189,7 @@ def test_reflection_notes_return_and_print_both_warnings_for_a_very_large_seed(
     notes = ReflectionNotes.size(seed, "prose+cli", offer_prose=True)
     assert set(notes.warnings) == {"reflection_warning"}
     block = notes.time(3, Estimate(100, APPROVED_SECONDS))
-    assert block == {"calls": 3, "editable_chars": 250_000, "seconds": 3 * (60 + 1250)}
+    assert block == {"calls": 3, "editable_chars": 250_000, "seconds": 3 * (ESTIMATE_SECONDS_PER_CALL + 1250)}
     assert set(notes.warnings) == {"reflection_warning", "reflection_time_warning"}
     err = capsys.readouterr().err
     assert all(f"warning: {text}" in err for text in notes.warnings.values())

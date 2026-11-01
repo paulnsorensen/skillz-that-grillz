@@ -218,6 +218,7 @@ def test_mold_gate_needs_both_calls_in_the_trace(tmp_path: Path, events: list[di
 
 # Journey budget
 
+@pytest.mark.ac("gh-571-calibrate:AC-4")
 def test_journey_budget_ceiling_stops_at_1000_calls_and_the_standard_cap_stays_200() -> None:
     assert (JOURNEY_CALLS, JOURNEY_SECONDS) == (1000, 28800)
     budget = Budget(JOURNEY_CALLS, JOURNEY_SECONDS, 0, approved=True, journey=True)
@@ -234,12 +235,14 @@ def test_journey_budget_ceiling_stops_at_1000_calls_and_the_standard_cap_stays_2
         _ = approve(Estimate(1001, 600, True), 5000, reserve=6)
     with pytest.raises(BudgetUnapproved, match="cap of 200 calls and 7200 seconds"):
         _ = approve(Estimate(201, 600), 5000, reserve=6)
+    # At the 30 second plan rate the call cap binds first: 1000 calls take ceil(1000 * 30 / 2) = 15000 seconds.
     largest = max(calls for calls in range(1, JOURNEY_CALLS + 1)
                   if estimate(search_calls=calls, journey=True).seconds <= JOURNEY_SECONDS)
-    assert largest == 960 < JOURNEY_CALLS
+    assert largest == JOURNEY_CALLS
     sized = estimate(search_calls=largest, journey=True)
+    assert sized.seconds == 15000 < JOURNEY_SECONDS
     assert approve(sized, largest, reserve=6).maximum == largest
-    with pytest.raises(BudgetUnapproved, match="the seconds cap binds first at about 960 calls"):
+    with pytest.raises(BudgetUnapproved, match=r"exceeds the cap of 1000 calls and 28800 seconds$"):
         _ = approve(estimate(search_calls=largest + 1, journey=True), 5000, reserve=6)
 
 
@@ -415,6 +418,7 @@ def _mixed_contract(tmp_path: Path) -> Contract:
     return load_contract(target)
 
 
+@pytest.mark.ac("gh-571-calibrate:AC-1")
 def test_a_mixed_task_and_journey_plan_sizes_the_search_from_the_mean_case_cost_not_the_journey_maximum(
         tmp_path: Path) -> None:
     contract = _mixed_contract(tmp_path)
@@ -433,9 +437,11 @@ def test_a_mixed_task_and_journey_plan_sizes_the_search_from_the_mean_case_cost_
     sandbox = command_seconds(contract, cases, ClaudeOptions())
     at_mean = plan_run(6, 6, 6, mean, 1, sandbox, journey=True, holdout_costs=holdout, headroom_costs=[task_cost] * 6)
     assert plan == at_mean and 1 < mean < journey_cost
-    # At the journey maximum, the two runs of each validation case leave no search room at all.
-    with pytest.raises(Stop, match="too few calls are left for a search"):
-        _ = plan_run(6, 6, 6, journey_cost, 1, sandbox, journey=True)
+    # At the journey maximum, the plan spends the whole call cap on the gates and leaves a smaller search than the mean.
+    # At the 30 second plan rate the call cap binds first, so the plan no longer stops for want of search room (gh-571).
+    at_maximum = plan_run(6, 6, 6, journey_cost, 1, sandbox, journey=True)
+    assert at_maximum.sized.calls == JOURNEY_CALLS
+    assert at_maximum.metric_calls < at_mean.metric_calls
 
 
 def test_at_three_repeats_the_mean_cost_plan_fits_while_the_journey_maximum_plan_has_too_few_calls(
@@ -464,13 +470,14 @@ def test_the_mixed_holdout_reserve_covers_one_failed_attempt_of_the_costliest_ca
     assert plan.holdout_calls - gate_pass >= 2 * HOLDOUT_RETRIES_PER_ARM * journey_cost
 
 
-def test_the_plan_stops_name_the_seconds_cap_only_for_a_journey_run(tmp_path: Path) -> None:
+@pytest.mark.ac("gh-571-calibrate:AC-4")
+def test_the_plan_stops_do_not_name_the_seconds_cap_when_the_call_cap_binds_first(tmp_path: Path) -> None:
     contract = _mixed_contract(tmp_path)
-    note = "the seconds cap binds first at about 960 calls"
     journeys = [_mixed_case(split, f"{split}-{n}", journey=True) for split in ("train", "validation", "holdout") for n in range(6)]
     tasks = [_mixed_case(split, f"{split}-{n}", journey=False) for split in ("train", "validation", "holdout") for n in range(6)]
-    with pytest.raises(Stop, match=note):
+    with pytest.raises(Stop, match="the cap is 1000") as journey:
         _ = size_plan(contract, journeys, 1000, ClaudeOptions())
+    assert "seconds cap binds" not in str(journey.value)
     with pytest.raises(Stop) as plain:
         _ = size_plan(contract, tasks, 1000, ClaudeOptions())
     assert "seconds cap binds" not in str(plain.value)
