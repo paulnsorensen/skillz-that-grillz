@@ -144,3 +144,17 @@
 
 
 - 2026-11-01 · 2be641dad972fa40 · merged · criteria/gh-580.md · Select fixture values before encoding all manifest sections. Preserve bindings and limits. Exact and natural retrieval probes pass at ranks 1, 1, and 1.
+
+- 2026-11-01 · 3f16f60f2f5659dd · merged · decisions/wedge-skill-packaging.md · Supersede Shiv extraction with direct ZIP execution and exact compiler pins. Preserve lazy imports and record the approved 24 MiB per-file guard with 64 MiB total unchanged. Frozen retrieval probes pass at ranks 1, 2, and 2.
+
+
+- 2026-11-01 · 69e8cf0dbc9f2d84 · merged · decisions/wedge-skill-packaging.md · Record verified source snapshots, stock fallback ordering, absolute archive paths, metadata priority, preserved startup restrictions, and encoding-aware cached traceback reads. Frozen retrieval probes pass at ranks 1, 2, and 2.
+
+
+- 2026-11-01 · de53e8ef8445476e · merged · decisions/wedge-skill-packaging.md · Record isolated managed selection, uv 0.13.6 producer pins, and vendored Wedge/fromargs without the obsolete dependency group. Frozen retrieval probes pass at ranks 1, 1, 2, and 1.
+
+
+- 2026-11-01 · cbf864e1976303ca · merged · decisions/wedge-skill-packaging.md · Record Python 3.11/3.12 default traceback formatting and explicit offline compiler roots. Five frozen retrieval probes pass.
+
+
+- 2026-11-01 · 94d1d3fbd5485a92 · merged · decisions/wedge-skill-packaging.md · Record bundled .pth and .egg-info initialization, literal keyword imports, private writable compilation copies, verified interpreter candidates, and format-10 invalidation. Frozen probes return the page at ranks 1, 2, and 3. Index reconciliation remains pending.
