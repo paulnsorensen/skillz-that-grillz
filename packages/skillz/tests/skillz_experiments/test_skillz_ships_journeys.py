@@ -115,12 +115,17 @@ def _stop_errors(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str
                "--kind", "journey"]
     _ = main(command)
     first = capsys.readouterr()
-    error = cast(dict[str, object], json.loads(first.err))
+    error = _coded(first.err)
     if error["code"] != "cases-unapproved":
         return error, error
     shown = cast(dict[str, object], json.loads(first.out))["case_hash"]
     _ = main([*command, "--approve-cases", str(shown)])
-    return error, cast(dict[str, object], json.loads(capsys.readouterr().err))
+    return error, _coded(capsys.readouterr().err)
+
+
+def _coded(err: str) -> dict[str, object]:
+    """Return the coded error: the JSON on the last non-empty stderr line, after any warning lines."""
+    return cast(dict[str, object], json.loads(err.strip().splitlines()[-1]))
 
 
 def _stops(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], edit: str) -> tuple[str, str]:
