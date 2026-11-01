@@ -18,7 +18,6 @@ from typing import TYPE_CHECKING, Literal, TextIO, TypedDict, TypeVar, Unpack, o
 import cyclopts
 
 from fromargs._argv import GLOBAL_FLAGS
-from fromargs._run import run as _run
 
 if TYPE_CHECKING:
     from cyclopts.help.protocols import HelpFormatter
@@ -256,7 +255,9 @@ class App:
 
     def run(self, argv: Sequence[str] | None = None, *, stdout: TextIO | None = None) -> int:
         """Parse argv once, invoke one handler, and return its exit status."""
-        return _run(self._cyclopts, argv=argv, stdout=stdout, limits=self._limits)
+        from fromargs._run import run
+
+        return run(self._cyclopts, argv=argv, stdout=stdout, limits=self._limits)
 
     def main(self) -> None:
         """Run with ``sys.argv`` and exit the process with the returned status."""

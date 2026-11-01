@@ -2,14 +2,9 @@
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import inspect
 import json
-import os
 import sys
-import tempfile
-import traceback
 from collections.abc import Callable, Coroutine, Sequence
 from contextlib import nullcontext, redirect_stdout
 from inspect import BoundArguments
@@ -157,6 +152,8 @@ def _await(apps: tuple[App, ...], coroutine: Coroutine[object, object, object]) 
     if backend != "asyncio":
         coroutine.close()
         raise _AsyncContractError(f"async commands need the asyncio backend, not {backend!r}")
+    import asyncio
+
     try:
         _ = asyncio.get_running_loop()
     except RuntimeError:
@@ -207,6 +204,11 @@ def _report_unexpected(exc: Exception) -> int:
     successfully. An ``OSError`` while creating or writing that file omits
     the ``traceback`` key instead of escaping the ADR-001 envelope.
     """
+    import contextlib
+    import os
+    import tempfile
+    import traceback
+
     envelope: dict[str, object] = {"error": f"{type(exc).__name__}: {exc}", "exit_code": 1}
     try:
         descriptor, path = tempfile.mkstemp(prefix="fromargs-", suffix=".traceback")

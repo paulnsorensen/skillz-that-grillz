@@ -18,7 +18,6 @@ from skillz_experiments.gate import (
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
-from skillz_experiments.run import Stop, export as export_run, run as run_workflow
 from skillz_experiments.harness import Configuration, Effort, configured_selection, doctor, stop_kind
 from skillz_experiments.wrapper import register as register_wrappers
 
@@ -30,6 +29,25 @@ Metric = Literal[
     "power_effect_10", "power_effect_20", "power_effect_30",
     "cheaper_loss_5_margin_0", "cheaper_loss_5_margin_2", "cheaper_loss_5_margin_5", "cheaper_loss_0_margin_5"]
 REMOVED_COMMANDS = frozenset({"dataset", "baseline", "search", "evaluate"})
+
+
+def run_workflow(
+    target: Path, out: Path, model: str, *, adapter: str,
+    configuration: Configuration | None, live: bool, edit: Edit | None,
+    repeats: int | None, seed: int | None, approve_cases: str | None,
+    approve_budget: int | None, effort: Effort | None,
+    sandbox_read: list[str] | None, sandbox_seconds: int | None,
+    statistics: dict[str, float] | None, judge_model: str | None,
+    history: bool | None,
+) -> dict[str, object]:
+    from skillz_experiments.run import run
+
+    return run(target, out, model, adapter=cast(RunHarness, adapter), configuration=configuration,
+               live=live, edit=edit, repeats=repeats, seed=seed,
+               approve_cases=approve_cases, approve_budget=approve_budget,
+               effort=effort, sandbox_read=sandbox_read,
+               sandbox_seconds=sandbox_seconds, statistics=statistics,
+               judge_model=judge_model, history=history)
 
 
 class _Reported(BaseException):
@@ -45,6 +63,8 @@ def _coded() -> Generator[None]:
     try:
         yield
     except CodedError as error:
+        from skillz_experiments.run import Stop
+
         if isinstance(error, Stop):
             print(json.dumps(error.data))
         print(json.dumps({"error": str(error), "exit_code": 1, "code": error.code}), file=sys.stderr)
@@ -167,6 +187,8 @@ def doctor_command(*, harness: Harness = "claude") -> dict[str, object]:
 @app.command(name="export")
 def export_command(run: Path, *, out: Path) -> dict[str, object]:
     """Write the winner as a private local patch and a redacted report, without installation."""
+    from skillz_experiments.run import export as export_run
+
     with _coded():
         return export_run(run, out)
 
