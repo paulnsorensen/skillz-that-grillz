@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Iterator
+from importlib.resources import files
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import cast, get_args
 
@@ -27,23 +30,34 @@ CLOCK_TOLERANCE = 5.0
 SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "_graders.py", "_audit.py", "_contract.py")
 
 
+def _source_files(root: Traversable, prefix: str = "") -> Iterator[tuple[str, str]]:
+    for entry in sorted(root.iterdir(), key=lambda item: item.name):
+        name = f"{prefix}{entry.name}"
+        if entry.is_dir():
+            yield from _source_files(entry, f"{name}/")
+        elif name.endswith(".py"):
+            yield name, entry.read_text()
+
+
 def engine_hash() -> str:
-    package = Path(__file__).parent.parent
-    return digest({path.relative_to(package).as_posix(): path.read_text() for path in package.rglob("*.py")})
+    checkout = Path(__file__).parent.parent
+    package = checkout if checkout.is_dir() else files("skillz_experiments")
+    return digest(dict(_source_files(package)))
 
 
-def leakage_digest(package: Path) -> str:
+def leakage_digest(package: Traversable) -> str:
     """Digest the source of the leakage check. A rule change decides which proposals get scored, so it starts a new cohort."""
-    return digest({"search/_leakage.py": (package / "search" / "_leakage.py").read_text()})
+    return digest({"search/_leakage.py": package.joinpath("search", "_leakage.py").read_text(encoding="utf-8")})
 
 
-def scoring_digest(package: Path) -> str:
+def scoring_digest(package: Traversable) -> str:
     """Digest the source of the scoring modules under `package`: every file in `gate/`, then `SCORING_FILES`.
 
     A scoring change gives a new digest. An edit to `search/`, `run/`, or `harness/` keeps it.
     """
-    paths = [*sorted((package / "gate").rglob("*.py")), *(package / name for name in SCORING_FILES)]
-    return digest({path.relative_to(package).as_posix(): path.read_text() for path in paths})
+    sources = dict(_source_files(package.joinpath("gate"), "gate/"))
+    sources.update({name: package.joinpath(name).read_text(encoding="utf-8") for name in SCORING_FILES})
+    return digest(sources)
 
 
 def judge_kind(contract: Contract) -> GraderKind:
@@ -121,8 +135,8 @@ def freeze_compatibility(record: dict[str, object], cases: list[Case], contract:
         "edit": text_field(record, "edit"),
         "repeats": field(record, "repeats"), "statistics": field(record, "statistics"),
         "validation_policy": field(record, "validation_policy"),
-        "split_digest": digest(splits), "scoring_digest": scoring_digest(Path(__file__).parent.parent),
-        "leakage_digest": leakage_digest(Path(__file__).parent.parent)}
+        "split_digest": digest(splits), "scoring_digest": scoring_digest(files("skillz_experiments")),
+        "leakage_digest": leakage_digest(files("skillz_experiments"))}
     record["compatibility"] = {"fingerprint": digest(fields), "fields": fields}
 
 
