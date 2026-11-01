@@ -282,11 +282,14 @@ Lower `--repeats` or the number of holdout cases in the draft, then run again.
 Read the `facts` from the `cases-missing` stop, then the skill files that it lists.
 Before the case draft, write one representative example. State the request, the expected target behavior, and the observable checks that refute it.
 Show the example to the user with the case approval question.
-Write `RUN/cases.draft.json`. It holds a nonempty list of cases.
+Write `RUN/cases.draft.json`. It holds a nonempty list of cases, or an object with a `fixtures` map and a nonempty `cases` list.
 Give each judged case its criteria. Follow the criteria drafting reference that `SKILL.md` lists.
 
 When `<skill>/evals/evals.json` or `<skill>/evals/journeys.json` exists, the runner writes the seed cases to `RUN/cases.seed.json` (mode 0600). The stop names that file in `seed_file` and shows counts in `seed_summary`. Start the draft from the file.
-The seed file holds a list of cases, one for each entry, in file order. The runner maps them and does not write the draft. To accept the seed unchanged, copy the file to `RUN/cases.draft.json`.
+The seed file is an object. Its `cases` list holds one case for each entry, in file order. The runner maps them and does not write the draft. To accept the seed unchanged, copy the file to `RUN/cases.draft.json`.
+The seed keeps each fixture text once in its `fixtures` map. A seed case lists its fixture paths in `files`, so many cases can share one large fixture.
+When another path has different text, `files` uses a map: strings hold inline text, and `null` references that path in `fixtures`.
+The draft and frozen cases accept this mixed map, complete path lists, and complete inline maps.
 Each seed case has `source: skill`, the entry `name` as `id` (`eval-<id>` when the entry has no `name`), and the `prompt` as `request`.
 An explicit `kind` of `trigger`, `near-miss`, or `task` wins. A contradiction stops the seed: `expected_skill: null` with a kind other than `near-miss`, `assertions` on a trigger or near-miss, or a task with no `expected_output` and no `assertions`.
 When an entry has no `kind`, the reader infers it. `expected_skill: null` is `near-miss`. Nonempty `assertions` is `task`. A string `expected_skill` with no assertions is ambiguous and stops the seed: set `kind`. Any other entry is a `task` graded on `expected_output`.

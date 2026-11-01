@@ -1,8 +1,9 @@
 """Seed the case draft from the skill's own `evals/evals.json` and `evals/journeys.json`.
 
 The runner never writes the draft. It maps each eval entry and each journey case to a seed case and writes
-the map to `RUN/cases.seed.json`. The `cases-missing` stop names that file and shows only counts, because the
-fixtures can be large. The coverage check stops the run when the draft drops or changes an entry.
+the map to `RUN/cases.seed.json`, with each fixture text once under `fixtures`. The `cases-missing` stop names
+that file and shows only counts, because the fixtures can be large. The coverage check stops the run when the
+draft drops or changes an entry.
 To drop an entry, remove it from its file.
 """
 from __future__ import annotations
@@ -15,6 +16,7 @@ from pathlib import Path
 from skillz_experiments._cases import CodedError, loads_untrusted, read_text, relative, text_map
 from skillz_experiments._evals_format import EvalEntry, parse_evals, parse_journeys
 from skillz_experiments._intake import DRAFT_LIMIT, PENDING_KINDS, DraftCase, projection
+from skillz_experiments._records import share_files
 
 EVALS = "evals/evals.json"
 JOURNEYS = "evals/journeys.json"
@@ -85,12 +87,18 @@ def check_unique(identifiers: Sequence[object]) -> None:
         seen.add(identifier)
 
 
+def seed_document(cases: Sequence[Mapping[str, object]]) -> dict[str, object]:
+    """Return the seed file: the cases, which list fixture paths, and each fixture text once under `fixtures`."""
+    fixtures: dict[str, str] = {}
+    return {"cases": share_files(cases, fixtures), "fixtures": fixtures}
+
+
 def seed_cases(target: Path) -> list[dict[str, object]] | None:
     """Return one seed case per eval entry, then one per journey, or None when the skill has neither file.
 
     A task case also holds its fixtures and reference. Raise `CodedError` `evals-unreadable` when a
     file or a fixture it lists is unsafe or malformed, when an id repeats across the files, or when the
-    seed passes `SEED_LIMIT` bytes of JSON.
+    `seed_document` passes `SEED_LIMIT` bytes of JSON. A fixture that many cases list counts once.
     """
     entries = _entries(target)
     journeys = _journeys(target)
@@ -98,7 +106,6 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
         return None
     cases: list[dict[str, object]] = []
     cache: dict[str, str] = {}
-    total = 0
     for header in entries or []:
         case = _case(header)
         if header.kind == "task":
@@ -110,11 +117,10 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
         cases.append(case)
     cases.extend(journeys or [])
     check_unique([case["id"] for case in cases])
-    for case in cases:
-        total += len(json.dumps(case))
-        if total > SEED_LIMIT:
-            raise CodedError("evals-unreadable", f"{EVALS} and {JOURNEYS} cannot seed the cases: the seed is too large; it passes "
-                             + f"{SEED_LIMIT} bytes at entry {case['id']}")
+    size = len((json.dumps(seed_document(cases), sort_keys=True, indent=2) + "\n").encode("utf-8"))
+    if size > SEED_LIMIT:
+        raise CodedError("evals-unreadable", f"{EVALS} and {JOURNEYS} cannot seed the cases: the seed is too large; it passes "
+                         + f"{SEED_LIMIT} bytes")
     return cases
 
 

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import tempfile
-from collections.abc import Callable
+from collections import Counter, defaultdict
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -41,9 +43,48 @@ def write_bytes(path: Path, data: bytes, *, mode: int = 0o600, guard: Callable[[
     return True
 
 
+def approval_digest(value: object) -> str:
+    """Hash canonical approval JSON without collecting repeated fixture text."""
+    result = hashlib.sha256()
+    for chunk in json.JSONEncoder(sort_keys=True).iterencode(value):
+        result.update(chunk.encode())
+    return result.hexdigest()
+
+
 def write(path: Path, value: object) -> None:
     _ = write_bytes(path, (json.dumps(value, sort_keys=True, indent=2) + "\n").encode("utf-8"))
 
+
+def write_cases(path: Path, value: object) -> None:
+    """Write a frozen case manifest only when the complete JSON fits the loader bound."""
+    data = (json.dumps(value, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if len(data) > 2_000_000:
+        raise CodedError("cases-too-large", "the frozen cases exceed 2000000 bytes; reduce the draft and ask for approval again")
+    _ = write_bytes(path, data)
+
+
+def share_files(cases: Sequence[Mapping[str, object]], fixtures: dict[str, str]) -> list[dict[str, object]]:
+    """Select fixture values by saved JSON bytes before encoding references (gh-580)."""
+    candidates: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    for case in cases:
+        files = case.get("files")
+        if isinstance(files, dict):
+            for path, text in cast(dict[str, str], files).items():
+                candidates[path][text] += 1
+    for path, counts in candidates.items():
+        # Each fixture adds one string; each reference replaces an inline string with null.
+        selected = max(counts, key=lambda text: ((counts[text] - 1) * len(json.dumps(text)) - 4 * counts[text], text))
+        _ = fixtures.setdefault(path, selected)
+    shared: list[dict[str, object]] = []
+    for case in cases:
+        files = case.get("files")
+        if isinstance(files, dict):
+            references: dict[str, str | None] = {}
+            for path, text in cast(dict[str, str], files).items():
+                references[path] = None if fixtures.setdefault(path, text) == text else text
+            case = {**case, "files": list(references) if all(text is None for text in references.values()) else references}
+        shared.append(dict(case))
+    return shared
 
 def read(path: Path) -> dict[str, object]:
     if path.is_symlink() or path.stat().st_size > 10_000_000:

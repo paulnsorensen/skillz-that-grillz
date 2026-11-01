@@ -13,6 +13,7 @@ from skillz_experiments._cases import CodedError
 from skillz_experiments._intake import DRAFT_NAME, load_draft
 from skillz_experiments._seed import seed_cases, seed_inferred, seed_summary
 from skillz_experiments.run import Stop, run
+from seed_reader import read_seed
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -38,7 +39,7 @@ def _stop(target: Path, tmp_path: Path) -> Stop:
 def _seed_cases(target: Path, tmp_path: Path) -> list[dict[str, object]]:
     stop = _stop(target, tmp_path)
     assert stop.code == "cases-missing"
-    return cast(list[dict[str, object]], json.loads(Path(cast(str, stop.data["seed_file"])).read_text(encoding="utf-8")))
+    return read_seed(Path(cast(str, stop.data["seed_file"])))
 
 
 def _unreadable(target: Path, tmp_path: Path) -> CodedError:
@@ -120,7 +121,7 @@ def test_the_stop_names_the_seed_file_and_shows_only_counts(tmp_path: Path, make
     seed = tmp_path / "run/cases.seed.json"
     assert stop.data["seed_file"] == str(seed) and str(seed) in str(stop)
     assert stat.S_IMODE(seed.stat().st_mode) == 0o600
-    assert json.loads(seed.read_text(encoding="utf-8")) == seed_cases(target)
+    assert read_seed(seed) == seed_cases(target) and seed.read_text(encoding="utf-8").count("fixture-body-") == 1
     assert stop.data["seed_summary"] == {"cases": 4, "journeys": 0, "kinds": {"near-miss": 1, "task": 2, "trigger": 1},
                                          "families": {"billing": 2, "miss": 1, "trig": 1},
                                          "inferred": {"one": "task", "two": "task", "miss": "near-miss"},
