@@ -31,8 +31,44 @@ DARWIN_FIX = ("run on macOS with `sandbox-exec` and the Command Line Tools insta
               "no Linux package is needed")
 
 
-USERNS_FIX = ("allow unprivileged user namespaces with `sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`, "
-              "or add an AppArmor profile for bwrap")
+USERNS_FIX = ("allow unprivileged user namespaces for bwrap; check `/proc/sys/user/max_user_namespaces` and any "
+              "distribution setting such as `kernel.unprivileged_userns_clone`")
+NESTED_FIX = ("the runner likely runs inside another sandbox (such as Claude Code's sandboxed Bash) that blocks new user "
+              "namespaces; start the runner from a normal shell, or add a `sandbox.excludedCommands` entry for the runner "
+              "command; if a normal shell fails too, raise `user.max_user_namespaces` above 0")
+APPARMOR_FIX = ("add an AppArmor profile for `/usr/bin/bwrap` with a `userns,` rule (for example `/etc/apparmor.d/bwrap` "
+                "with `profile bwrap /usr/bin/bwrap flags=(unconfined) { userns, }`), then run "
+                "`sudo systemctl reload apparmor`; or allow user namespaces for every program with "
+                "`sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0`")
+
+
+PROC = Path("/proc")
+"""Root of the proc file system that `userns_fix` reads. Tests point it at fake contents."""
+
+
+# `/proc/self/uid_map` holds this one row only in the initial user namespace (user_namespaces(7)).
+_INITIAL_UID_MAP = ["0", "0", "4294967295"]
+
+
+def _proc_text(relative: str) -> str | None:
+    try:
+        return (PROC / relative).read_text().strip()
+    except OSError:
+        return None
+
+
+def userns_fix() -> str:
+    """Pick the user-namespace fix from the proc state of this process.
+
+    A nested user namespace or a zero namespace limit points to an outer sandbox, so the AppArmor advice cannot help.
+    The AppArmor advice applies only where Ubuntu's restriction sysctl exists and is on.
+    """
+    uid_map = _proc_text("self/uid_map")
+    if _proc_text("sys/user/max_user_namespaces") == "0" or (uid_map is not None and uid_map.split() != _INITIAL_UID_MAP):
+        return NESTED_FIX
+    if _proc_text("sys/kernel/apparmor_restrict_unprivileged_userns") == "1":
+        return APPARMOR_FIX
+    return USERNS_FIX
 
 
 LIVE_TOOLS = ("/usr/bin/python3", "/usr/bin/curl")
@@ -72,10 +108,10 @@ def sandbox_fix(detail: str) -> str:
     if "socat" in text:
         return INSTALL_SOCAT
     if any(word in text for word in ("uid map", "operation not permitted", "permission denied", "namespace", "apparmor")):
-        return USERNS_FIX
+        return userns_fix()
     if "bubblewrap" in text or "bwrap" in text:
         return INSTALL_BUBBLEWRAP
-    return f"{INSTALL_BUBBLEWRAP}; {INSTALL_SOCAT}; {USERNS_FIX}"
+    return f"{INSTALL_BUBBLEWRAP}; {INSTALL_SOCAT}; {userns_fix()}"
 
 
 EXTERNAL_ADDRESS = ("1.1.1.1", 443)
