@@ -11,7 +11,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from skillz_experiments._budget import PROMPT_CHARS_PER_SECOND, SECONDS_PER_CALL, Estimate, ceilings, estimate
+from skillz_experiments._budget import ESTIMATE_SECONDS_PER_CALL, PROMPT_CHARS_PER_SECOND, Estimate, ceilings, estimate
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import CodedError
 from skillz_experiments._contract import Contract
@@ -61,12 +61,12 @@ def reflection_time(reflection_calls: int, chars: int, sized: Estimate, *,
     """Return the `estimate.reflection` block and the `reflection_time_warning`, or None for the warning (gh-571).
 
     A reflection prompt holds the `chars` editable characters, and its answer returns them. So each reflection call
-    takes `SECONDS_PER_CALL` plus 1 second per `PROMPT_CHARS_PER_SECOND` characters, and the calls run one at a time.
+    takes `ESTIMATE_SECONDS_PER_CALL` plus 1 second per `PROMPT_CHARS_PER_SECOND` characters, one call at a time.
     The projected run seconds put that time in place of the flat reflection share that `estimate` adds to
     `sized.seconds`. The warning fires when the projection exceeds the approved seconds cap. It ends with `advice`
     when that is not None. Neither value changes the search size or the budget.
     """
-    seconds = reflection_calls * (SECONDS_PER_CALL + math.ceil(chars / PROMPT_CHARS_PER_SECOND))
+    seconds = reflection_calls * (ESTIMATE_SECONDS_PER_CALL + math.ceil(chars / PROMPT_CHARS_PER_SECOND))
     projected = sized.seconds - estimate(reflection_calls=reflection_calls).seconds + seconds
     cap = ceilings(sized.journey)[1]
     block = {"calls": reflection_calls, "editable_chars": chars, "seconds": seconds}

@@ -10,6 +10,12 @@ from dataclasses import KW_ONLY, dataclass, field
 from skillz_experiments._cases import CodedError
 
 SECONDS_PER_CALL = 60
+"""The slow-call rate: the per-call timeout base and the gate time reserve rate (ADR-005)."""
+ESTIMATE_SECONDS_PER_CALL = 30
+"""The plan rate: the seconds that the estimate charges for each call (gh-571).
+
+In 22 live runs the effective time per call was 5.5 to 21.7 seconds; 30 seconds keeps a margin over the slowest run.
+"""
 CALL_TIMEOUT_FACTOR = 4
 # Every model call gets 1 more second of timeout per PROMPT_CHARS_PER_SECOND prompt characters.
 # The rate fits the slowest case, a reflection call: its answer returns complete components, so it is about as long
@@ -70,7 +76,7 @@ def estimate(*, preflight_calls: int = 0, train: int = 0, validation: int = 0, h
     `train`, `validation`, and `holdout` are case counts per split.
     calls = preflight_calls + (train + validation + holdout) * calls_per_evaluation * repeats
     + search_calls + reflection_calls + retry_calls + replay_calls.
-    seconds = ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS).
+    seconds = ceil(calls * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS).
     Raise `ValueError` when a count is negative or `calls_per_evaluation` or `repeats` is below 1.
     """
     counts = (preflight_calls, train, validation, holdout, search_calls, reflection_calls, retry_calls, replay_calls)
@@ -82,8 +88,8 @@ def estimate(*, preflight_calls: int = 0, train: int = 0, validation: int = 0, h
     return Estimate(calls, _seconds(calls), journey)
 
 
-def _seconds(calls: int) -> int:
-    return math.ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)
+def _seconds(calls: int, per_call: int = ESTIMATE_SECONDS_PER_CALL) -> int:
+    return math.ceil(calls * per_call / MAX_CONCURRENT_CALLS)
 
 
 @dataclass(frozen=True)
@@ -219,15 +225,11 @@ class Budget:
 
 
 def gate_seconds(calls: int) -> int:
-    """Return the seconds to hold for `calls` gate calls: ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)."""
-    return _seconds(max(calls, 0))
+    """Return the seconds to hold for `calls` gate calls: ceil(calls * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS).
 
-
-def seconds_cap_note(journey: bool) -> str:
-    """Return the note that the seconds cap binds before the call cap on a journey run, or an empty string."""
-    if not journey:
-        return ""
-    return f"; the seconds cap binds first at about {ceilings(True)[1] * MAX_CONCURRENT_CALLS // SECONDS_PER_CALL} calls"
+    The reserve uses the slow-call rate, not the plan rate, so slower gate calls can still reach the deadline (ADR-005).
+    """
+    return _seconds(max(calls, 0), SECONDS_PER_CALL)
 
 
 def approve(sized: Estimate, approved_calls: int | None, *, reserve: int, reserve_time: int = 0) -> Budget:
@@ -236,7 +238,8 @@ def approve(sized: Estimate, approved_calls: int | None, *, reserve: int, reserv
     The ceiling is `sized.calls` calls and the approved seconds cap, because the
     estimate assumes ideal concurrency and the wall clock needs headroom.
     A journey estimate gets `JOURNEY_SECONDS` and the journey call cap; any other estimate gets `APPROVED_SECONDS`.
-    `reserve_time` is the number of seconds at the end of the deadline that the holdout gate holds.
+    `reserve_time` is the number of seconds at the end of the deadline that the holdout gate holds, at most the
+    seconds cap. The cap, not `sized.seconds`, bounds it, because the reserve charges the slow-call rate (ADR-005).
     Raise `ValueError` when the estimate has no calls.
     """
     if sized.calls < 1:
@@ -244,9 +247,8 @@ def approve(sized: Estimate, approved_calls: int | None, *, reserve: int, reserv
     max_calls, max_seconds = ceilings(sized.journey)
     if sized.calls > max_calls or sized.seconds > max_seconds:
         cap = f"{max_calls} calls and {max_seconds} seconds"
-        cap += seconds_cap_note(sized.journey)
         raise BudgetUnapproved(f"estimate of {sized.calls} calls and {sized.seconds} seconds exceeds the cap of {cap}")
     if approved_calls is None or approved_calls < sized.calls:
         raise BudgetUnapproved(f"approve {sized.calls} calls (about {sized.seconds} seconds) before any model call")
     return Budget(sized.calls, max_seconds, min(reserve, sized.calls), approved=True,
-                  reserve_seconds=min(reserve_time, sized.seconds), journey=sized.journey)
+                  reserve_seconds=min(reserve_time, max_seconds), journey=sized.journey)

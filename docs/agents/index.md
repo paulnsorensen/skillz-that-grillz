@@ -8,6 +8,7 @@
 - [sources/](./sources/index.md) — sources
 - [strategy/](./strategy/index.md) — strategy
 - [agent-friendly-cli-design](./agent-friendly-cli-design.md) — Agent-friendly CLI design
+- [gh-596-benchmark](./gh-596-benchmark.md) — gh-596 CLI startup benchmark
 - [log](./log.md) — Ingest Log
 - [parallel-quality-gate](./parallel-quality-gate.md) — Parallel quality gate
 - [skillz-live-proof-lessons](./skillz-live-proof-lessons.md) — skillz live proof lessons

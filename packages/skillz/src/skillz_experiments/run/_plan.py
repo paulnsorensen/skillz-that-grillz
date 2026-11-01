@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import cast, get_args
 
 from skillz_experiments._budget import (
+    ESTIMATE_SECONDS_PER_CALL,
     JOURNEY_CALLS,
     JOURNEY_SECONDS,
     MAX_CONCURRENT_CALLS,
@@ -15,7 +16,6 @@ from skillz_experiments._budget import (
     ceilings,
     estimate,
     gate_seconds,
-    seconds_cap_note,
 )
 from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX
 from skillz_experiments._cases import Case, CodedError, Split
@@ -74,8 +74,8 @@ class _Plan:
 
     @property
     def reserve_seconds(self) -> int:
-        """Return the seconds that the holdout gate and the replay hold, never more than the whole run."""
-        return min(gate_seconds(self.reserve) + self.sandbox_gate, self.sized.seconds)
+        """Return the seconds that the holdout gate and the replay hold, never more than the seconds cap."""
+        return min(gate_seconds(self.reserve) + self.sandbox_gate, ceilings(self.sized.journey)[1])
 
 
 def _command_seconds(contract: Contract, cases: Sequence[Case], options: ClaudeOptions) -> int:
@@ -106,7 +106,7 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     to the holdout reserve, and to the reserved seconds. The replay has no retry.
     `sandbox_seconds` is the sandbox time of one evaluation: the limit times the sandbox runs of the costliest scored kind.
     The sandbox time of every evaluation adds to the estimate and to the gate reserve, shared across parallel calls.
-    The search shrinks until both the call cap and the time cap hold, sandbox time included.
+    The search shrinks until both caps hold, sandbox time and the slow-rate gate reserve (ADR-005) included.
     `journey` is True when a scored case is a journey. The run then gets the journey ceiling in place of the standard cap.
     A journey run also sizes the search from `JOURNEY_SEARCH_CALLS` model calls, so the search holds as many metric calls
     as that allowance buys at `per_evaluation`. A task-only run keeps `SEARCH_CASE_FACTOR` metric calls per searched run:
@@ -132,7 +132,8 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     if PREFLIGHT_CALLS + holdout_calls + holdout_pass > max_calls:
         raise Stop("budget-unapproved", f"the preflight, the holdout gate, and the replay alone need "
                    + f"{PREFLIGHT_CALLS + holdout_calls + holdout_pass} calls; the cap is {max_calls}"
-                   + f"{seconds_cap_note(journey)}; lower --repeats or the holdout size", {})
+                   + "; lower --repeats or the holdout size", {})
+    slow_gate_extra = gate_seconds(holdout_calls + holdout_pass) - estimate(search_calls=holdout_calls + holdout_pass).seconds
 
     def sandbox_total(metric: int) -> int:
         return math.ceil((metric + headroom_outcomes + holdout_evaluations) * sandbox_seconds / MAX_CONCURRENT_CALLS)
@@ -145,17 +146,16 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
 
     def fits(metric: int) -> bool:
         sized = size(metric)
-        return sized.calls <= max_calls and sized.seconds + sandbox_total(metric) <= max_seconds
+        return sized.calls <= max_calls and sized.seconds + sandbox_total(metric) + slow_gate_extra <= max_seconds
 
     if not fits(0):
         bare = size(0)
         if bare.calls > max_calls:
             raise Stop("budget-unapproved", "the preflight, the holdout gate, the replay, and the headroom pass alone need "
-                       + f"{bare.calls} calls; the cap is {max_calls}{seconds_cap_note(journey)}; "
-                       + "lower --repeats or the holdout size", {})
+                       + f"{bare.calls} calls; the cap is {max_calls}; lower --repeats or the holdout size", {})
         raise Stop("budget-unapproved", "the preflight, the holdout gate, the replay, the headroom pass, and their sandbox "
-                   + f"time alone need {bare.seconds + sandbox_total(0)} seconds; the cap is {max_seconds}"
-                   + f"{seconds_cap_note(journey)}; lower --repeats, the holdout size, or --sandbox-seconds", {})
+                   + f"time alone need {bare.seconds + sandbox_total(0) + slow_gate_extra} seconds; the cap is {max_seconds}"
+                   + "; lower --repeats, the holdout size, or --sandbox-seconds", {})
     validation_runs = VALIDATION_REPEATS * validation
     metric = SEARCH_CASE_FACTOR * (train + validation_runs)
     if journey:
@@ -296,7 +296,7 @@ def plan_estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, ob
                if plan.sized.journey else {})
     return {"calls": plan.sized.calls, "seconds": plan.sized.seconds, "search_calls": plan.metric_calls,
             "repeats": repeats, "holdout_cases": holdout_cases, "holdout_retry_calls": plan.retry_calls,
-            "replay_calls": plan.replay_calls,
+            "replay_calls": plan.replay_calls, "seconds_per_call": ESTIMATE_SECONDS_PER_CALL,
             "headroom": {"calls": plan.headroom_calls, "outcomes": plan.headroom_outcomes},
             "metric_calls": plan.metric_calls, "reflection_calls": plan.reflection_calls,
             **({"sandbox_seconds": plan.sandbox_total} if plan.sandbox_total else {}), **journey}

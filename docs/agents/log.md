@@ -127,3 +127,6 @@
 
 
 - 2026-10-30 · 6070cd54e776b3bf · merged · decisions/skillz-autoimprove.md · Record approved trusted activation and native shell/cwd parsing constraints from PR #579.
+
+- 2026-11-01 · f12ebe3cf4352fbb · merged · decisions/skillz-pragmatic-autoimprove.md · Record PR #577 resume diagnostic precedence without changing rejection eligibility. Frozen exact and natural retrieval probes pass at ranks 1, 1, and 2.
+
