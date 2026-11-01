@@ -136,5 +136,8 @@
 
 - 2026-11-01 · f12ebe3cf4352fbb · merged · decisions/skillz-pragmatic-autoimprove.md · Record PR #577 resume diagnostic precedence without changing rejection eligibility. Frozen exact and natural retrieval probes pass at ranks 1, 1, and 2.
 
-
 - 2026-11-01 · 01d8d6d36c719c55 · merged · criteria/gh-580.md · Share matching fixture paths despite inline conflicts. Preserve legacy formats, approval hashes, and byte bounds. Frozen exact and natural probes pass at ranks 1, 1, and 2.
+
+- 2026-11-01 · wiki-harvest · updated · criteria/index.md · Add the seven criteria files that the index list lacked (gh-566, gh-568, gh-571, gh-571-calibrate, gh-582, gh-591, gh-596), so the list matches the directory.
+
+- 2026-11-01 · e574f9e59194f5e0 · merged · criteria/gh-580.md · Reject frozen manifests above 2000000 bytes before writing. Exact and natural retrieval probes pass at ranks 1, 2, and 2.

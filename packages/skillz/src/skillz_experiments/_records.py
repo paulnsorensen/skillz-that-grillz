@@ -54,6 +54,14 @@ def write(path: Path, value: object) -> None:
     _ = write_bytes(path, (json.dumps(value, sort_keys=True, indent=2) + "\n").encode("utf-8"))
 
 
+def write_cases(path: Path, value: object) -> None:
+    """Write a frozen case manifest only when the complete JSON fits the loader bound."""
+    data = (json.dumps(value, sort_keys=True, indent=2) + "\n").encode("utf-8")
+    if len(data) > 2_000_000:
+        raise CodedError("cases-too-large", "the frozen cases exceed 2000000 bytes; reduce the draft and ask for approval again")
+    _ = write_bytes(path, data)
+
+
 def share_files(cases: Sequence[Mapping[str, object]], fixtures: dict[str, str]) -> list[dict[str, object]]:
     """Share matching files per path; keep conflicting contents inline (gh-580)."""
     shared: list[dict[str, object]] = []

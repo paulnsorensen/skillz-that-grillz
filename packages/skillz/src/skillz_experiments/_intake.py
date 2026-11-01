@@ -17,7 +17,7 @@ from skillz_experiments._cases import (
 from skillz_experiments._contract import LOCATION, RUBRIC_GRADERS, Contract, Grader, load_contract, parse
 from skillz_experiments._evals_format import EVAL_KINDS, SOURCES
 from skillz_experiments._frontmatter import read_frontmatter
-from skillz_experiments._records import approval_digest, share_files, write
+from skillz_experiments._records import approval_digest, share_files, write_cases
 
 DRAFT_NAME = "cases.draft.json"
 PENDING_KINDS = ("trigger", "near-miss")
@@ -391,7 +391,7 @@ def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str
     unscored = [case.data() for case in cases if not case.scored and not case.pending]
     if unscored:
         document["not_scored"] = share_files(unscored, fixtures)
-    write(out, document)
+    write_cases(out, document)
 
 
 def skill_frontmatter(target: Path) -> dict[str, str]:

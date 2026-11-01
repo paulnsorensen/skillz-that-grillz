@@ -102,6 +102,43 @@ def test_hash_mismatch_raises_cases_unapproved_and_writes_nothing(tmp_path: Path
     assert not out.exists()
 
 
+@pytest.mark.ac("gh-580:AC-2")
+@pytest.mark.parametrize("existing", [False, True], ids=["new-file", "existing-file"])
+@pytest.mark.parametrize("request_text", ["x", "é😀\n"], ids=["ascii", "escaped-unicode"])
+def test_frozen_manifest_accepts_exact_limit_and_rejects_one_byte_over_before_writing(
+        tmp_path: Path, existing: bool, request_text: str) -> None:
+    raw = draft()
+    raw[-1]["request"] = request_text
+    path = write_draft(tmp_path, raw)
+    cases = split_cases(load_draft(path), 7)
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    raw[-1]["request"] = request_text + "x" * (2_000_000 - out.stat().st_size)
+    path = write_draft(tmp_path, raw)
+    assert path.stat().st_size < 2_000_000
+    cases = split_cases(load_draft(path), 7)
+    freeze(out, cases, 7, case_hash(cases, 7))
+    accepted = out.read_bytes()
+    assert len(accepted) == 2_000_000 and accepted.endswith(b"\n")
+    assert {case.identifier: case.files for case in load_cases(out, {"task": "judge"})} == {
+        case.identifier: case.files for case in cases if case.scored}
+    document = cast(dict[str, object], json.loads(accepted))
+    assert next(item["request"] for item in cast(list[dict[str, object]], document["pending"])
+                if item["id"] == raw[-1]["id"]) == raw[-1]["request"]
+    if not existing:
+        out.unlink()
+    raw[-1]["request"] = str(raw[-1]["request"]) + "x"
+    path = write_draft(tmp_path, raw)
+    assert path.stat().st_size < 2_000_000
+    cases = split_cases(load_draft(path), 7)
+    before = sorted(tmp_path.iterdir())
+    with pytest.raises(CodedError) as caught:
+        freeze(out, cases, 7, case_hash(cases, 7))
+    assert caught.value.code == "cases-too-large"
+    assert sorted(tmp_path.iterdir()) == before
+    assert out.read_bytes() == accepted if existing else not out.exists()
+
+
 def shared_draft(tmp_path: Path, text: str) -> Path:
     """Write the draft in the object form: every task case lists one path into the shared `fixtures` map."""
     cases = [case | {"files": ["input.txt"]} if "files" in case else case for case in draft()]
