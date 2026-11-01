@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import cast
 
 from skillz_experiments._cases import (
-    JOURNEY_FIELDS, CodedError, Journey, Split, case_criteria, digest, journey_of, loads_untrusted, mapping, string, text_map,
+    JOURNEY_FIELDS, CodedError, Journey, Split, case_criteria, journey_of, loads_untrusted, mapping, string, text_map,
 )
 from skillz_experiments._contract import LOCATION, RUBRIC_GRADERS, Contract, Grader, load_contract, parse
 from skillz_experiments._evals_format import EVAL_KINDS, SOURCES
 from skillz_experiments._frontmatter import read_frontmatter
-from skillz_experiments._records import share_files, write
+from skillz_experiments._records import approval_digest, share_files, write
 
 DRAFT_NAME = "cases.draft.json"
 PENDING_KINDS = ("trigger", "near-miss")
@@ -334,7 +334,7 @@ def case_hash(cases: Sequence[IntakeCase], seed: int, statistics: Mapping[str, o
     body: dict[str, object] = {"seed": seed, "cases": [case.data() for case in sorted(cases, key=lambda c: c.identifier)]}
     if statistics is not None:
         body["statistics"] = dict(statistics)
-    return digest(body)
+    return approval_digest(body)
 
 
 def _totals(cases: Sequence[IntakeCase], split: Split) -> str:

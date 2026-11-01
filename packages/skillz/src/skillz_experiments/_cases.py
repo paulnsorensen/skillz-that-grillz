@@ -93,10 +93,10 @@ def read_text(root: Path, name: str, limit: int) -> str:
         raise ValueError(f"{name} must be UTF-8 text") from None
 
 
-def text_map(value: object, shared: Mapping[str, str] | None = None) -> dict[str, str]:
+def text_map(value: object, shared: Mapping[str, str] | None = None, *, label: str = "files") -> dict[str, str]:
     if isinstance(value, list) and shared is not None:  # paths into the shared `fixtures` map of the file (gh-580)
         if missing := [path for path in cast(list[object], value) if not isinstance(path, str) or path not in shared]:
-            raise ValueError(f"files lists {missing[0]!r}, which is not in fixtures")
+            raise ValueError(f"{label} lists {missing[0]!r}, which is not in fixtures")
         value = {path: shared[path] for path in cast(list[str], value)}
     files = {relative(key): string(item, key) for key, item in mapping(cast(object, value)).items()}
     forbidden = {"home", "tmp", "output", "capture", "answer.json", "response-schema.json", "AGENTS.md", "CLAUDE.md"}
@@ -384,7 +384,7 @@ def _case(value: object, kinds: Mapping[str, str], fixtures: Mapping[str, str]) 
     reviewed = item.get("labels_reviewed", False)
     if type(reviewed) is not bool:
         raise ValueError("labels_reviewed must be boolean")
-    files = text_map(item.get("files", {}), fixtures)
+    files = text_map(item.get("files", {}), fixtures, label=f"case {item.get('id')!r} files")
     expected = audit_labels(item.get("expected"), files) if kinds[kind] == "audit" else item.get("expected")
     if expected is None and kinds[kind] == "command":
         raise CodedError("expected-missing", f"case {item.get('id')!r} of kind {kind!r} needs an expected value")

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
+import tracemalloc
 from pathlib import Path
 from typing import cast
 
@@ -119,6 +121,46 @@ def test_cases_that_share_a_large_file_freeze_its_text_once_and_load_it_into_eac
     assert document["fixtures"] == {"input.txt": text} and document["approved_hash"] == case_hash(cases, 7)
     loaded = load_cases(out, {"task": "judge"})
     assert len(loaded) == 12 and all(case.files == {"input.txt": text} for case in loaded)
+
+
+@pytest.mark.ac("gh-580:AC-2")
+def test_shared_fixture_approval_hash_does_not_collect_all_inline_copies(tmp_path: Path) -> None:
+    text = "y" * 300_000
+    cases = split_cases(load_draft(shared_draft(tmp_path, text)), 7)
+    tracemalloc.start()
+    try:
+        result = case_hash(cases, 7)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert len(result) == 64
+    assert peak < len(text) * 8
+
+
+@pytest.mark.ac("gh-580:AC-3")
+@pytest.mark.parametrize("statistics", [None, {"name": "é\\\"\\n", "nested": [True, None, 1.25, {"x": 2}]}])
+def test_approval_hash_matches_legacy_canonical_json(
+        tmp_path: Path, statistics: dict[str, object] | None) -> None:
+    cases = split_cases(load_draft(shared_draft(tmp_path, "é\\\"\\n")), 7)
+    body: dict[str, object] = {"seed": 7, "cases": [case.data() for case in sorted(cases, key=lambda c: c.identifier)]}
+    if statistics is not None:
+        body["statistics"] = statistics
+    expected = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+    assert case_hash(list(reversed(cases)), 7, statistics) == expected
+
+
+@pytest.mark.ac("gh-580:AC-2")
+def test_unknown_frozen_fixture_reference_names_the_case_and_path(tmp_path: Path) -> None:
+    cases = split_cases(load_draft(shared_draft(tmp_path, "hello\n")), 7)
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+    identifier = cast(list[dict[str, object]], document["cases"])[0]["id"]
+    document["fixtures"] = {}
+    _ = out.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        _ = load_cases(out, {"task": "judge"})
+    assert str(caught.value) == f"case {identifier!r} files lists 'input.txt', which is not in fixtures"
 
 
 @pytest.mark.ac("gh-580:AC-3")

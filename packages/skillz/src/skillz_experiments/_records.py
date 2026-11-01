@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import tempfile
@@ -39,6 +40,14 @@ def write_bytes(path: Path, data: bytes, *, mode: int = 0o600, guard: Callable[[
         finally:
             os.close(directory)
     return True
+
+
+def approval_digest(value: object) -> str:
+    """Hash canonical approval JSON without collecting repeated fixture text."""
+    result = hashlib.sha256()
+    for chunk in json.JSONEncoder(sort_keys=True).iterencode(value):
+        result.update(chunk.encode())
+    return result.hexdigest()
 
 
 def write(path: Path, value: object) -> None:

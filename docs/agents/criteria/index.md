@@ -130,6 +130,9 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-537](./gh-537.md) — gh-537: the proposer feedback carries task tokens when the run sets a token rule
 - [gh-538](./gh-538.md) — gh-538: the live smoke builds the skill archives before the tests
 - [gh-563](./gh-563.md) — gh-563: a large editable set gets a longer reflection timeout, a prose fallback or a warning, and an idle stop trigger
+- [gh-566](./gh-566.md) — gh-566: Codex skill discovery accepts the canonical skill path on macOS
+- [gh-568](./gh-568.md) — gh-568: Live.kill treats an exited child as a gone group
+- [gh-580](./gh-580.md) — gh-580: a fixture that many cases share counts once against the seed bound
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [kit-harder-journeys](./kit-harder-journeys.md) — kit-harder-journeys: harder journeys for the self-autoimprove kit
 - [proposer-cli-early](./proposer-cli-early.md) — proposer-cli-early: the reflection prompt offers @new-cli early and keeps room for its two edits
