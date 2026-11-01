@@ -8,23 +8,34 @@ commands that build run the skills in parallel.
 
 from __future__ import annotations
 
+import importlib
 from pathlib import Path
-from typing import TypeVar
+from typing import TypeVar, cast
 
 import fromargs
 
-from wedge._build import build_many
-from wedge._bundle import bundle_many
 from wedge._discover import discover_skills
 from wedge._fanout import Outcome
-from wedge._lock import check as check_skills
-from wedge._lock import lock_many
-from wedge._publish import publish as publish_skills
 
 DEFAULT_ROOT = "skills"
 T = TypeVar("T")
 
 app = fromargs.App("wedge", help="Shiv a fromargs CLI into a skill as a content-addressed .pyz.")
+
+
+_BUILD_EXPORTS = frozenset({
+    "SiteLayer", "build_from_layer", "layer_import_names", "open_site_layer",
+    "populate_site_layer", "resolve_target", "stage_sources",
+})
+
+
+def public_export(name: str) -> object:
+    """Resolve build exports only when a caller requests them."""
+    if name in _BUILD_EXPORTS:
+        return cast(object, getattr(importlib.import_module("wedge._build"), name))
+    if name == "bundle_path":
+        return cast(object, getattr(importlib.import_module("wedge._bundle"), name))
+    raise AttributeError(f"module 'wedge' has no attribute {name!r}")
 
 
 def _dedupe_dirs(dirs: list[Path]) -> list[Path]:
@@ -97,6 +108,8 @@ def build_cmd(
     """Build each skill's .pyz into ``--out``; does not touch the locks."""
     _check_jobs(jobs, "wedge build")
     dirs = _resolve_skill_dirs(root, skill_dir, "wedge build")
+    from wedge._build import build_many
+
     results = _raise_failures(build_many(dirs, Path(out), jobs=jobs), "wedge build")
     return {
         r.name: {"key": r.key, "content_sha256": r.content_sha256, "path": str(r.path)}
@@ -115,6 +128,8 @@ def bundle_cmd(
     """Write or check executable scripts/<name>.pyz bundles."""
     _check_jobs(jobs, "wedge bundle")
     dirs = _resolve_skill_dirs(root, skill_dir, "wedge bundle")
+    from wedge._bundle import bundle_many
+
     results = _raise_failures(bundle_many(dirs, jobs=jobs, check=check), "wedge bundle")
     return {
         r.name: {"key": r.key, "content_sha256": r.content_sha256, "path": str(r.path)}
@@ -132,6 +147,8 @@ def lock_cmd(
     """Build each skill once, then write its lock and launcher beside it."""
     _check_jobs(jobs, "wedge lock")
     dirs = _resolve_skill_dirs(root, skill_dir, "wedge lock")
+    from wedge._lock import lock_many
+
     results = _raise_failures(lock_many(dirs, jobs=jobs), "wedge lock")
     return {data.name: data.to_dict() for data in results}
 
@@ -142,6 +159,8 @@ def check_cmd(
 ) -> dict[str, object]:
     """Verify every skill's lock and launcher without building."""
     dirs = _resolve_skill_dirs(root, skill_dir, "wedge check")
+    from wedge._lock import check as check_skills
+
     issues = check_skills(dirs)
     _fail([(issue.skill_dir, issue.reason) for issue in issues], "wedge check")
     return {"checked": [str(d) for d in dirs], "ok": True}
@@ -163,6 +182,8 @@ def publish_cmd(
     """
     _check_jobs(jobs, "wedge publish")
     dirs = _resolve_skill_dirs(root, skill_dir, "wedge publish")
+    from wedge._publish import publish as publish_skills
+
     results = publish_skills(dirs, repo=repo, target=target, jobs=jobs, branch=branch)
     failed = {name: r for name, r in results.items() if r["status"] == "failed"}
     _fail([(name, r["reason"]) for name, r in failed.items()], "wedge publish")

@@ -445,7 +445,7 @@ def test_the_cli_passes_family_budget_to_run(tmp_path: Path, monkeypatch: pytest
         seen.update(kwargs)
         return {}
 
-    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    monkeypatch.setattr("skillz_experiments.run.run", fake)
     base = ["run", "--target", str(tmp_path / "skill"), "--out", str(tmp_path / "run"), "--model", MODEL]
     assert main([*base, "--family-budget=0.25"]) == 0
     assert seen["statistics"] == {"family_budget": 0.25}

@@ -14,7 +14,6 @@ import pytest
 
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
-from skillz_experiments import _cli
 from skillz_experiments._cli import main
 from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._codex import Codex
@@ -192,7 +191,7 @@ def test_the_history_flag_reaches_the_run(flag: list[str], history: bool | None,
         seen.append(kwargs["history"])
         return {}
 
-    monkeypatch.setattr(_cli, "run_workflow", fake_run)
+    monkeypatch.setattr("skillz_experiments.run.run", fake_run)
     code = main(["run", "--target", str(tmp_path), "--out", str(tmp_path / "out"), "--model", "m", *flag])
     _ = capsys.readouterr()
     assert code == 0 and seen == [history]

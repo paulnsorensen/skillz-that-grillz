@@ -326,7 +326,7 @@ def test_the_cli_passes_the_statistics_flags_to_run(tmp_path: Path, monkeypatch:
         seen.update(options)
         return {}
 
-    monkeypatch.setattr("skillz_experiments._cli.run_workflow", fake)
+    monkeypatch.setattr("skillz_experiments.run.run", fake)
     base = ["run", "--target", str(tmp_path), "--out", str(tmp_path / "run"), "--model", MODEL]
     assert main([*base, "--min-gain", "0.05", "--min-lower-bound", "0.02"]) == 0
     assert seen["statistics"] == {"min_gain": 0.05, "min_lower_bound": 0.02}

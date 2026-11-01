@@ -6,19 +6,23 @@ Legacy lock, check, and publish commands retain their launcher and release workf
 See wedge bundle, wedge build, wedge lock, wedge check, and wedge publish.
 """
 
-from wedge._build import (
-    SiteLayer,
-    build_from_layer,
-    layer_import_names,
-    open_site_layer,
-    populate_site_layer,
-    resolve_target,
-    stage_sources,
-)
-from wedge._bundle import bundle_path
-from wedge._cli import main
+from typing import TYPE_CHECKING
+
+from wedge._cli import main, public_export as __getattr__
 from wedge._config import TARGET_KEYS, ConfigError, WedgeConfig, defaults_path, load_targets, parse_targets
 from wedge._key import BuildPaths, first_party_files
+
+if TYPE_CHECKING:
+    from wedge._build import (
+        SiteLayer,
+        build_from_layer,
+        layer_import_names,
+        open_site_layer,
+        populate_site_layer,
+        resolve_target,
+        stage_sources,
+    )
+    from wedge._bundle import bundle_path
 
 __all__ = [
     "TARGET_KEYS",
