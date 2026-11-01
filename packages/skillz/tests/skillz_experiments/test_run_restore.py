@@ -30,7 +30,13 @@ from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments.harness._roles import Role
 from skillz_experiments._records import read, write
 from skillz_experiments.gate import DEFAULT_STATISTICS
-from skillz_experiments._budget import APPROVED_SECONDS, MAX_CONCURRENT_CALLS, Budget, BudgetExhausted
+from skillz_experiments._budget import (
+    APPROVED_SECONDS,
+    ESTIMATE_SECONDS_PER_CALL,
+    MAX_CONCURRENT_CALLS,
+    Budget,
+    BudgetExhausted,
+)
 from skillz_experiments.search import Edit, overshoot
 from skillz_experiments.run import Stop, export, run, summary
 from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM
@@ -989,11 +995,13 @@ def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reser
     assert command_seconds(judged, [mix], options) == 180 and command_seconds(judged, [look, mix], options) == 180
 
 
+@pytest.mark.ac("gh-571-calibrate:AC-1")
 def test_the_search_shrinks_until_the_sandbox_time_fits_the_time_cap_and_a_fixed_cost_over_it_stops() -> None:
     # Each validation case runs twice (gh-500), so the plan admits 10 validation cases here, not 20.
-    # The six preflight calls (gh-176) leave no search under the time cap at 60 sandbox seconds, so the top step is 50.
+    # At the 30 second plan rate (gh-571), 50 sandbox seconds still fit the time cap with the full search, so the steps
+    # start at 60. The six preflight calls (gh-176) leave no search under the time cap at 100 sandbox seconds: the top step is 80.
     plain = plan_run(20, 10, 6, 1, 3)
-    shrunk = [plan_run(20, 10, 6, 1, 3, seconds) for seconds in (30, 40, 50)]
+    shrunk = [plan_run(20, 10, 6, 1, 3, seconds) for seconds in (60, 70, 80)]
     assert all(plan.sized.seconds <= APPROVED_SECONDS for plan in shrunk)
     assert shrunk[0].metric_calls < plain.metric_calls and shrunk[2].metric_calls < shrunk[0].metric_calls
     with pytest.raises(Stop, match="sandbox time alone need") as caught:
@@ -1033,6 +1041,52 @@ def test_a_run_prepared_before_the_replay_stops_as_an_older_runner(
     write(out / "run.json", record)
     with pytest.raises(ValueError, match="older runner; create a new run"):
         _ = run(target, out, MODEL, live=True, factory=State().factory())
+
+
+@pytest.mark.ac("gh-571-calibrate:AC-5")
+@pytest.mark.parametrize("older_hash", [False, True])
+def test_a_run_prepared_before_the_plan_rate_was_recorded_stops_as_an_older_runner(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, older_hash: bool) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    estimate = cast(dict[str, object], record["estimate"])
+    assert estimate["seconds_per_call"] == ESTIMATE_SECONDS_PER_CALL
+    _ = estimate.pop("seconds_per_call")
+    if older_hash:
+        record["engine_hash"] = "0" * 64
+    write(out / "run.json", record)
+    created: list[str] = []
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> _Fake:
+        del model, budget, checkpoint
+        created.append("provider")
+        return _Fake(State())
+
+    with pytest.raises(ValueError, match="^run was prepared by an older runner; create a new run$"):
+        _ = run(target, out, MODEL, live=True, factory=factory)
+    assert created == []
+
+
+def test_a_current_schema_run_with_an_older_engine_hash_stops_before_provider_creation(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    assert cast(dict[str, object], record["estimate"])["seconds_per_call"] == ESTIMATE_SECONDS_PER_CALL
+    record["engine_hash"] = "0" * 64
+    write(out / "run.json", record)
+    created: list[str] = []
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> _Fake:
+        del model, budget, checkpoint
+        created.append("provider")
+        return _Fake(State())
+
+    with pytest.raises(ValueError, match="^evaluator differs from the frozen record; create a new run$"):
+        _ = run(target, out, MODEL, live=True, factory=factory)
+    assert created == []
+
 
 def test_a_supplied_configuration_sizes_the_run_from_its_task_role_and_leaves_claude_options_out_of_the_stops(
         tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:

@@ -12,6 +12,8 @@ import pytest
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._budget import (
+    APPROVED_SECONDS,
+    ESTIMATE_SECONDS_PER_CALL,
     MAX_CONCURRENT_CALLS,
     SECONDS_PER_CALL,
     Budget,
@@ -23,6 +25,8 @@ from skillz_experiments._budget import (
     gate_seconds,
 )
 from skillz_experiments._runtime import process
+from skillz_experiments.run import Stop
+from skillz_experiments.run._plan import _plan as plan_run  # pyright: ignore[reportPrivateUsage]
 
 CHILD = ("import sys,time,pathlib; d=pathlib.Path(sys.argv[1]); n=sys.argv[2]; "
          + "(d/(n+'.start')).write_text(str(time.time())); time.sleep(0.3); "
@@ -30,11 +34,12 @@ CHILD = ("import sys,time,pathlib; d=pathlib.Path(sys.argv[1]); n=sys.argv[2]; "
 
 
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-15")
+@pytest.mark.ac("gh-571-calibrate:AC-1")
 def test_estimate_and_single_approval_gate_the_opt_in_ceiling() -> None:
     sized = estimate(preflight_calls=2, train=4, validation=3, holdout=3, calls_per_evaluation=2, repeats=3,
                      search_calls=5, reflection_calls=4, retry_calls=1)
-    assert sized == Estimate(2 + 10 * 2 * 3 + 5 + 4 + 1, math.ceil(72 * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS))
-    assert sized.calls == 72 and sized.seconds == 2160
+    assert sized == Estimate(2 + 10 * 2 * 3 + 5 + 4 + 1, math.ceil(72 * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS))
+    assert sized.calls == 72 and sized.seconds == 1080
 
     for approval in (None, 71):
         with pytest.raises(BudgetUnapproved) as refused:
@@ -188,14 +193,59 @@ def test_the_time_reserve_holds_the_end_of_the_deadline_for_the_gate() -> None:
         _ = budget.remaining()
 
 
+@pytest.mark.ac("gh-571-calibrate:AC-2")
 def test_approve_sizes_the_time_reserve_from_the_gate_calls() -> None:
     assert gate_seconds(38) == math.ceil(38 * SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)
     assert gate_seconds(0) == 0
     sized = estimate(preflight_calls=3, holdout=12, repeats=3, search_calls=40)
     budget = approve(sized, sized.calls, reserve=38, reserve_time=gate_seconds(38))
     assert budget.reserve_seconds == gate_seconds(38)
-    assert approve(Estimate(2, 60), 2, reserve=2, reserve_time=600).reserve_seconds == 60
+    # The seconds cap bounds the reserve, not the estimate: the gate charges the slow-call rate (gh-571).
+    assert approve(Estimate(2, 60), 2, reserve=2, reserve_time=600).reserve_seconds == 600
+    assert approve(Estimate(2, 60), 2, reserve=2, reserve_time=APPROVED_SECONDS + 1).reserve_seconds == APPROVED_SECONDS
     with pytest.raises(ValueError, match="time reservation"):
         _ = Budget(10, 100, 0, reserve_seconds=-1)
     with pytest.raises(ValueError, match="time reservation"):
         budget.reserve_time(-1)
+
+
+@pytest.mark.ac("gh-571-calibrate:AC-2")
+def test_the_gate_reserve_charges_the_slow_call_rate_while_the_estimate_charges_the_plan_rate() -> None:
+    assert (SECONDS_PER_CALL, ESTIMATE_SECONDS_PER_CALL) == (60, 30)
+    for calls in (1, 38, 101):
+        assert gate_seconds(calls) == math.ceil(calls * 60 / MAX_CONCURRENT_CALLS)
+        assert estimate(search_calls=calls).seconds == math.ceil(calls * 30 / MAX_CONCURRENT_CALLS)
+    assert gate_seconds(38) == 1140 and estimate(search_calls=38).seconds == 570
+
+
+@pytest.mark.ac("gh-571-calibrate:AC-2")
+def test_a_gate_heavy_plan_reserve_is_not_cut_to_the_estimate_seconds() -> None:
+    # 3 train, 3 validation, and 30 holdout cases: the gate calls cost more at 60 seconds each than the whole plan at 30.
+    plan = plan_run(3, 3, 30, 1, 1, 20)
+    assert plan.sandbox_gate == 920 and plan.reserve == 92
+    assert plan.reserve_seconds == gate_seconds(plan.reserve) + plan.sandbox_gate == 3680
+    assert plan.reserve_seconds > plan.sized.seconds == 3500
+    budget = approve(plan.sized, plan.sized.calls, reserve=plan.reserve, reserve_time=plan.reserve_seconds)
+    assert budget.reserve_seconds == 3680 <= budget.seconds
+
+
+@pytest.mark.ac("gh-571-calibrate:AC-2")
+@pytest.mark.parametrize(("train", "validation", "holdout", "sandbox"),
+                         [(1, 1, 58, 20), (3, 3, 30, 20), (3, 3, 30, 80), (3, 3, 30, 100), (6, 6, 6, 20), (1, 1, 30, 100)])
+def test_a_plan_that_fits_leaves_the_search_its_time_after_the_slow_rate_gate_reserve(
+        train: int, validation: int, holdout: int, sandbox: int) -> None:
+    try:
+        plan = plan_run(train, validation, holdout, 1, 1, sandbox)
+    except Stop:
+        return
+    # The plan-rate time of the non-gate work: everything the estimate holds except the gate calls and their sandbox.
+    search_share = (plan.sized.seconds - estimate(search_calls=plan.reserve).seconds - plan.sandbox_gate)
+    assert search_share > 0
+    assert search_share + plan.reserve_seconds <= APPROVED_SECONDS
+
+
+@pytest.mark.ac("gh-571-calibrate:AC-2")
+def test_a_gate_reserve_that_leaves_no_search_time_stops_at_planning() -> None:
+    # 30 holdout cases with 100 sandbox seconds: the slow-rate reserve alone passes the 7200-second cap.
+    with pytest.raises(Stop, match="seconds; the cap is 7200"):
+        _ = plan_run(1, 1, 30, 1, 1, 100)
