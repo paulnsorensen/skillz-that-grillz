@@ -6,7 +6,7 @@ name = "skillz-experiment"
 entry = "skillz_experiments._cli:main"
 source = "../../packages/skillz/src/skillz_experiments"
 include = ["../../packages/fromargs/src/fromargs", "../../packages/wedge/src/wedge"]
-groups = ["experiments", "retry", "wedge"]
+groups = ["experiments", "retry"]
 
 [[target]]
 name = "inspect-skill"
@@ -19,7 +19,6 @@ name = "wedge"
 entry = "wedge:main"
 source = "../../packages/wedge/src/wedge"
 include = ["../../packages/fromargs/src/fromargs"]
-groups = ["wedge"]
 
 [[target]]
 name = "agent-session-analytics"

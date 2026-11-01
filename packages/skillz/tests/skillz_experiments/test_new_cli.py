@@ -1,6 +1,6 @@
 """The `@new-cli` component: one new fromargs wedge target that a proposal adds to a skill (C4, AC-13, AC-14).
 
-The builds run offline: a fake closure replaces the network step, while shiv and the archive code run for real.
+The builds run offline: a fake closure replaces the network step, while the archive writer runs for real.
 """
 # pyright: reportPrivateUsage=false
 from __future__ import annotations
@@ -22,6 +22,7 @@ import pytest
 import wedge._build as wedge_build
 from wedge._build import SiteLayer, build_many
 from wedge._config import load_targets, parse_targets
+from wedge._zipapp import write_archive
 
 from skillz_experiments.run import _wedge_targets
 from skillz_experiments.run import _plan, _session
@@ -344,9 +345,9 @@ def test_a_failed_build_of_the_new_target_rejects_with_build_failed(
     out = prepared(world, tmp_path, write_draft, approvals)
 
     def broken(*_args: object, **_kwargs: object) -> None:
-        raise subprocess.CalledProcessError(1, ["shiv"], stderr="shiv exploded")
+        raise OSError("archive writer failed")
 
-    monkeypatch.setattr(wedge_build, "_shiv", broken)
+    monkeypatch.setattr(wedge_build, "write_archive", broken)
     score, feedback = evaluate(out, Recorder(), VALUE)
     assert score == 0.0 and feedback["reason"] == "build-failed" and "hello-cli" in str(feedback["rejected"])
 
@@ -532,14 +533,14 @@ def test_candidates_that_differ_in_a_fixed_file_of_the_new_target_get_separate_b
     components = {name: session.seed.files[name] for name in session.seed.editable} | {NEW_CLI: VALUE}
     base = session.seed.changed(components)
     failing = [True]
-    real = wedge_build._shiv
+    real = write_archive
 
-    def shiv(*args: object, **kwargs: object) -> None:
+    def writer(site_dir: Path, entry: str, out_path: Path) -> None:
         if failing[0]:
-            raise subprocess.CalledProcessError(1, ["shiv"], stderr="shiv exploded")
-        real(*args, **kwargs)  # pyright: ignore[reportArgumentType]
+            raise OSError("archive writer failed")
+        real(site_dir, entry, out_path)
 
-    monkeypatch.setattr(wedge_build, "_shiv", shiv)
+    monkeypatch.setattr(wedge_build, "write_archive", writer)
     with pytest.raises(BuildFailed):
         _ = rebuilder.apply(base.with_frozen({fixed: b"VERSION = 2\n"}))
     failing[0] = False
@@ -563,14 +564,14 @@ def test_candidates_that_differ_in_an_editable_fromargs_source_build_their_own_t
     assert source.startswith("@wedge/")
     components = {name: session.seed.files[name] for name in session.seed.editable} | {NEW_CLI: VALUE}
     failing = [True]
-    real = wedge_build._shiv
+    real = write_archive
 
-    def shiv(*args: object, **kwargs: object) -> None:
+    def writer(site_dir: Path, entry: str, out_path: Path) -> None:
         if failing[0]:
-            raise subprocess.CalledProcessError(1, ["shiv"], stderr="shiv exploded")
-        real(*args, **kwargs)  # pyright: ignore[reportArgumentType]
+            raise OSError("archive writer failed")
+        real(site_dir, entry, out_path)
 
-    monkeypatch.setattr(wedge_build, "_shiv", shiv)
+    monkeypatch.setattr(wedge_build, "write_archive", writer)
     with pytest.raises(BuildFailed):
         _ = rebuilder.apply(session.seed.changed(components | {source: "VERSION = 2\n"}))
     failing[0] = False

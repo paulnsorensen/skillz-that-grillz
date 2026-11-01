@@ -320,7 +320,7 @@ def test_a_linked_layer_view_builds_the_same_bytes_as_a_copy_and_never_writes_th
     _ = shutil.copy2(sources / "app.py", reference / "app.py")
     out = tmp_path / "out"
     out.mkdir()
-    expected, _ = wedge_build._shiv_into(reference, "app", "app:main", out)  # pyright: ignore[reportPrivateUsage]
+    expected, _ = wedge_build._archive_into(reference, "app", "app:main", out)  # pyright: ignore[reportPrivateUsage]
 
     built = build_from_layer(layer, sources, target, tmp_path / "built")
 

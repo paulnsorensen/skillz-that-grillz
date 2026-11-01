@@ -18,17 +18,15 @@ from wedge._build import build, build_many
 _SKILLZ_DIR = Path(__file__).resolve().parents[4] / "skills" / "skillz"
 
 
-def test_bundled_shiv_pin_matches_the_wedge_library_pin(repo_root: Path) -> None:
-    # shiv writes its version into every archive, so both builders must agree.
+def test_wedge_package_has_no_shiv_dependency(repo_root: Path) -> None:
     bundle = cast(dict[str, dict[str, list[str]]], tomllib.loads((repo_root / "pyproject.toml").read_text()))
     library = cast(dict[str, dict[str, list[str]]], tomllib.loads((repo_root / "packages" / "wedge" / "pyproject.toml").read_text()))
-    bundled = [dep for dep in bundle["dependency-groups"]["wedge"] if dep.startswith("shiv")]
-    pinned = [dep for dep in library["project"]["dependencies"] if dep.startswith("shiv")]
-    assert bundled == pinned
+    assert "wedge" not in bundle["dependency-groups"]
+    assert not any(dep.startswith("shiv") for dep in library["project"]["dependencies"])
 
 
 def _base_python() -> str:
-    """An interpreter outside this venv, so shiv is importable only from the archive."""
+    """Use an interpreter outside this venv to prove the archive is self-contained."""
     return getattr(sys, "_base_executable", sys.executable)
 
 
@@ -40,12 +38,11 @@ def wedge_pyz(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return results[0].path
 
 
+@pytest.mark.ac("gh-581:AC-11")
 def test_bundled_wedge_builds_a_skill_under_an_interpreter_without_shiv(
     wedge_pyz: Path, fixture_skill_dir: Path, tmp_path: Path
 ) -> None:
     base = _base_python()
-    probe = subprocess.run([base, "-I", "-c", "import shiv"], capture_output=True)
-    assert probe.returncode != 0, f"{base} imports shiv; the test cannot prove the archive supplies it"
     uv = shutil.which("uv")
     assert uv is not None
     out_dir = tmp_path / "out"
