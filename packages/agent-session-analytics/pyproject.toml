@@ -29,7 +29,7 @@ Issues = "https://github.com/paulnsorensen/skillz-that-grillz/issues"
 Changelog = "https://github.com/paulnsorensen/skillz-that-grillz/blob/main/packages/agent-session-analytics/CHANGELOG.md"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-xdist>=3", "basedpyright==1.40.2", "hypothesis>=6.170.12"]
+dev = ["pytest>=8", "pytest-xdist>=3", "basedpyright==1.40.2", "hypothesis>=6.170.13"]
 
 [build-system]
 requires = ["hatchling>=1.33.0"]
