@@ -4,6 +4,7 @@ import hashlib
 import itertools
 import json
 import tracemalloc
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -179,9 +180,51 @@ def test_one_conflicting_path_keeps_other_large_files_shared_and_loadable(tmp_pa
     loaded = load_cases(out, {"task": "judge"})
     assert {case.identifier: case.files for case in loaded} == {case.identifier: case.files for case in cases}
     document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
-    assert document["fixtures"] == {"a.txt": "conflict", shared_path: text}
+    assert document["fixtures"] == {"a.txt": "shared", shared_path: text}
     assert document["approved_hash"] == case_hash(cases, 7)
-    assert cast(list[dict[str, object]], document["cases"])[1]["files"] == {"a.txt": "shared", shared_path: None}
+    assert cast(list[dict[str, object]], document["cases"])[0]["files"] == {"a.txt": "conflict", shared_path: None}
+
+
+@pytest.mark.ac("gh-580:AC-2")
+def test_small_first_conflict_does_not_repeat_the_large_fixture_in_either_order(tmp_path: Path) -> None:
+    text = "b" * 300_000
+    raw = draft()[:12]
+    raw.insert(0, raw[0] | {"id": "first", "files": {"input.txt": "a"}})
+    for case in raw[1:]:
+        case["files"] = ["input.txt"]
+    path = tmp_path / DRAFT_NAME
+    _ = path.write_text(json.dumps({"fixtures": {"input.txt": text}, "cases": raw}), encoding="utf-8")
+    assert path.stat().st_size < 2_000_000
+    cases = split_cases(load_draft(path), 7)
+    digest = case_hash(cases, 7)
+    assert digest in approval_question(cases, 7)
+    for ordered in (cases, list(reversed(cases))):
+        assert case_hash(ordered, 7) == digest
+        out = tmp_path / "cases.json"
+        freeze(out, ordered, 7, digest)
+        assert out.stat().st_size < 2 * len(text)
+        document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+        assert document["fixtures"] == {"input.txt": text} and document["approved_hash"] == digest
+        loaded = load_cases(out, {"task": "judge"})
+        assert len(loaded) == 13
+        assert {case.identifier: case.files for case in loaded} == {case.identifier: case.files for case in cases}
+
+
+@pytest.mark.ac("gh-580:AC-2")
+def test_fixture_selection_covers_scored_pending_and_unscored_cases_before_encoding(tmp_path: Path) -> None:
+    cases = split_cases(load_draft(write_draft(tmp_path, draft()[:12])), 7)
+    text = "b" * 300_000
+    pending = replace(cases[0], identifier="pending", kind="trigger", files={"input.txt": text}, scored=False)
+    unscored = replace(cases[0], identifier="unscored", files={"input.txt": text}, scored=False)
+    cases += [pending, unscored]
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+    assert document["fixtures"] == {"input.txt": text}
+    assert cast(list[dict[str, object]], document["pending"])[0]["files"] == ["input.txt"]
+    assert cast(list[dict[str, object]], document["not_scored"])[0]["files"] == ["input.txt"]
+    loaded = load_cases(out, {"task": "judge"})
+    assert {case.identifier: case.files for case in loaded} == {case.identifier: case.files for case in cases if case.scored}
 
 
 @pytest.mark.ac("gh-580:AC-2")

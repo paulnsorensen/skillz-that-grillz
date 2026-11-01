@@ -141,3 +141,6 @@
 - 2026-11-01 · wiki-harvest · updated · criteria/index.md · Add the seven criteria files that the index list lacked (gh-566, gh-568, gh-571, gh-571-calibrate, gh-582, gh-591, gh-596), so the list matches the directory.
 
 - 2026-11-01 · e574f9e59194f5e0 · merged · criteria/gh-580.md · Reject frozen manifests above 2000000 bytes before writing. Exact and natural retrieval probes pass at ranks 1, 2, and 2.
+
+
+- 2026-11-01 · 2be641dad972fa40 · merged · criteria/gh-580.md · Select fixture values before encoding all manifest sections. Preserve bindings and limits. Exact and natural retrieval probes pass at ranks 1, 1, and 1.

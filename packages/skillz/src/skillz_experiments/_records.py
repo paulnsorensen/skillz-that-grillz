@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
@@ -63,7 +64,17 @@ def write_cases(path: Path, value: object) -> None:
 
 
 def share_files(cases: Sequence[Mapping[str, object]], fixtures: dict[str, str]) -> list[dict[str, object]]:
-    """Share matching files per path; keep conflicting contents inline (gh-580)."""
+    """Select fixture values by saved JSON bytes before encoding references (gh-580)."""
+    candidates: defaultdict[str, Counter[str]] = defaultdict(Counter)
+    for case in cases:
+        files = case.get("files")
+        if isinstance(files, dict):
+            for path, text in cast(dict[str, str], files).items():
+                candidates[path][text] += 1
+    for path, counts in candidates.items():
+        # Each fixture adds one string; each reference replaces an inline string with null.
+        selected = max(counts, key=lambda text: ((counts[text] - 1) * len(json.dumps(text)) - 4 * counts[text], text))
+        _ = fixtures.setdefault(path, selected)
     shared: list[dict[str, object]] = []
     for case in cases:
         files = case.get("files")

@@ -384,13 +384,13 @@ def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str
     if approved_hash != expected:
         raise CodedError("cases-unapproved", "the approved hash does not match the cases; ask for approval again")
     fixtures: dict[str, str] = {}
-    scored = [case.data() | {"provenance": case.source, "provider_approved": True} for case in cases if case.scored]
+    shared = share_files([case.data() | ({"provenance": case.source, "provider_approved": True} if case.scored else {})
+                          for case in cases], fixtures)
     document: dict[str, object] = {"schema_version": 1, "seed": seed, "approved_hash": expected, "fixtures": fixtures,
-                                   "cases": share_files(scored, fixtures),
-                                   "pending": share_files([case.data() for case in cases if case.pending], fixtures)}
-    unscored = [case.data() for case in cases if not case.scored and not case.pending]
-    if unscored:
-        document["not_scored"] = share_files(unscored, fixtures)
+                                   "cases": [data for case, data in zip(cases, shared) if case.scored],
+                                   "pending": [data for case, data in zip(cases, shared) if case.pending]}
+    if unscored := [data for case, data in zip(cases, shared) if not case.scored and not case.pending]:
+        document["not_scored"] = unscored
     write_cases(out, document)
 
 
