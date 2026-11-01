@@ -13,7 +13,6 @@ from typing import cast, final
 
 import pytest
 
-from skillz_experiments import _cli
 from skillz_experiments.run import _run, _state
 from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
@@ -347,7 +346,7 @@ def test_inlineCommand_withRepeatedDashLeadingElements_buildsOneArgv(
         seen.append(cast('Configuration | None', kwargs['configuration']))
         return {}
 
-    monkeypatch.setattr(_cli, 'run_workflow', fake)
+    monkeypatch.setattr("skillz_experiments.run.run", fake)
     out = tmp_path / 'run'
     code = main(['run', '--target', str(target), '--out', str(out), '--model', 'm', '--edit', 'prose', '--harness', 'command',
                  f'--command={sys.executable}', '--command=-I', '--command=-c', '--command=--version'])
