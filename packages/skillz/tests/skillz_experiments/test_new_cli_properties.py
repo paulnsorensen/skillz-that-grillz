@@ -5,7 +5,7 @@ import keyword
 import tomllib
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from skillz_experiments._candidate import TEXT_FILE_LIMIT
@@ -17,6 +17,8 @@ CODES = frozenset({"new-cli-module-size", "new-cli-malformed", "new-cli-second-t
 _ESCAPES = {'"': '\\"', "\\": "\\\\", "\b": "\\b", "\t": "\\t", "\n": "\\n", "\f": "\\f", "\r": "\\r"}
 # Python refuses to read an integer of more than 4300 digits, so these values sit on both sides of that limit.
 _INT_DIGITS = 4300
+# A module-size example parses a value of more than 256 KiB as TOML, so under coverage and load it can pass 200 ms.
+PROPERTY = settings(deadline=None)
 
 
 def _quoted(text: str) -> str:
@@ -204,6 +206,7 @@ def test_a_module_is_accepted_up_to_the_text_file_limit(size: int) -> None:
     ("new-cli-missing-key", _missing_key()),
     ("new-cli-bad-name", _bad_name()),
 ])
+@PROPERTY
 @given(data=st.data())
 def test_a_value_built_for_one_fault_gives_its_code(code: str, values: st.SearchStrategy[str], data: st.DataObject) -> None:
     assert _outcome(data.draw(values)) == code
