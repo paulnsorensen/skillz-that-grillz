@@ -2189,6 +2189,10 @@ def test_sandbox_unavailable_is_coded_with_a_fix_and_spends_no_task_call(
         monkeypatch.setattr(_sandbox, "SANDBOX_HELPERS", ("socat",))
     if case == "userns-restricted":
         monkeypatch.setattr(_transport, "sandboxed", process)
+        for relative, text in (("self/uid_map", "0 0 4294967295"), ("sys/kernel/apparmor_restrict_unprivileged_userns", "1")):
+            (tmp_path / "proc" / relative).parent.mkdir(parents=True, exist_ok=True)
+            _ = (tmp_path / "proc" / relative).write_text(text)
+        monkeypatch.setattr(_sandbox, "PROC", tmp_path / "proc")
     if case == "live-sandbox-failure":
         def sandbox(self: ClaudeCode, workspace: Path, argv: list[str], seconds: int | None = None) -> tuple[int, str, str]:
             del self, workspace, argv, seconds
