@@ -285,6 +285,7 @@ def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None
         ("file-size", root + ["python", ".github/scripts/check_file_lengths.py", "check"]),
         ("coverage-tests", root + ["python", ".github/scripts/test_check_coverage.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
+        ("pr-title-workflow-tests", root + ["python", ".github/scripts/test_pr_title_workflow.py"]),
         ("dist-publisher-tests", root + ["python", ".github/scripts/test_publish_dist.py"]),
         pytest("agent-session-analytics-pytest", analytics, ["packages/agent-session-analytics/tests"], "a"),
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),

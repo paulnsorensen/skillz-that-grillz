@@ -285,13 +285,3 @@ jobs:
         env:
           REQUIRE_DUCKDB: "1"
         run: just test-agent-session-analytics ${{ matrix.python }}
-
-  pr-title:
-    name: conventional commits pr title
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Validate PR title
-        uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50 # v6.1.1
-        env:
-          GITHUB_TOKEN: ${{ github.token }}

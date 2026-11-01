@@ -70,6 +70,18 @@ The 4-vCPU runner was CPU-bound: a tmpfs on `/tmp` saved about 3 percent.
 With four shards, the shards took 87 to 157 seconds and the full wait was 164 seconds.
 Six shards aim to keep each shard under the gate job's 115 seconds on that run.
 
+## Merge queue title validation
+
+Mergify tests queued changes with temporary draft pull requests.
+PR #595 passes source title validation, but queue draft #598 fails on its generated title.[^11]
+Dependabot already uses a valid Conventional Commits title, so rewriting its commits does not fix this failure.
+
+The title workflow exempts only Mergify-owned bot drafts on this repository's `mergify/merge-queue/` branches.
+It retains the required `conventional commits pr title` check and skips only the semantic-title action.
+Normal pull requests still use the pinned semantic-title action.
+Title edits rerun the separate title workflow, not code validation.
+Code checks remain unchanged for queue drafts.[^12]
+
 ## Resource ownership
 
 The scheduler creates a unique short directory under `/tmp`.
@@ -117,4 +129,7 @@ A still-live descendant fails after the observation deadline.[^9]
 [^9]: packages/skillz/tests/skillz_experiments/test_runtime.py:14-32; .context/parallelism/implementation-contract.md:55-64. The user approves the test-only correction and CI rerun.
 [^10]: validate.yml pull-request runs 39095534699 to 39102429986, initial attempts; .cheese/ci-optimize/validate-pr/BEFORE.json. The local evidence file is gitignored.
 
-_Source: Approved parallel-build contract, workspace rebase, local verification, and Linux CI finding · Updated: 2026-10-10 · Supersedes: immediate descendant-state observation_
+[^11]: [Mergify dequeue report for PR #595](https://github.com/paulnsorensen/skillz-that-grillz/pull/595#issuecomment-6554300944); [failed queue title check](https://github.com/paulnsorensen/skillz-that-grillz/actions/runs/41279938830/job/124769619836).
+[^12]: .github/workflows/pr-title.yml; .github/workflows/validate.yml; .github/scripts/test_pr_title_workflow.py. The user approves this narrow queue exception on 2026-11-01.
+
+_Source: Approved parallel-build contract, workspace rebase, local verification, Linux CI finding, and approved queue-title exception · Updated: 2026-11-01 · Supersedes: immediate descendant-state observation_
