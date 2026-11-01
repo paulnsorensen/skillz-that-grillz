@@ -1044,17 +1044,48 @@ def test_a_run_prepared_before_the_replay_stops_as_an_older_runner(
 
 
 @pytest.mark.ac("gh-571-calibrate:AC-5")
+@pytest.mark.parametrize("older_hash", [False, True])
 def test_a_run_prepared_before_the_plan_rate_was_recorded_stops_as_an_older_runner(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, older_hash: bool) -> None:
     target = make_target(tmp_path)
     out = _prepared(tmp_path, target, write_draft, approvals)
     record = read(out / "run.json")
     estimate = cast(dict[str, object], record["estimate"])
     assert estimate["seconds_per_call"] == ESTIMATE_SECONDS_PER_CALL
     _ = estimate.pop("seconds_per_call")
+    if older_hash:
+        record["engine_hash"] = "0" * 64
     write(out / "run.json", record)
-    with pytest.raises(ValueError, match="older runner; create a new run"):
-        _ = run(target, out, MODEL, live=True, factory=State().factory())
+    created: list[str] = []
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> _Fake:
+        del model, budget, checkpoint
+        created.append("provider")
+        return _Fake(State())
+
+    with pytest.raises(ValueError, match="^run was prepared by an older runner; create a new run$"):
+        _ = run(target, out, MODEL, live=True, factory=factory)
+    assert created == []
+
+
+def test_a_current_schema_run_with_an_older_engine_hash_stops_before_provider_creation(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target = make_target(tmp_path)
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    record = read(out / "run.json")
+    assert cast(dict[str, object], record["estimate"])["seconds_per_call"] == ESTIMATE_SECONDS_PER_CALL
+    record["engine_hash"] = "0" * 64
+    write(out / "run.json", record)
+    created: list[str] = []
+
+    def factory(model: str, budget: Budget, checkpoint: Callable[[], None]) -> _Fake:
+        del model, budget, checkpoint
+        created.append("provider")
+        return _Fake(State())
+
+    with pytest.raises(ValueError, match="^evaluator differs from the frozen record; create a new run$"):
+        _ = run(target, out, MODEL, live=True, factory=factory)
+    assert created == []
 
 
 def test_a_supplied_configuration_sizes_the_run_from_its_task_role_and_leaves_claude_options_out_of_the_stops(

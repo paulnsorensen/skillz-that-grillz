@@ -76,6 +76,8 @@ def freeze_identities(record: dict[str, object], seed: Candidate, model: str, co
     if seed.identity != text_field(record, "seed_hash"):
         raise ValueError("seed differs from the frozen record")
     _check_validation_policy(record)
+    if "seconds_per_call" not in mapping(field(record, "estimate")):
+        raise ValueError("run was prepared by an older runner; create a new run")
     _ = record.setdefault("engine_hash", engine_hash())
     if record["engine_hash"] != engine_hash():
         raise ValueError("evaluator differs from the frozen record; create a new run")
@@ -173,7 +175,7 @@ def verify_budget(record: dict[str, object], cases: list[Case], contract: Contra
     maximum = max(plan.sized.calls, 1)
     seconds = number_field(budget, "seconds")
     if ("reserve_seconds" not in budget or "replay_calls" not in recorded or "headroom" not in recorded
-            or "seconds_per_call" not in recorded or ("sandbox_seconds" in expected and "sandbox_seconds" not in recorded)):
+            or ("sandbox_seconds" in expected and "sandbox_seconds" not in recorded)):
         raise ValueError("run was prepared by an older runner; create a new run")
 
     def differs(found: object, wanted: object) -> bool:
