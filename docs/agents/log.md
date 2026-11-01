@@ -130,3 +130,5 @@
 
 - 2026-11-01 · f12ebe3cf4352fbb · merged · decisions/skillz-pragmatic-autoimprove.md · Record PR #577 resume diagnostic precedence without changing rejection eligibility. Frozen exact and natural retrieval probes pass at ranks 1, 1, and 2.
 
+
+- 2026-11-01 · wiki-harvest · updated · criteria/index.md · Add the seven criteria files that the index list lacked (gh-566, gh-568, gh-571, gh-571-calibrate, gh-582, gh-591, gh-596), so the list matches the directory.
