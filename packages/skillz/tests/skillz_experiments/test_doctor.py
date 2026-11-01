@@ -190,8 +190,12 @@ def test_a_userns_probe_failure_names_the_fix_for_the_proc_state(
     row = rows(_doctor.doctor("claude"))["sandbox-probe"]
     fix = cast(str, row["fix"])
     assert row["status"] == "fail" and "No permissions to create a new namespace" in cast(str, row["detail"])
-    assert ("another sandbox" in fix and "a normal shell" in fix and "sandbox.excludedCommands" in fix) == (case == "nested")
+    for phrase in ("another sandbox", "a normal shell", "sandbox.excludedCommands"):
+        assert (phrase in fix) == (case == "nested")
     assert ("apparmor" in fix.lower()) == (case == "apparmor")
+    if case == "other":
+        assert fix == ("allow unprivileged user namespaces for bwrap; check `/proc/sys/user/max_user_namespaces` and any "
+                       "distribution setting such as `kernel.unprivileged_userns_clone`")
     if case == "apparmor":
         assert fix.startswith("add an AppArmor profile for `/usr/bin/bwrap`")
         assert fix.index("userns,") < fix.index("sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0")
