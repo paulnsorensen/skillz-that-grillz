@@ -13,7 +13,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from wedge._config import ConfigError, WedgeConfig, defaults_path
+from wedge._config import BYTECODE_PYTHONS, ConfigError, WedgeConfig, defaults_path
 
 FORMAT_VERSION = 9
 TARGET_PYTHON = "3.11"
@@ -142,6 +142,8 @@ def compute_key(skill_dir: Path, config: WedgeConfig) -> str:
     document: dict[str, object] = {
         "format_version": FORMAT_VERSION,
         "target_python": TARGET_PYTHON,
+        "bytecode_pythons": BYTECODE_PYTHONS,
+        "bytecode": config.bytecode,
         "config": _digest(paths.config_file),
         "uv_lock": _digest(paths.uv_lock),
         "inputs": sorted(inputs),

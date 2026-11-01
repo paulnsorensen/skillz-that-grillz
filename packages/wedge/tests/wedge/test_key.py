@@ -3,12 +3,14 @@ build-input bytes. AC-W9: a bad ``wedge.toml`` layout is a config error."""
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Callable
 
 import pytest
 
-from wedge._config import ConfigError, WedgeConfig, load_config
+import wedge._key as wedge_key
+from wedge._config import BYTECODE_PYTHONS, ConfigError, WedgeConfig, load_config, parse_targets
 from wedge._key import compute_key
 from wedge._resolve import export_requirements, parse_requirements
 
@@ -390,3 +392,37 @@ def test_compute_key_rejects_intermediate_source_selector_symlink(tmp_path: Path
     )
     with pytest.raises(ValueError, match="must not contain symlink"):
         _ = compute_key(tmp_path, config)
+
+
+@pytest.mark.ac("gh-581:AC-10")
+def test_key_contains_exact_patch_pins_and_bytecode_selection(
+    tmp_path: Path, copy_repo_subset: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skill = copy_repo_subset(tmp_path / "checkout")
+    config = load_config(skill)
+    original = compute_key(skill, config)
+    assert compute_key(skill, replace(config, bytecode=("3.11",))) != original
+    pins = list(BYTECODE_PYTHONS)
+    pins[0] = ("3.11", "3.11.19")
+    monkeypatch.setattr(wedge_key, "BYTECODE_PYTHONS", tuple(pins))
+    assert compute_key(skill, config) != original
+
+
+@pytest.mark.ac("gh-581:AC-14")
+def test_bytecode_setting_accepts_empty_and_subset_and_rejects_unknown(tmp_path: Path) -> None:
+    common = 'name = "x"\nentry = "x:main"\nsource = "x.py"\nrepo = "o/r"\n'
+    assert parse_targets(tmp_path, common + "bytecode = []\n")[0].bytecode == ()
+    assert parse_targets(tmp_path, common + 'bytecode = ["3.11", "3.15"]\n')[0].bytecode == ("3.11", "3.15")
+    with pytest.raises(ConfigError, match="unsupported 'bytecode' Python version"):
+        _ = parse_targets(tmp_path, common + 'bytecode = ["3.10"]\n')
+    with pytest.raises(ConfigError, match="unsupported 'bytecode' Python version"):
+        _ = replace(parse_targets(tmp_path, common)[0], bytecode=("3.16",))
+
+
+@pytest.mark.ac("gh-581:AC-14")
+def test_bytecode_default_inherits_into_targets(tmp_path: Path) -> None:
+    text = 'source = "x.py"\nrepo = "o/r"\nbytecode = ["3.12"]\n'
+    text += '[[target]]\nname = "x"\nentry = "x:main"\n'
+    text += '[[target]]\nname = "y"\nentry = "x:main"\nbytecode = []\n'
+    configs = parse_targets(tmp_path, text)
+    assert [config.bytecode for config in configs] == [("3.12",), ()]
