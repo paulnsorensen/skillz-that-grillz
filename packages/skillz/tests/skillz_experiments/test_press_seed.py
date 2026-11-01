@@ -14,6 +14,7 @@ from skillz_experiments._cases import CodedError
 from skillz_experiments._intake import load_draft
 from skillz_experiments._seed import READ_LIMIT, SEED_LIMIT
 from skillz_experiments.run import Stop, run
+from seed_reader import read_seed
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -33,7 +34,7 @@ def _seed_cases(target: Path, tmp_path: Path) -> list[dict[str, object]]:
     with pytest.raises(Stop) as caught:
         _ = run(target, tmp_path / "run", "local-test", live=True)
     assert caught.value.code == "cases-missing"
-    return cast(list[dict[str, object]], json.loads(Path(cast(str, caught.value.data["seed_file"])).read_text(encoding="utf-8")))
+    return read_seed(Path(cast(str, caught.value.data["seed_file"])))
 
 
 def _unreadable(target: Path, tmp_path: Path) -> CodedError:
@@ -234,7 +235,28 @@ def test_entries_that_share_a_fixture_read_it_once(
     assert reads.count("evals/files/shared.md") == 1
 
 
-def test_the_seed_total_is_bounded_however_many_entries_share_a_fixture(
+@pytest.mark.ac("gh-580:AC-1")
+def test_entries_that_share_a_large_fixture_seed_and_draft_its_text_once(tmp_path: Path, make_target: Maker) -> None:
+    """19 entries list one fixture of a tenth of the bound, as in issue 580; the seed and the draft hold its text once."""
+    target = make_target(tmp_path)
+    size = SEED_LIMIT // 10
+    _shared_fixture(target, size, 19)
+    with pytest.raises(Stop) as caught:
+        _ = run(target, tmp_path / "run", "local-test", live=True)
+    assert caught.value.code == "cases-missing"
+    seed_file = Path(cast(str, caught.value.data["seed_file"]))
+    assert seed_file.stat().st_size < size + 20_000
+    document = cast(dict[str, object], json.loads(seed_file.read_text(encoding="utf-8")))
+    cases = cast(list[dict[str, object]], document["cases"])
+    assert [case["files"] for case in cases] == [["evals/files/shared.md"]] * 19
+    drafted = document | {"cases": [case | {"family": "fam"} for case in cases]}
+    _ = (tmp_path / "run/cases.draft.json").write_text(json.dumps(drafted), encoding="utf-8")
+    loaded = load_draft(tmp_path / "run/cases.draft.json")
+    assert [case.files for case in loaded] == [{"evals/files/shared.md": "x" * size}] * 19
+
+
+@pytest.mark.ac("gh-580:AC-1")
+def test_a_fixture_that_many_entries_share_counts_once_against_the_seed_bound(
         tmp_path: Path, make_target: Maker, monkeypatch: pytest.MonkeyPatch) -> None:
     target = make_target(tmp_path)
     _shared_fixture(target, SEED_LIMIT // 10, 200)
@@ -245,22 +267,47 @@ def test_the_seed_total_is_bounded_however_many_entries_share_a_fixture(
         return _cases.read_text(root, name, limit)
 
     monkeypatch.setattr(_seed, "read_text", spy)
-    assert "seed is too large" in str(_unreadable(target, tmp_path))
+    assert len(_seed_cases(target, tmp_path)) == 200
     assert reads.count("evals/files/shared.md") == 1
+    assert (tmp_path / "run/cases.seed.json").stat().st_size < SEED_LIMIT
 
 
-def test_the_largest_accepted_seed_still_loads_as_a_draft(tmp_path: Path, make_target: Maker) -> None:
+@pytest.mark.ac("gh-580:AC-4")
+@pytest.mark.parametrize("extra", [0, 1])
+def test_seed_bound_matches_the_written_shared_document(
+        tmp_path: Path, make_target: Maker, extra: int) -> None:
+    target = make_target(tmp_path)
+    _shared_fixture(target, 1, 200)
+    assert len(_seed_cases(target, tmp_path)) == 200
+    seed_file = tmp_path / "run/cases.seed.json"
+    overhead = seed_file.stat().st_size - 1
+    _ = (target / "evals/files/shared.md").write_text("x" * (SEED_LIMIT - overhead + extra), encoding="utf-8")
+    seed_file.unlink()
+    if extra:
+        assert "seed is too large" in str(_unreadable(target, tmp_path))
+        assert not seed_file.exists()
+    else:
+        assert len(_seed_cases(target, tmp_path)) == 200
+        assert seed_file.stat().st_size == SEED_LIMIT
+
+
+@pytest.mark.ac("gh-580:AC-3")
+@pytest.mark.ac("gh-580:AC-4")
+def test_the_largest_accepted_seed_of_distinct_fixtures_still_loads_as_an_inline_draft(tmp_path: Path, make_target: Maker) -> None:
     target = make_target(tmp_path)
     entries = 4
-    _shared_fixture(target, SEED_LIMIT // entries - 1000, entries)
+    (target / "evals/files").mkdir()
+    paths = [f"evals/files/f{index}.md" for index in range(entries)]
+    for path in paths:
+        _ = (target / path).write_text("x" * (SEED_LIMIT // entries - 1000), encoding="utf-8")
+    _evals(target, [_entry(f"e{index}", assertions=["a"], files=[path]) for index, path in enumerate(paths)])
     seed = _seed_cases(target, tmp_path)
     assert len(seed) == entries
     out = tmp_path / "run"
-    out.mkdir(mode=0o700, parents=True, exist_ok=True)
     _ = (out / "cases.draft.json").write_text(json.dumps([case | {"family": "f"} for case in seed]), encoding="utf-8")
     assert len(load_draft(out / "cases.draft.json")) == entries
     (out / "cases.draft.json").unlink()
-    _ = (target / "evals/files/shared.md").write_text("x" * (SEED_LIMIT // entries + 1000), encoding="utf-8")
+    _ = (target / paths[-1]).write_text("x" * (SEED_LIMIT // entries + 4000), encoding="utf-8")
     assert "seed is too large" in str(_unreadable(target, tmp_path))
 
 
@@ -360,6 +407,7 @@ def test_a_draft_without_evals_json_is_never_checked_for_coverage(
     assert caught.value.code == "cases-unapproved"
 
 
+@pytest.mark.ac("gh-580:AC-4")
 def test_one_entry_with_many_distinct_fixtures_stops_reading_at_the_seed_bound(
         tmp_path: Path, make_target: Maker, monkeypatch: pytest.MonkeyPatch) -> None:
     target = make_target(tmp_path)
@@ -379,6 +427,7 @@ def test_one_entry_with_many_distinct_fixtures_stops_reading_at_the_seed_bound(
     assert len([name for name in reads if name != "evals/evals.json"]) <= 11
 
 
+@pytest.mark.ac("gh-580:AC-4")
 def test_the_fixture_bound_counts_utf8_bytes_not_characters(
         tmp_path: Path, make_target: Maker, monkeypatch: pytest.MonkeyPatch) -> None:
     """A three-byte character counts three bytes, so multibyte fixtures stop reading at the same byte bound."""

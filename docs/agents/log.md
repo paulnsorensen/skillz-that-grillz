@@ -128,7 +128,19 @@
 
 - 2026-10-30 · 6070cd54e776b3bf · merged · decisions/skillz-autoimprove.md · Record approved trusted activation and native shell/cwd parsing constraints from PR #579.
 
+- 2026-11-01 · 1b8434010d4146fb · merged · criteria/gh-580.md · Stream approval hashing without repeated fixture allocations. Preserve legacy digests and byte limits.
+
+
+- 2026-11-01 · bc17b82fd0aaa813 · merged · criteria/gh-580.md · Measure the written seed bytes and keep legacy draft schema compatibility. Exact probe ranks first; natural probe ranks second.
+
+
 - 2026-11-01 · f12ebe3cf4352fbb · merged · decisions/skillz-pragmatic-autoimprove.md · Record PR #577 resume diagnostic precedence without changing rejection eligibility. Frozen exact and natural retrieval probes pass at ranks 1, 1, and 2.
 
+- 2026-11-01 · 01d8d6d36c719c55 · merged · criteria/gh-580.md · Share matching fixture paths despite inline conflicts. Preserve legacy formats, approval hashes, and byte bounds. Frozen exact and natural probes pass at ranks 1, 1, and 2.
 
 - 2026-11-01 · wiki-harvest · updated · criteria/index.md · Add the seven criteria files that the index list lacked (gh-566, gh-568, gh-571, gh-571-calibrate, gh-582, gh-591, gh-596), so the list matches the directory.
+
+- 2026-11-01 · e574f9e59194f5e0 · merged · criteria/gh-580.md · Reject frozen manifests above 2000000 bytes before writing. Exact and natural retrieval probes pass at ranks 1, 2, and 2.
+
+
+- 2026-11-01 · 2be641dad972fa40 · merged · criteria/gh-580.md · Select fixture values before encoding all manifest sections. Preserve bindings and limits. Exact and natural retrieval probes pass at ranks 1, 1, and 1.

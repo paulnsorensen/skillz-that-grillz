@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import itertools
 import json
+import tracemalloc
+from dataclasses import replace
 from pathlib import Path
 from typing import cast
 
@@ -98,6 +101,209 @@ def test_hash_mismatch_raises_cases_unapproved_and_writes_nothing(tmp_path: Path
         freeze(out, cases, 1, case_hash(cases, 2))
     assert caught.value.code == "cases-unapproved"
     assert not out.exists()
+
+
+@pytest.mark.ac("gh-580:AC-2")
+@pytest.mark.parametrize("existing", [False, True], ids=["new-file", "existing-file"])
+@pytest.mark.parametrize("request_text", ["x", "é😀\n"], ids=["ascii", "escaped-unicode"])
+def test_frozen_manifest_accepts_exact_limit_and_rejects_one_byte_over_before_writing(
+        tmp_path: Path, existing: bool, request_text: str) -> None:
+    raw = draft()
+    raw[-1]["request"] = request_text
+    path = write_draft(tmp_path, raw)
+    cases = split_cases(load_draft(path), 7)
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    raw[-1]["request"] = request_text + "x" * (2_000_000 - out.stat().st_size)
+    path = write_draft(tmp_path, raw)
+    assert path.stat().st_size < 2_000_000
+    cases = split_cases(load_draft(path), 7)
+    freeze(out, cases, 7, case_hash(cases, 7))
+    accepted = out.read_bytes()
+    assert len(accepted) == 2_000_000 and accepted.endswith(b"\n")
+    assert {case.identifier: case.files for case in load_cases(out, {"task": "judge"})} == {
+        case.identifier: case.files for case in cases if case.scored}
+    document = cast(dict[str, object], json.loads(accepted))
+    assert next(item["request"] for item in cast(list[dict[str, object]], document["pending"])
+                if item["id"] == raw[-1]["id"]) == raw[-1]["request"]
+    if not existing:
+        out.unlink()
+    raw[-1]["request"] = str(raw[-1]["request"]) + "x"
+    path = write_draft(tmp_path, raw)
+    assert path.stat().st_size < 2_000_000
+    cases = split_cases(load_draft(path), 7)
+    before = sorted(tmp_path.iterdir())
+    with pytest.raises(CodedError) as caught:
+        freeze(out, cases, 7, case_hash(cases, 7))
+    assert caught.value.code == "cases-too-large"
+    assert sorted(tmp_path.iterdir()) == before
+    assert out.read_bytes() == accepted if existing else not out.exists()
+
+
+def shared_draft(tmp_path: Path, text: str) -> Path:
+    """Write the draft in the object form: every task case lists one path into the shared `fixtures` map."""
+    cases = [case | {"files": ["input.txt"]} if "files" in case else case for case in draft()]
+    path = tmp_path / DRAFT_NAME
+    _ = path.write_text(json.dumps({"fixtures": {"input.txt": text}, "cases": cases}), encoding="utf-8")
+    return path
+
+
+@pytest.mark.ac("gh-580:AC-2")
+def test_cases_that_share_a_large_file_freeze_its_text_once_and_load_it_into_each_case(tmp_path: Path) -> None:
+    text = "y" * 300_000  # 12 inline copies pass the 2 MB cap of cases.json
+    cases = split_cases(load_draft(shared_draft(tmp_path, text)), 7)
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    assert out.stat().st_size < 2 * len(text)
+    document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+    assert document["fixtures"] == {"input.txt": text} and document["approved_hash"] == case_hash(cases, 7)
+    loaded = load_cases(out, {"task": "judge"})
+    assert len(loaded) == 12 and all(case.files == {"input.txt": text} for case in loaded)
+
+
+@pytest.mark.ac("gh-580:AC-2")
+@pytest.mark.parametrize("mixed", [False, True], ids=["path-list", "mixed-map"])
+@pytest.mark.parametrize("shared_path", ["b.txt", " "], ids=["ordinary-path", "whitespace-path"])
+def test_one_conflicting_path_keeps_other_large_files_shared_and_loadable(tmp_path: Path, mixed: bool, shared_path: str) -> None:
+    text = "b" * 300_000
+    raw = draft()[:12]
+    for case in raw:
+        case["files"] = {"a.txt": None, shared_path: None} if mixed else ["a.txt", shared_path]
+    raw[0]["files"] = {"a.txt": "conflict", shared_path: text}
+    path = tmp_path / DRAFT_NAME
+    _ = path.write_text(json.dumps({"fixtures": {"a.txt": "shared", shared_path: text}, "cases": raw}), encoding="utf-8")
+    assert path.stat().st_size < 2_000_000
+    cases = split_cases(load_draft(path), 7)
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    assert out.stat().st_size < 2 * len(text)
+    loaded = load_cases(out, {"task": "judge"})
+    assert {case.identifier: case.files for case in loaded} == {case.identifier: case.files for case in cases}
+    document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+    assert document["fixtures"] == {"a.txt": "shared", shared_path: text}
+    assert document["approved_hash"] == case_hash(cases, 7)
+    assert cast(list[dict[str, object]], document["cases"])[0]["files"] == {"a.txt": "conflict", shared_path: None}
+
+
+@pytest.mark.ac("gh-580:AC-2")
+def test_small_first_conflict_does_not_repeat_the_large_fixture_in_either_order(tmp_path: Path) -> None:
+    text = "b" * 300_000
+    raw = draft()[:12]
+    raw.insert(0, raw[0] | {"id": "first", "files": {"input.txt": "a"}})
+    for case in raw[1:]:
+        case["files"] = ["input.txt"]
+    path = tmp_path / DRAFT_NAME
+    _ = path.write_text(json.dumps({"fixtures": {"input.txt": text}, "cases": raw}), encoding="utf-8")
+    assert path.stat().st_size < 2_000_000
+    cases = split_cases(load_draft(path), 7)
+    digest = case_hash(cases, 7)
+    assert digest in approval_question(cases, 7)
+    for ordered in (cases, list(reversed(cases))):
+        assert case_hash(ordered, 7) == digest
+        out = tmp_path / "cases.json"
+        freeze(out, ordered, 7, digest)
+        assert out.stat().st_size < 2 * len(text)
+        document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+        assert document["fixtures"] == {"input.txt": text} and document["approved_hash"] == digest
+        loaded = load_cases(out, {"task": "judge"})
+        assert len(loaded) == 13
+        assert {case.identifier: case.files for case in loaded} == {case.identifier: case.files for case in cases}
+
+
+@pytest.mark.ac("gh-580:AC-2")
+def test_fixture_selection_covers_scored_pending_and_unscored_cases_before_encoding(tmp_path: Path) -> None:
+    cases = split_cases(load_draft(write_draft(tmp_path, draft()[:12])), 7)
+    text = "b" * 300_000
+    pending = replace(cases[0], identifier="pending", kind="trigger", files={"input.txt": text}, scored=False)
+    unscored = replace(cases[0], identifier="unscored", files={"input.txt": text}, scored=False)
+    cases += [pending, unscored]
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+    assert document["fixtures"] == {"input.txt": text}
+    assert cast(list[dict[str, object]], document["pending"])[0]["files"] == ["input.txt"]
+    assert cast(list[dict[str, object]], document["not_scored"])[0]["files"] == ["input.txt"]
+    loaded = load_cases(out, {"task": "judge"})
+    assert {case.identifier: case.files for case in loaded} == {case.identifier: case.files for case in cases if case.scored}
+
+
+@pytest.mark.ac("gh-580:AC-2")
+def test_shared_fixture_approval_hash_does_not_collect_all_inline_copies(tmp_path: Path) -> None:
+    text = "y" * 300_000
+    cases = split_cases(load_draft(shared_draft(tmp_path, text)), 7)
+    tracemalloc.start()
+    try:
+        result = case_hash(cases, 7)
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert len(result) == 64
+    assert peak < len(text) * 8
+
+
+@pytest.mark.ac("gh-580:AC-3")
+@pytest.mark.parametrize("statistics", [None, {"name": "é\\\"\\n", "nested": [True, None, 1.25, {"x": 2}]}])
+def test_approval_hash_matches_legacy_canonical_json(
+        tmp_path: Path, statistics: dict[str, object] | None) -> None:
+    cases = split_cases(load_draft(shared_draft(tmp_path, "é\\\"\\n")), 7)
+    body: dict[str, object] = {"seed": 7, "cases": [case.data() for case in sorted(cases, key=lambda c: c.identifier)]}
+    if statistics is not None:
+        body["statistics"] = statistics
+    expected = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+    assert case_hash(list(reversed(cases)), 7, statistics) == expected
+
+
+@pytest.mark.ac("gh-580:AC-2")
+def test_unknown_frozen_fixture_reference_names_the_case_and_path(tmp_path: Path) -> None:
+    cases = split_cases(load_draft(shared_draft(tmp_path, "hello\n")), 7)
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+    identifier = cast(list[dict[str, object]], document["cases"])[0]["id"]
+    document["fixtures"] = {}
+    _ = out.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError) as caught:
+        _ = load_cases(out, {"task": "judge"})
+    assert str(caught.value) == f"case {identifier!r} files lists 'input.txt', which is not in fixtures"
+
+
+@pytest.mark.ac("gh-580:AC-3")
+def test_inline_files_in_a_list_draft_and_in_cases_json_still_load_as_the_shared_form_does(tmp_path: Path) -> None:
+    inline = split_cases(load_draft(write_draft(tmp_path, draft())), 7)
+    shared = split_cases(load_draft(shared_draft(tmp_path, "hello\n")), 7)
+    assert case_hash(inline, 7) == case_hash(shared, 7)
+    out = tmp_path / "cases.json"
+    freeze(out, shared, 7, case_hash(shared, 7))
+    document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+    fixtures = cast(dict[str, str], document.pop("fixtures"))
+    document["cases"] = [case | {"files": {name: fixtures[name] for name in cast(list[str], case["files"])}}
+                         for case in cast(list[dict[str, object]], document["cases"])]
+    legacy = tmp_path / "legacy.json"
+    _ = legacy.write_text(json.dumps(document), encoding="utf-8")
+    assert load_cases(legacy, {"task": "judge"}) == load_cases(out, {"task": "judge"})
+
+
+REFUSED: list[tuple[dict[str, object], str]] = [
+    ({"fixtures": {}, "cases": [{"files": ["input.txt"]}]}, "not in fixtures"),
+    ({"fixtures": {}, "cases": [{"files": {"input.txt": None}}]}, "not in fixtures"),
+    ({"fixtures": {"input.txt": None}, "cases": [{}]}, "must be nonempty text"),
+    ({"fixtures": {"input.txt": "t"}, "cases": [{"files": {"input.txt": None, "other.txt": False}}]}, "must be nonempty text"),
+    ({"fixtures": {"input.txt": "t"}, "cases": [{"files": {"input.txt": None, "../x": "t"}}]}, "unsafe relative path"),
+    ({"fixtures": {"input.txt": "t"}, "cases": [{"files": {"input.txt": None, "AGENTS.md": "t"}}]}, "runtime-owned"),
+    ({"fixtures": {}, "cases": [], "extra": 1}, "only fixtures and a nonempty cases list"),
+    ({"fixtures": {"../x": "t"}, "cases": [{}]}, "unsafe relative path"),
+]
+
+
+@pytest.mark.parametrize(("document", "fragment"), REFUSED)
+def test_a_shared_draft_with_an_unknown_path_an_extra_key_or_an_unsafe_fixture_is_refused(
+        tmp_path: Path, document: dict[str, object], fragment: str) -> None:
+    if document["cases"]:
+        document["cases"] = [draft()[0] | cast(list[dict[str, object]], document["cases"])[0]]
+    path = tmp_path / DRAFT_NAME
+    _ = path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError, match=fragment):
+        _ = load_draft(path)
 
 
 def test_too_few_families_names_the_minimum(tmp_path: Path) -> None:

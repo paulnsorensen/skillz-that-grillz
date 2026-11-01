@@ -93,8 +93,12 @@ def read_text(root: Path, name: str, limit: int) -> str:
         raise ValueError(f"{name} must be UTF-8 text") from None
 
 
-def text_map(value: object) -> dict[str, str]:
-    files = {relative(key): string(item, key) for key, item in mapping(value).items()}
+def text_map(value: object, shared: Mapping[str, str] | None = None, *, label: str = "files") -> dict[str, str]:
+    entries = mapping(dict.fromkeys(cast(list[str], value)) if isinstance(value, list) and shared is not None
+                      and all(isinstance(path, str) for path in cast(list[object], value)) else cast(object, value))
+    if shared is not None and (missing := [key for key, item in entries.items() if item is None and key not in shared]):
+        raise ValueError(f"{label} lists {missing[0]!r}, which is not in fixtures")
+    files = {relative(key): string(shared[key] if item is None and shared is not None else item, key) for key, item in entries.items()}
     forbidden = {"home", "tmp", "output", "capture", "answer.json", "response-schema.json", "AGENTS.md", "CLAUDE.md"}
     if any(PurePosixPath(key).parts[0] in forbidden or PurePosixPath(key).name == "AGENTS.md" for key in files):
         raise ValueError("fixture collides with runtime-owned paths")
@@ -357,20 +361,15 @@ class Case:
 
 
 def _kind(item: dict[str, object], kinds: Mapping[str, str]) -> str:
-    if "kind" in item:
-        kind = item["kind"]
-    elif "inspection" in kinds:
-        kind = "inspection"
-    elif len(kinds) == 1:
-        kind = next(iter(kinds))
-    else:
+    if "kind" not in item and "inspection" not in kinds and len(kinds) != 1:
         raise ValueError("case needs a kind declared in the contract")
+    kind = item["kind"] if "kind" in item else "inspection" if "inspection" in kinds else next(iter(kinds))
     if not isinstance(kind, str) or kind not in kinds:
         raise ValueError(f"kind {kind!r} is not declared in the contract; declared kinds: {', '.join(sorted(kinds))}")
     return kind
 
 
-def _case(value: object, kinds: Mapping[str, str]) -> Case:
+def _case(value: object, kinds: Mapping[str, str], fixtures: Mapping[str, str]) -> Case:
     item = mapping(value)
     split = string(item.get("split"), "split")
     if split not in get_args(Split):
@@ -385,7 +384,7 @@ def _case(value: object, kinds: Mapping[str, str]) -> Case:
     reviewed = item.get("labels_reviewed", False)
     if type(reviewed) is not bool:
         raise ValueError("labels_reviewed must be boolean")
-    files = text_map(item.get("files", {}))
+    files = text_map(item.get("files", {}), fixtures, label=f"case {item.get('id')!r} files")
     expected = audit_labels(item.get("expected"), files) if kinds[kind] == "audit" else item.get("expected")
     if expected is None and kinds[kind] == "command":
         raise CodedError("expected-missing", f"case {item.get('id')!r} of kind {kind!r} needs an expected value")
@@ -409,8 +408,8 @@ def load_manifest(path: Path) -> dict[str, object]:
 def load_cases(path: Path, kinds: Mapping[str, str] | None = None) -> list[Case]:
     """Load cases. `kinds` maps each declared kind to its grader type."""
     document = load_manifest(path)
-    declared = LEGACY_KINDS if kinds is None else kinds
-    cases = [_case(item, declared) for item in cast(list[object], document["cases"])]
+    declared, fixtures = LEGACY_KINDS if kinds is None else kinds, text_map(document.get("fixtures", {}))
+    cases = [_case(item, declared, fixtures) for item in cast(list[object], document["cases"])]
     identifiers: set[str] = set()
     families: dict[str, str] = {}
     for case in cases:
