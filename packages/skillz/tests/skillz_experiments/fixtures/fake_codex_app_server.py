@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import cast
 
@@ -94,8 +95,10 @@ for line in sys.stdin:
         if mode == "wrong_turn":
             send({"method": "item/completed", "params": {"threadId": thread, "turnId": "other", "item": {}}})
             continue
+        if mode in {"no_answer", "decreasing_usage"}:
+            # Semantic checks must tolerate a response delayed beyond the timeout test's deadline.
+            time.sleep(0.2)
         if mode == "timeout":
-            import time
             time.sleep(10)
         if mode == "approval":
             send({"id": 100, "method": "item/commandExecution/requestApproval", "params": {"threadId": thread}})
