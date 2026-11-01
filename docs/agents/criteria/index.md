@@ -132,6 +132,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-563](./gh-563.md) — gh-563: a large editable set gets a longer reflection timeout, a prose fallback or a warning, and an idle stop trigger
 - [gh-566](./gh-566.md) — gh-566: Codex skill discovery accepts the canonical skill path on macOS
 - [gh-568](./gh-568.md) — gh-568: Live.kill treats an exited child as a gone group
+- [gh-571-calibrate](./gh-571-calibrate.md) — gh-571-calibrate: the plan estimate charges the measured per-call time
 - [gh-571](./gh-571.md) — gh-571: the run estimate shows the prompt-scaled reflection time
 - [gh-580](./gh-580.md) — gh-580: a fixture that many cases share counts once against the seed bound
 - [gh-582](./gh-582.md) — gh-582: The doctor names the nested-sandbox fix before the AppArmor fix

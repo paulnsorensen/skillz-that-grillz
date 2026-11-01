@@ -77,7 +77,8 @@ def _sleeper(budget: Budget) -> Command:
     return Command((sys.executable, "-c", "import time; time.sleep(30)"), "m", budget, lambda: None)
 
 
-def test_the_per_call_estimate_is_the_plan_estimate() -> None:
+@pytest.mark.ac("gh-571-calibrate:AC-2")
+def test_the_per_call_timeout_base_is_the_slow_call_rate() -> None:
     assert Budget(10, 1000, 0).call_seconds == SECONDS_PER_CALL and CALL_TIMEOUT_FACTOR == 4
 
 

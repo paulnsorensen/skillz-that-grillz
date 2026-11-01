@@ -215,9 +215,11 @@ A `task` case needs `files` and `expected` but no `brief`.
 
 The seed, the draft, and `RUN/cases.json` keep each fixture text once.
 The seed and `RUN/cases.json` are objects with a `fixtures` map (path to text) and a `cases` list.
-In these files, a case `files` value is a list of paths into `fixtures`.
+A case `files` value can list paths into `fixtures`, or map paths to inline text.
+A map can also use `null` to reference that path in `fixtures`: `{"input.txt": null, "note.txt": "local text"}`.
+This keeps matching files shared when another path has different text.
 The draft is a list of cases with inline `files` maps, or an object with `fixtures` and `cases`.
-A path that is not in `fixtures` stops the run, and the message names the case.
+Legacy list drafts do not accept references. An unknown fixture path stops the run, and the message names the case.
 The seed bound counts each distinct fixture once, however many cases list it.
 
 ## Repository-internal formats

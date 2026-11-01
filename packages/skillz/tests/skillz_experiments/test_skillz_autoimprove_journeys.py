@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import random
 import subprocess
@@ -11,6 +12,7 @@ from typing import cast
 
 import pytest
 
+from skillz_experiments._budget import ESTIMATE_SECONDS_PER_CALL, MAX_CONCURRENT_CALLS
 from skillz_experiments._cases import CodedError, load_cases
 from skillz_experiments._contract import Contract, load_contract, parse
 from skillz_experiments._gate_files import expand_gates
@@ -78,15 +80,18 @@ def test_the_seed_puts_the_hard_families_in_train_and_holds_two_families_in_each
 
 
 @pytest.mark.ac("kit-harder-journeys:AC-3")
+@pytest.mark.ac("gh-571-calibrate:AC-1")
 def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two_repeats(tmp_path: Path) -> None:
     rules = contract(tmp_path)
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
     # Each of the 6 validation journeys runs `VALIDATION_REPEATS` times per search candidate (gh-500).
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (927, 60, 210, 48, 258)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (999, 67, 210, 48, 258)
     assert plan.reserve == plan.holdout_calls + plan.replay_calls
-    assert plan.sized.seconds == 28790
+    # The 30 second plan rate (gh-571) fits a larger search under the 1000-call journey cap than the old 60 second rate did
+    # (927 calls, 60 metric calls). The seconds are 999 calls at 30 seconds over 2 concurrent calls, plus the sandbox time.
+    assert plan.sized.seconds == math.ceil(999 * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS) + plan.sandbox_total == 16035
 
 
 SEED_EVALUATIONS = 9
@@ -469,7 +474,7 @@ def test_the_split_and_the_plan_do_not_depend_on_the_order_of_the_draft_cases(tm
     assert {case.identifier: case.split for case in cases} == base
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (927, 60, 210, 48, 28790)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (999, 67, 210, 48, 16035)
 
 
 def ask_harness_cases(tmp_path: Path) -> list[dict[str, object]]:

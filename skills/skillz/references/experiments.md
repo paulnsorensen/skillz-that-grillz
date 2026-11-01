@@ -86,11 +86,13 @@ The private failure evidence file keeps a redacted stderr excerpt (at most 1 KiB
 The last `turn.failed` message always classifies the failure and stays in the evidence, however many error events come before it.
 A ChatGPT-plan usage limit ("You've hit your usage limit") fails as `usage-limited`. The runner does not retry it and does not halve the concurrent calls.
 It is an unscored `evaluation-failed` outcome that counts toward `search-faulted` and `holdout-faulted`. The runner does not read its "try again at" time as a wait.
-Each model call (every harness) has a per-call timeout of 4 times the per-call estimate, capped by the remaining search time.
+Each model call (every harness) has a per-call timeout of 4 times the slow-call rate, capped by the remaining search time.
 The timeout also adds 1 second per 200 prompt characters, before the cap.
 A reflection prompt holds every editable file, so a large editable set gets a longer reflection timeout.
 The exception is a Claude journey turn. It still runs under the remaining search time only.
-The estimate is 60 seconds plus the sandbox seconds of one evaluation in the run plan.
+The slow-call rate is 60 seconds plus the sandbox seconds of one evaluation in the run plan.
+The holdout gate reserve also charges 60 seconds for each gate call. The plan estimate charges 30 seconds for each call.
+In 22 live runs, one of them a journey run, the effective time for each call was 5.5 to 21.7 seconds.
 The clock starts after the call gets a call slot. A wait for a slot that reaches the search deadline is a budget stop, not a timeout.
 Each retry attempt gets the same limit.
 A task or judge call that exceeds it ends as an `evaluation-failed` outcome with `reason: timeout`.
@@ -124,7 +126,7 @@ The fallback also applies when the `prose+cli` editable text exceeds 200000 char
 An explicit `--edit` never falls back. When the planned editable text exceeds 200000 characters, the `budget-unapproved` stop holds `reflection_warning`, and the runner writes it on stderr.
 When the runner cannot plan the prose set, for example because the contract `editable` list names a script, the run keeps `prose+cli`, and `reflection_warning` gives no `--edit prose` advice.
 The estimate holds `reflection` with `calls`, `editable_chars`, and `seconds`.
-Each reflection call reads and returns the editable text. Each call takes 60 seconds plus 1 second per 200 characters, and the calls run one at a time.
+Each reflection call reads and returns the editable text. Each call takes 30 seconds plus 1 second per 200 characters, and the calls run one at a time.
 When that time takes the run past its seconds cap, the stop holds `reflection_time_warning`.
 The runner also writes it on stderr, on an approved run too. The search can then stop at the deadline before it spends its calls.
 The warning does not change the calls, the seconds, or the search size. When `reflection_warning` also fires, only that warning gives the advice.
@@ -286,6 +288,8 @@ Give each judged case its criteria. Follow the criteria drafting reference that 
 When `<skill>/evals/evals.json` or `<skill>/evals/journeys.json` exists, the runner writes the seed cases to `RUN/cases.seed.json` (mode 0600). The stop names that file in `seed_file` and shows counts in `seed_summary`. Start the draft from the file.
 The seed file is an object. Its `cases` list holds one case for each entry, in file order. The runner maps them and does not write the draft. To accept the seed unchanged, copy the file to `RUN/cases.draft.json`.
 The seed keeps each fixture text once in its `fixtures` map. A seed case lists its fixture paths in `files`, so many cases can share one large fixture.
+When another path has different text, `files` uses a map: strings hold inline text, and `null` references that path in `fixtures`.
+The draft and frozen cases accept this mixed map, complete path lists, and complete inline maps.
 Each seed case has `source: skill`, the entry `name` as `id` (`eval-<id>` when the entry has no `name`), and the `prompt` as `request`.
 An explicit `kind` of `trigger`, `near-miss`, or `task` wins. A contradiction stops the seed: `expected_skill: null` with a kind other than `near-miss`, `assertions` on a trigger or near-miss, or a task with no `expected_output` and no `assertions`.
 When an entry has no `kind`, the reader infers it. `expected_skill: null` is `near-miss`. Nonempty `assertions` is `task`. A string `expected_skill` with no assertions is ambiguous and stops the seed: set `kind`. Any other entry is a `task` graded on `expected_output`.
@@ -1114,7 +1118,8 @@ Keep server scripts in a companion, or out of the skill.
 A manifest that mixes task and journey cases pays for each journey case only once, not for every case.
 A run with any journey case shows a separate journey estimate line, with `calls`, `seconds`, `ceiling_calls`, and `ceiling_seconds`.
 The runner asks for approval once. It stops with `budget-exhausted` at 1000 calls or 28800 seconds.
-The plan charges 30 seconds for each call. The seconds cap therefore binds first, at about 960 calls.
+The plan charges 30 seconds for each call, or 15 seconds with 2 calls at once. The call cap therefore binds first, at 1000 calls.
+The estimate records `seconds_per_call`. A run prepared with the earlier 60-second rate stops on resume: create a new run.
 A run without a journey case keeps the limits of 200 calls and 7200 seconds.
 
 ## Isolation and records

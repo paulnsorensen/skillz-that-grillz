@@ -133,3 +133,8 @@
 
 - 2026-11-01 · bc17b82fd0aaa813 · merged · criteria/gh-580.md · Measure the written seed bytes and keep legacy draft schema compatibility. Exact probe ranks first; natural probe ranks second.
 
+
+- 2026-11-01 · f12ebe3cf4352fbb · merged · decisions/skillz-pragmatic-autoimprove.md · Record PR #577 resume diagnostic precedence without changing rejection eligibility. Frozen exact and natural retrieval probes pass at ranks 1, 1, and 2.
+
+
+- 2026-11-01 · 01d8d6d36c719c55 · merged · criteria/gh-580.md · Share matching fixture paths despite inline conflicts. Preserve legacy formats, approval hashes, and byte bounds. Frozen exact and natural probes pass at ranks 1, 1, and 2.

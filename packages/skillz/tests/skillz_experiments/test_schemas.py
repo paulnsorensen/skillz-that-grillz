@@ -114,6 +114,12 @@ EXAMPLES: list[tuple[SchemaName, object, bool, str]] = [
     ("draft", [_with(DRAFT, kind="trigger", files=[])], True, "draft-legacy-empty-files"),
     ("draft", {"cases": [DRAFT]}, True, "draft-object-inline-files"),
     ("draft", {"fixtures": {"in.txt": "t"}, "cases": [_with(DRAFT, files=["in.txt"])]}, True, "draft-shared-fixtures"),
+    ("draft", {"fixtures": {"in.txt": "t"}, "cases": [_with(DRAFT, files={"in.txt": None, "local.txt": "local"})]},
+     True, "draft-mixed-fixtures"),
+    ("draft", [_with(DRAFT, files={"in.txt": None})], False, "draft-legacy-null-reference"),
+    ("draft", {"fixtures": {"in.txt": None}, "cases": [DRAFT]}, False, "draft-null-fixture-text"),
+    ("draft", {"fixtures": {"in.txt": "t"}, "cases": [_with(DRAFT, files={"in.txt": None, "local.txt": 7})]},
+     False, "draft-mixed-invalid-text"),
     ("draft", {"cases": [DRAFT], "bogus": 1}, False, "draft-shared-unknown-key"),
     ("draft", {"fixtures": {}, "cases": []}, False, "draft-shared-empty"),
 ]

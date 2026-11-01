@@ -94,11 +94,11 @@ def read_text(root: Path, name: str, limit: int) -> str:
 
 
 def text_map(value: object, shared: Mapping[str, str] | None = None, *, label: str = "files") -> dict[str, str]:
-    if isinstance(value, list) and shared is not None:  # paths into the shared `fixtures` map of the file (gh-580)
-        if missing := [path for path in cast(list[object], value) if not isinstance(path, str) or path not in shared]:
-            raise ValueError(f"{label} lists {missing[0]!r}, which is not in fixtures")
-        value = {path: shared[path] for path in cast(list[str], value)}
-    files = {relative(key): string(item, key) for key, item in mapping(cast(object, value)).items()}
+    entries = mapping(dict.fromkeys(cast(list[str], value)) if isinstance(value, list) and shared is not None
+                      and all(isinstance(path, str) for path in cast(list[object], value)) else cast(object, value))
+    if shared is not None and (missing := [key for key, item in entries.items() if item is None and key not in shared]):
+        raise ValueError(f"{label} lists {missing[0]!r}, which is not in fixtures")
+    files = {relative(key): string(shared[key] if item is None and shared is not None else item, key) for key, item in entries.items()}
     forbidden = {"home", "tmp", "output", "capture", "answer.json", "response-schema.json", "AGENTS.md", "CLAUDE.md"}
     if any(PurePosixPath(key).parts[0] in forbidden or PurePosixPath(key).name == "AGENTS.md" for key in files):
         raise ValueError("fixture collides with runtime-owned paths")

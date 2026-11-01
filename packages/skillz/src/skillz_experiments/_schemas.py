@@ -132,8 +132,9 @@ def draft() -> Json:
     """Describe shared drafts and legacy lists without unresolved fixture references."""
     properties = {name: value for name, value in _journey_properties().items() if name in DRAFT_FIELDS}
     properties["kind"] = NONEMPTY | {"description": "trigger, near-miss, task, or a journey kind of the contract."}
-    properties["files"] = {"anyOf": [TEXT_MAP, {"type": "array", "items": {"type": "string"}}],
-                           "description": "Inline files (path to text), or a list of paths into the top-level fixtures map."}
+    properties["files"] = {"anyOf": [{"type": "object", "additionalProperties": {"type": ["string", "null"]}},
+                                    {"type": "array", "items": {"type": "string"}}],
+                           "description": "Path list, or path map with inline text and null references into top-level fixtures."}
     properties["source"] = {"enum": list(SOURCES)}
     properties["expected"] = {"description": "The reference. A journey case takes the typed object. A judged task case "
                               + "takes an object with criteria, next to its expected_output and assertions.",

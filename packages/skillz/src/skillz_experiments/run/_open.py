@@ -76,6 +76,8 @@ def freeze_identities(record: dict[str, object], seed: Candidate, model: str, co
     if seed.identity != text_field(record, "seed_hash"):
         raise ValueError("seed differs from the frozen record")
     _check_validation_policy(record)
+    if "seconds_per_call" not in mapping(field(record, "estimate")):
+        raise ValueError("run was prepared by an older runner; create a new run")
     _ = record.setdefault("engine_hash", engine_hash())
     if record["engine_hash"] != engine_hash():
         raise ValueError("evaluator differs from the frozen record; create a new run")

@@ -55,16 +55,15 @@ def write(path: Path, value: object) -> None:
 
 
 def share_files(cases: Sequence[Mapping[str, object]], fixtures: dict[str, str]) -> list[dict[str, object]]:
-    """Return `cases` with each `files` map as a list of paths into `fixtures`, which this call fills (gh-580).
-
-    A file that many cases list is stored once. A case whose path holds other text in `fixtures` keeps its files inline.
-    """
+    """Share matching files per path; keep conflicting contents inline (gh-580)."""
     shared: list[dict[str, object]] = []
     for case in cases:
         files = case.get("files")
-        if isinstance(files, dict) and all(fixtures.get(path, text) == text for path, text in cast(dict[str, str], files).items()):
-            fixtures.update(cast(dict[str, str], files))
-            case = {**case, "files": list(cast(dict[str, str], files))}
+        if isinstance(files, dict):
+            references: dict[str, str | None] = {}
+            for path, text in cast(dict[str, str], files).items():
+                references[path] = None if fixtures.setdefault(path, text) == text else text
+            case = {**case, "files": list(references) if all(text is None for text in references.values()) else references}
         shared.append(dict(case))
     return shared
 

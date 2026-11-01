@@ -124,6 +124,30 @@ def test_cases_that_share_a_large_file_freeze_its_text_once_and_load_it_into_eac
 
 
 @pytest.mark.ac("gh-580:AC-2")
+@pytest.mark.parametrize("mixed", [False, True], ids=["path-list", "mixed-map"])
+@pytest.mark.parametrize("shared_path", ["b.txt", " "], ids=["ordinary-path", "whitespace-path"])
+def test_one_conflicting_path_keeps_other_large_files_shared_and_loadable(tmp_path: Path, mixed: bool, shared_path: str) -> None:
+    text = "b" * 300_000
+    raw = draft()[:12]
+    for case in raw:
+        case["files"] = {"a.txt": None, shared_path: None} if mixed else ["a.txt", shared_path]
+    raw[0]["files"] = {"a.txt": "conflict", shared_path: text}
+    path = tmp_path / DRAFT_NAME
+    _ = path.write_text(json.dumps({"fixtures": {"a.txt": "shared", shared_path: text}, "cases": raw}), encoding="utf-8")
+    assert path.stat().st_size < 2_000_000
+    cases = split_cases(load_draft(path), 7)
+    out = tmp_path / "cases.json"
+    freeze(out, cases, 7, case_hash(cases, 7))
+    assert out.stat().st_size < 2 * len(text)
+    loaded = load_cases(out, {"task": "judge"})
+    assert {case.identifier: case.files for case in loaded} == {case.identifier: case.files for case in cases}
+    document = cast(dict[str, object], json.loads(out.read_text(encoding="utf-8")))
+    assert document["fixtures"] == {"a.txt": "conflict", shared_path: text}
+    assert document["approved_hash"] == case_hash(cases, 7)
+    assert cast(list[dict[str, object]], document["cases"])[1]["files"] == {"a.txt": "shared", shared_path: None}
+
+
+@pytest.mark.ac("gh-580:AC-2")
 def test_shared_fixture_approval_hash_does_not_collect_all_inline_copies(tmp_path: Path) -> None:
     text = "y" * 300_000
     cases = split_cases(load_draft(shared_draft(tmp_path, text)), 7)
@@ -181,6 +205,11 @@ def test_inline_files_in_a_list_draft_and_in_cases_json_still_load_as_the_shared
 
 REFUSED: list[tuple[dict[str, object], str]] = [
     ({"fixtures": {}, "cases": [{"files": ["input.txt"]}]}, "not in fixtures"),
+    ({"fixtures": {}, "cases": [{"files": {"input.txt": None}}]}, "not in fixtures"),
+    ({"fixtures": {"input.txt": None}, "cases": [{}]}, "must be nonempty text"),
+    ({"fixtures": {"input.txt": "t"}, "cases": [{"files": {"input.txt": None, "other.txt": False}}]}, "must be nonempty text"),
+    ({"fixtures": {"input.txt": "t"}, "cases": [{"files": {"input.txt": None, "../x": "t"}}]}, "unsafe relative path"),
+    ({"fixtures": {"input.txt": "t"}, "cases": [{"files": {"input.txt": None, "AGENTS.md": "t"}}]}, "runtime-owned"),
     ({"fixtures": {}, "cases": [], "extra": 1}, "only fixtures and a nonempty cases list"),
     ({"fixtures": {"../x": "t"}, "cases": [{}]}, "unsafe relative path"),
 ]
