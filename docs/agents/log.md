@@ -129,3 +129,7 @@
 - 2026-10-30 · 6070cd54e776b3bf · merged · decisions/skillz-autoimprove.md · Record approved trusted activation and native shell/cwd parsing constraints from PR #579.
 
 - 2026-11-01 · 1b8434010d4146fb · merged · criteria/gh-580.md · Stream approval hashing without repeated fixture allocations. Preserve legacy digests and byte limits.
+
+
+- 2026-11-01 · bc17b82fd0aaa813 · merged · criteria/gh-580.md · Measure the written seed bytes and keep legacy draft schema compatibility. Exact probe ranks first; natural probe ranks second.
+

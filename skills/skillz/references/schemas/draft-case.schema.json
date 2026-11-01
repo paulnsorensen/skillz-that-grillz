@@ -124,7 +124,24 @@
   },
   "oneOf": [
     {
-      "$ref": "#/$defs/cases"
+      "$ref": "#/$defs/cases",
+      "items": {
+        "properties": {
+          "files": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              {
+                "const": []
+              }
+            ]
+          }
+        }
+      }
     },
     {
       "type": "object",

@@ -12,7 +12,6 @@ import json
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
-from typing import cast
 
 from skillz_experiments._cases import CodedError, loads_untrusted, read_text, relative, text_map
 from skillz_experiments._evals_format import EvalEntry, parse_evals, parse_journeys
@@ -107,7 +106,6 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
         return None
     cases: list[dict[str, object]] = []
     cache: dict[str, str] = {}
-    total = 0
     for header in entries or []:
         case = _case(header)
         if header.kind == "task":
@@ -119,16 +117,10 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
         cases.append(case)
     cases.extend(journeys or [])
     check_unique([case["id"] for case in cases])
-    document = seed_document(cases)
-    fixtures, counted = cast(dict[str, str], document["fixtures"]), set[str]()
-    for case in cast(list[dict[str, object]], document["cases"]):
-        files = case.get("files")
-        added = {path: fixtures[path] for path in cast(list[str], files) if path not in counted} if isinstance(files, list) else {}
-        counted.update(added)
-        total += len(json.dumps(case)) + len(json.dumps(added))
-        if total > SEED_LIMIT:
-            raise CodedError("evals-unreadable", f"{EVALS} and {JOURNEYS} cannot seed the cases: the seed is too large; it passes "
-                             + f"{SEED_LIMIT} bytes at entry {case['id']}")
+    size = len((json.dumps(seed_document(cases), sort_keys=True, indent=2) + "\n").encode("utf-8"))
+    if size > SEED_LIMIT:
+        raise CodedError("evals-unreadable", f"{EVALS} and {JOURNEYS} cannot seed the cases: the seed is too large; it passes "
+                         + f"{SEED_LIMIT} bytes")
     return cases
 
 

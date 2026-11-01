@@ -129,6 +129,7 @@ def journeys() -> Json:
 
 
 def draft() -> Json:
+    """Describe shared drafts and legacy lists without unresolved fixture references."""
     properties = {name: value for name, value in _journey_properties().items() if name in DRAFT_FIELDS}
     properties["kind"] = NONEMPTY | {"description": "trigger, near-miss, task, or a journey kind of the contract."}
     properties["files"] = {"anyOf": [TEXT_MAP, {"type": "array", "items": {"type": "string"}}],
@@ -141,7 +142,9 @@ def draft() -> Json:
                                                               "properties": properties, "additionalProperties": False}}
     shared: Json = {"type": "object", "required": ["cases"], "additionalProperties": False, "properties": {
         "fixtures": TEXT_MAP | {"description": "Shared files: path to text, stored once."}, "cases": {"$ref": "#/$defs/cases"}}}
-    return _top("RUN/cases.draft.json", {"$defs": {"cases": cases}, "oneOf": [{"$ref": "#/$defs/cases"}, shared]})
+    legacy: Json = {"$ref": "#/$defs/cases", "items": {"properties": {
+        "files": {"anyOf": [TEXT_MAP, {"const": []}]}}}}
+    return _top("RUN/cases.draft.json", {"$defs": {"cases": cases}, "oneOf": [legacy, shared]})
 
 
 def _statistics() -> Json:

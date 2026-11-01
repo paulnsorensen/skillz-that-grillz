@@ -272,6 +272,25 @@ def test_a_fixture_that_many_entries_share_counts_once_against_the_seed_bound(
     assert (tmp_path / "run/cases.seed.json").stat().st_size < SEED_LIMIT
 
 
+@pytest.mark.ac("gh-580:AC-4")
+@pytest.mark.parametrize("extra", [0, 1])
+def test_seed_bound_matches_the_written_shared_document(
+        tmp_path: Path, make_target: Maker, extra: int) -> None:
+    target = make_target(tmp_path)
+    _shared_fixture(target, 1, 200)
+    assert len(_seed_cases(target, tmp_path)) == 200
+    seed_file = tmp_path / "run/cases.seed.json"
+    overhead = seed_file.stat().st_size - 1
+    _ = (target / "evals/files/shared.md").write_text("x" * (SEED_LIMIT - overhead + extra), encoding="utf-8")
+    seed_file.unlink()
+    if extra:
+        assert "seed is too large" in str(_unreadable(target, tmp_path))
+        assert not seed_file.exists()
+    else:
+        assert len(_seed_cases(target, tmp_path)) == 200
+        assert seed_file.stat().st_size == SEED_LIMIT
+
+
 @pytest.mark.ac("gh-580:AC-3")
 @pytest.mark.ac("gh-580:AC-4")
 def test_the_largest_accepted_seed_of_distinct_fixtures_still_loads_as_an_inline_draft(tmp_path: Path, make_target: Maker) -> None:
