@@ -18,7 +18,7 @@ from skillz_experiments.run._patch import build_patch
 from skillz_experiments.run._plan import case_calls
 from skillz_experiments.run._replay import STDERR_LIMIT
 from skillz_experiments.run._open import engine_hash, judge_kind
-from skillz_experiments.run._record_fields import field, record_outcomes, text_field
+from skillz_experiments.run._record_fields import criterion_levels, field, record_outcomes, text_field
 
 _TOKEN_FIELDS = {"input_tokens": "input_tokens", "cached_tokens": "cached_input_tokens", "output_tokens": "output_tokens"}
 
@@ -182,19 +182,6 @@ def _export_search(value: object) -> object:
     return redacted_search
 
 
-def _levels(item: dict[str, object]) -> dict[str, int]:
-    """Return the criterion levels (1 to 4) that the judged outcome `item` stores. Anything else yields nothing."""
-    criteria = item.get("criteria")
-    if not isinstance(criteria, dict):
-        return {}
-    found: dict[str, int] = {}
-    for name, verdict in cast(dict[str, object], criteria).items():
-        level = cast(dict[str, object], verdict).get("level") if isinstance(verdict, dict) else None
-        if type(level) is int and 1 <= level <= 4:
-            found[name] = level
-    return found
-
-
 def criteria_flags(outcomes: list[dict[str, object]]) -> list[dict[str, object]]:
     """Return the noisy criteria, sorted by criterion, reason, case, and arm. A criterion id belongs to one case.
 
@@ -208,7 +195,7 @@ def criteria_flags(outcomes: list[dict[str, object]]) -> list[dict[str, object]]
     for item in outcomes:
         case = str(item.get("case_id"))
         candidate = str(item.get("search_candidate", item.get("candidate_hash")))
-        for name, level in _levels(item).items():
+        for name, level in criterion_levels(item).items():
             grouped.setdefault((name, case, str(item.get("arm")), candidate), []).append(level)
             totals.setdefault((name, case), []).append(level)
     flags: list[dict[str, object]] = []
@@ -243,7 +230,7 @@ def zero_cases(outcomes: list[dict[str, object]]) -> list[dict[str, object]]:
         unmet: dict[str, list[dict[str, object]]] = {}
         for item in items:
             criteria = cast(dict[str, dict[str, object]], item["criteria"])
-            for name, level in _levels(item).items():
+            for name, level in criterion_levels(item).items():
                 if level < MET_LEVEL:
                     reason = redact(str(criteria[name].get("reason", "")))
                     unmet.setdefault(name, []).append({"level": level, "met": False, "reason": reason})
