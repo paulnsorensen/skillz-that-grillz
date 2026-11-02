@@ -62,9 +62,18 @@ The median full wait was 560.5 seconds.[^10]
 Local `just build` and `just ci` leave `GATE_SKIP` unset and run every lane.
 
 `GATE_SHARD=<index>/<count>` applies only to `run_gate.py skillz`; another mode or a malformed value exits 2.
-It loads the `.github/scripts/pytest_shard.py` plugin into each skillz lane.
-The plugin keeps each test whose collection position modulo `count` equals `index - 1`.
-The plugin runs after the conftest hooks, so the marker checks still see every collected test.
+Each skillz lane then runs one pytest-split group: `--splits <count> --group <index> --splitting-algorithm least_duration`.
+`least_duration` gives each test, longest first, to the group with the smallest sum of durations.
+The durations come from the committed `packages/skillz/.test_durations` file.
+A test without an entry gets the mean duration of the tests that have entries.
+pytest-split selects after the conftest hooks, so the marker checks still see every collected test.
+Each lane stores the durations of the tests that it ran in `$GATE_COVERAGE_DIR/durations/<lane>.<index>of<count>.json`.
+A stored duration is the sum of the setup, call, and teardown phases.
+Each shard job uploads its files as the `durations-shard-<n>` artifact.
+The `coverage` job merges them with `merge_durations.py` and uploads the result as the `test-durations` artifact.
+The merge fails when a test is in two shard files.
+The first committed file gives each test the same value, so that split balances by test count
+(`docs/agents/decisions/quality-ratchets.md` ADR-004).
 One unsharded `skillz tests` job took 478 to 509 seconds on four runs.
 The 4-vCPU runner was CPU-bound: a tmpfs on `/tmp` saved about 3 percent.
 With four shards, the shards took 87 to 157 seconds and the full wait was 164 seconds.
