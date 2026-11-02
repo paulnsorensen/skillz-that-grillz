@@ -6,17 +6,25 @@ directory, settings, standard input, environment, and the entries of its `CLAUDE
 An `initialize` control request (the free skill inventory) logs to `<script>.inventory.log` instead,
 and a `/context` prompt (the free memory listing) logs to `<script>.context.log`.
 Like Claude Code 2.1.29x, it lists its own commands and built-in plugins even when bundled skills are off.
+
+Each run reads its argv, working directory, environment, and streams from one `Call`. `main` builds it from the
+process, and `run_captured` builds it for a test that runs the same table in its own process.
 """
 from __future__ import annotations
 
+import contextvars
+import io
 import json
 import os
 import re
 import socket
 import sys
 import time
+import traceback
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TextIO, cast
 
 USAGE = {"input_tokens": 10, "cache_creation_input_tokens": 5, "cache_read_input_tokens": 20, "output_tokens": 7}
 BUILTIN_COMMANDS = ("design", "doctor", "clear")
@@ -26,8 +34,34 @@ ACCOUNT_SKILL = "anthropic-skills:pdf"
 PLUGIN_SKILL = "plug:tool"
 
 
+@dataclass(frozen=True)
+class Call:
+    """The process state of one run: the script path that names the sidecar files, and what the OS gives a child."""
+
+    script: Path
+    argv: list[str]
+    cwd: Path
+    environ: Mapping[str, str]
+    stdin: TextIO
+    stdout: TextIO
+    stderr: TextIO
+
+
+_CALL: contextvars.ContextVar[Call] = contextvars.ContextVar("fake_claude_call")
+
+
+def _call() -> Call:
+    return _CALL.get()
+
+
 def emit(event: dict[str, object]) -> None:
-    print(json.dumps(event), flush=True)
+    _say(json.dumps(event))
+
+
+def _say(text: str, *, error: bool = False) -> None:
+    stream = _call().stderr if error else _call().stdout
+    _ = stream.write(text + "\n")
+    stream.flush()
 
 
 def _inside(path: str, roots: list[str]) -> bool:
@@ -156,7 +190,8 @@ def listed_skills(mode: str, config: dict[str, object]) -> list[str]:
 
     `skillOverrides` turns off every skill it names except a plugin skill, as in Claude Code.
     """
-    project = next((root for root in (Path.cwd(), Path.cwd().parent) if (root / ".claude/skills").is_dir()), Path.cwd())
+    cwd = _call().cwd
+    project = next((root for root in (cwd, cwd.parent) if (root / ".claude/skills").is_dir()), cwd)
     skills_root = project / ".claude/skills"
     skills = sorted(path.name for path in skills_root.iterdir()) if skills_root.is_dir() else []
     if mode == "account-skill":
@@ -180,7 +215,8 @@ def inventory(mode: str, config: dict[str, object]) -> int:
     commands: list[dict[str, object]] = [{"name": name, "description": ""} for name in listed_skills(mode, config)]
     builtin = [*BUILTIN_COMMANDS, *(["echo-skill"] if mode == "builtin-echo" else [])]
     late = mode.startswith("late-")
-    if late and len(Path(__file__).with_name(Path(__file__).name + ".inventory.log").read_text().splitlines()) == 1:
+    script = _call().script
+    if late and len(script.with_name(script.name + ".inventory.log").read_text().splitlines()) == 1:
         builtin.remove("design")
     elif mode == "late-plain":
         builtin.remove("design")
@@ -191,15 +227,15 @@ def inventory(mode: str, config: dict[str, object]) -> int:
     if mode == "inventory-hang":
         time.sleep(30)
     if mode == "inventory-crash":
-        print("claude: shim crashed", file=sys.stderr)
+        _say("claude: shim crashed", error=True)
         return 3
     if mode == "inventory-auth":
-        print("Invalid API key - Please run /login", file=sys.stderr)
+        _say("Invalid API key - Please run /login", error=True)
         return 1
     if mode == "inventory-error":
         emit({"type": "control_response", "response": {"subtype": "error", "request_id": "skillz-inventory",
                                                       "error": "profile rejected"}})
-        print("claude: profile rejected", file=sys.stderr)
+        _say("claude: profile rejected", error=True)
         return 2
     body: dict[str, object] = {} if mode == "inventory-broken" else {"commands": commands, "agents": []}
     if mode == "inventory-bad-row":
@@ -231,7 +267,7 @@ def read_tool_probe(prompt: str, mode: str, config: dict[str, object]) -> list[s
             continue
         escaped = ((mode == "read-tool-escape" and not host) or (mode == "read-tool-host" and host)
                    or (mode == "read-tool-link" and path.endswith("/link.txt")))
-        allowed = not blocked or _inside(str(Path(path).resolve()), [str(Path.cwd().resolve())])
+        allowed = not blocked or _inside(str(Path(path).resolve()), [str(_call().cwd.resolve())])
         allowed = allowed and not (mode == "read-tool-control-denied" and path.endswith("/control.txt"))
         text = Path(path).read_text() if escaped or allowed else "denied"
         emit({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": f"rt{index}", "name": "Read",
@@ -288,7 +324,9 @@ def context_listing(mode: str) -> int:
     if mode == "context-broken":
         emit({"type": "result", "subtype": "success", "is_error": False, "result": "Unknown skill: context", "usage": USAGE})
         return 0
-    config = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+    environ = _call().environ
+    home = Path(environ["HOME"]) if environ.get("HOME") else Path.home()
+    config = Path(environ.get("CLAUDE_CONFIG_DIR") or home / ".claude")
     memory = [config / "CLAUDE.md", *sorted((config / "rules").rglob("*.md"))] if mode == "memory-loads" else []
     rows = "".join(f"| User | {path} | 9 |\n" for path in memory if path.is_file())
     report = f"## Context Usage\n\n### Memory Files\n\n| Type | Path | Tokens |\n|------|------|--------|\n{rows}"
@@ -298,7 +336,7 @@ def context_listing(mode: str) -> int:
 
 def config_entries() -> dict[str, str]:
     """List the config directory: each symlink maps to its target, and each other entry to `file`."""
-    directory = Path(os.environ.get("CLAUDE_CONFIG_DIR", "/nonexistent"))
+    directory = Path(_call().environ.get("CLAUDE_CONFIG_DIR", "/nonexistent"))
     if not directory.is_dir():
         return {}
     return {path.name: os.readlink(path) if path.is_symlink() else "file" for path in directory.iterdir()}
@@ -306,7 +344,8 @@ def config_entries() -> dict[str, str]:
 
 def staged_modes() -> dict[str, str]:
     """Return the octal mode of every path under the project's `.claude` directory."""
-    project = next((root for root in (Path.cwd(), Path.cwd().parent) if (root / ".claude").is_dir()), None)
+    cwd = _call().cwd
+    project = next((root for root in (cwd, cwd.parent) if (root / ".claude").is_dir()), None)
     if project is None:
         return {}
     return {str(path.relative_to(project)): oct(path.stat().st_mode & 0o777) for path in sorted((project / ".claude").rglob("*"))}
@@ -321,14 +360,15 @@ def stream(script: Path, argv: list[str], mode: str) -> int:
     `journey-culture` writes `culture.md`. `journey-culture-bad` also writes the source file `app.py` with a Write call.
     `journey-mold` declares the MCP server `docs` and the agent `reviewer`. It calls `mcp__docs__search` and the Skill `helper-skill`.
     """
+    call = _call()
     settings = Path(argv[argv.index("--settings") + 1]).read_text() if "--settings" in argv else None
     with script.with_name(script.name + ".log").open("a") as log:
-        _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": "",
-                                  "environment": dict(os.environ), "config_entries": config_entries(),
+        _ = log.write(json.dumps({"argv": argv, "cwd": str(call.cwd), "settings": settings, "prompt": "",
+                                  "environment": dict(call.environ), "config_entries": config_entries(),
                                   "captured": {}, "staged": staged_modes(), "mcp_config": None}) + "\n")
     config = cast(dict[str, object], json.loads(settings or "{}"))
-    markers = sorted(Path.cwd().glob(".agents/skills/*/EXPERIMENT_MARKER"))
-    for turn, line in enumerate(sys.stdin, 1):
+    markers = sorted(call.cwd.glob(".agents/skills/*/EXPERIMENT_MARKER"))
+    for turn, line in enumerate(call.stdin, 1):
         text = cast(str, json.loads(line)["message"]["content"])
         with script.with_name(script.name + ".journey.log").open("a") as log:
             _ = log.write(json.dumps({"turn": turn, "message": text, "line": json.loads(line)}) + "\n")
@@ -352,9 +392,9 @@ def stream(script: Path, argv: list[str], mode: str) -> int:
             emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "m2", "is_error": False,
                   "content": "loaded"}]}})
         if mode.startswith("journey-culture"):
-            _ = Path("culture.md").write_text(f"# Culture notes\n\nturn {turn}\n")
+            _ = (call.cwd / "culture.md").write_text(f"# Culture notes\n\nturn {turn}\n")
         if mode == "journey-culture-bad" and turn == 1:
-            _ = Path("app.py").write_text("print('hello')\n")
+            _ = (call.cwd / "app.py").write_text("print('hello')\n")
             emit({"type": "assistant", "message": {"content": [
                 {"type": "tool_use", "id": "w1", "name": "Write", "input": {"file_path": "app.py", "content": "print('hello')\n"}}]}})
             emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "w1", "is_error": False,
@@ -366,7 +406,7 @@ def stream(script: Path, argv: list[str], mode: str) -> int:
             emit({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "is_error": False,
                   "content": markers[0].read_text()}]}})
         if mode == "journey-writes":
-            _ = Path("notes.txt").write_text(f"turn {turn}\n")
+            _ = (call.cwd / "notes.txt").write_text(f"turn {turn}\n")
         answer = f"agent-{turn}"
         emit({"type": "assistant", "message": {"content": [{"type": "text", "text": answer}]}})
         emit({"type": "result", "subtype": "success", "is_error": mode == "journey-error-result", "result": answer, "usage": USAGE})
@@ -374,13 +414,43 @@ def stream(script: Path, argv: list[str], mode: str) -> int:
 
 
 def main() -> int:
-    script = Path(__file__).resolve()
+    """Run as the `claude` executable: the call comes from this process."""
+    return run(Call(Path(__file__).resolve(), sys.argv[1:], Path.cwd(), os.environ, sys.stdin, sys.stdout, sys.stderr))
+
+
+def run(call: Call) -> int:
+    token = _CALL.set(call)
+    try:
+        return _answer(call)
+    finally:
+        _CALL.reset(token)
+
+
+def run_captured(script: Path, argv: list[str], cwd: Path, environ: Mapping[str, str],
+                 stdin: str) -> tuple[int, str, str]:
+    """Run one call in this process. Return the exit code, the standard output, and the standard error.
+
+    The working directory is the resolved path, as `os.getcwd` returns it in a child. An exception exits 1 with its
+    traceback on standard error, as an uncaught exception does in a child.
+    """
+    stdout, stderr = io.StringIO(), io.StringIO()
+    call = Call(script.resolve(), argv, Path(os.path.realpath(cwd)), dict(environ), io.StringIO(stdin), stdout, stderr)
+    try:
+        code = run(call)
+    except Exception:  # a child reports every uncaught exception this way
+        _ = stderr.write(traceback.format_exc())
+        code = 1
+    return code, stdout.getvalue(), stderr.getvalue()
+
+
+def _answer(call: Call) -> int:
+    script = call.script
     mode_file = script.with_name(script.name + ".mode")
     mode = mode_file.read_text().strip() if mode_file.is_file() else "ok"
-    argv = sys.argv[1:]
+    argv = call.argv
     if "--input-format" in argv and "--model" in argv:
         return stream(script, argv, mode)
-    prompt = sys.stdin.read()
+    prompt = call.stdin.read()
     settings = Path(argv[argv.index("--settings") + 1]).read_text() if "--settings" in argv else None
     captured: dict[str, str | None] = {}
     for line in prompt.split("\nCAPTURE FILES:\n", 1)[1].splitlines() if "\nCAPTURE FILES:\n" in prompt else []:
@@ -389,15 +459,15 @@ def main() -> int:
     context = not listing and prompt.strip() == "/context"
     suffix = ".inventory.log" if listing else ".context.log" if context else ".log"
     with script.with_name(script.name + suffix).open("a") as log:
-        _ = log.write(json.dumps({"argv": argv, "cwd": str(Path.cwd()), "settings": settings, "prompt": prompt,
-                                  "environment": dict(os.environ), "config_entries": config_entries(),
+        _ = log.write(json.dumps({"argv": argv, "cwd": str(call.cwd), "settings": settings, "prompt": prompt,
+                                  "environment": dict(call.environ), "config_entries": config_entries(),
                                   "captured": captured, "staged": staged_modes(),
                                   "mcp_config": Path(argv[argv.index("--mcp-config") + 1]).read_text() if "--mcp-config" in argv else None}) + "\n")
     if argv == ["--version"]:
         if mode == "version-broken":
-            print("claude: broken shim", file=sys.stderr)
+            _say("claude: broken shim", error=True)
             return 3
-        print("2.1.296 (Claude Code)")
+        _say("2.1.296 (Claude Code)")
         return 0
     config = cast(dict[str, object], json.loads(settings or "{}"))
     if listing:
@@ -405,15 +475,15 @@ def main() -> int:
     if context:
         return context_listing(mode)
     if mode == "no-init-auth":
-        print("Invalid API key - Please run /login", file=sys.stderr)
+        _say("Invalid API key - Please run /login", error=True)
         return 1
     if mode == "sandbox-unavailable":
-        print("sandbox is unavailable: bubblewrap is missing and failIfUnavailable is set", file=sys.stderr)
+        _say("sandbox is unavailable: bubblewrap is missing and failIfUnavailable is set", error=True)
         return 1
     skills = listed_skills(mode, config) + list(BUILTIN_SKILLS)
     if mode == "foreign-skill":
         skills.append("personal-intruder")
-    bundled_off = config.get("disableBundledSkills") is True or os.environ.get("CLAUDE_CODE_DISABLE_BUNDLED_SKILLS") == "1"
+    bundled_off = config.get("disableBundledSkills") is True or call.environ.get("CLAUDE_CODE_DISABLE_BUNDLED_SKILLS") == "1"
     if mode == "bundled-skill" and not bundled_off:
         skills.append("code-review")
     if mode == "missing-skill":
@@ -448,7 +518,7 @@ def main() -> int:
         return probe(targets, writes, mode, config, prompt)
     schema = cast(dict[str, object], json.loads(argv[argv.index("--json-schema") + 1])) if "--json-schema" in argv else {}
     properties = cast(dict[str, object], schema.get("properties", {}))
-    marker = Path.cwd() / ".agents/skills/skillz/EXPERIMENT_MARKER"
+    marker = call.cwd / ".agents/skills/skillz/EXPERIMENT_MARKER"
     structured: dict[str, object]
     if "criteria" in properties:
         ids = cast(list[str], cast(dict[str, object], properties["criteria"])["required"])
