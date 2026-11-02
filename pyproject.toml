@@ -243,7 +243,7 @@ max_rows = 12
 
 [tool.skillz.test-size.files]
 "packages/fromargs/tests/test_run.py" = { max_cases = 84, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
-"packages/skillz/tests/skillz_experiments/test_claude.py" = { max_cases = 287, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_claude.py" = { max_cases = 288, reason = "Pre-existing at adoption; raised 287→288 with user approval 2026-11-02 for c6's in-process contract test (#638)." }
 "packages/skillz/tests/skillz_experiments/test_gemini.py" = { max_cases = 83, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
 "packages/skillz/tests/skillz_experiments/test_graders.py" = { max_cases = 81, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
 "packages/skillz/tests/skillz_experiments/test_mode_fixtures.py" = { max_cases = 125, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
