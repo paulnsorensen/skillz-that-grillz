@@ -16,7 +16,10 @@ from typing import BinaryIO, TextIO
 
 Job = tuple[str, list[str]]
 ROOT = Path(__file__).resolve().parents[2]
-_ACTIVE: dict[subprocess.Popen[bytes], tuple[str, BinaryIO]] = {}
+# Each running step: its name, its output file, its start time, and its deadline in seconds (0 for none).
+_ACTIVE: dict[subprocess.Popen[bytes], tuple[str, BinaryIO, float, int]] = {}
+# The steps that the gate killed at their deadline.
+_EXPIRED: set[subprocess.Popen[bytes]] = set()
 _cancelled = False
 PACKAGE_MODES = frozenset({"fromargs", "agent-session-analytics"})
 LIVE_FLAG = "SKILLZ_LIVE"
@@ -38,6 +41,25 @@ COVERAGE_DIR_VARIABLE = "GATE_COVERAGE_DIR"
 COVERAGE_LANE = "coverage"
 # The report-only step that prints the per-file test times of the committed durations (quality-ratchets ADR-006).
 TIME_REPORT = "test-time-report"
+# The pytest-timeout limit of one test, in seconds: a hung test fails with a timeout error, so no lane hangs.
+UNIT_TIMEOUT = 120
+E2E_TIMEOUT = 600
+# The hard stop of one step, in seconds; `0` removes it. A test that pytest-timeout fails can still block in cleanup
+# that waits with no deadline (a `with Popen` exit or a thread join), so the gate kills the step's process group.
+STEP_SECONDS_VARIABLE = "GATE_STEP_SECONDS"
+DEFAULT_STEP_SECONDS = 3600
+
+
+def timeout_args(seconds: int) -> list[str]:
+    """Return the pytest-timeout options; the `signal` method fails only the hung test and keeps the worker."""
+    return ["--timeout", str(seconds), "--timeout-method", "signal"]
+
+
+def _step_seconds() -> int:
+    value = os.environ.get(STEP_SECONDS_VARIABLE, str(DEFAULT_STEP_SECONDS))
+    if not value.isdigit():
+        raise ValueError(f"{STEP_SECONDS_VARIABLE} must be a non-negative integer: {value!r}")
+    return int(value)
 
 
 def _environment() -> dict[str, str]:
@@ -168,21 +190,37 @@ def _start(name: str, command: list[str]) -> bool:
         output.close()
         print(f"✗ {name}\n{error}", flush=True)
         return False
-    _ACTIVE[process] = (name, output)
+    _ACTIVE[process] = (name, output, time.monotonic(), _step_seconds())
     _check_cancelled()
     return True
 
 
+def _expire_overdue() -> None:
+    """Kill the process group of each step past its deadline; `_finish` then reports the step as failed."""
+    now = time.monotonic()
+    for process, (_name, _output, started, seconds) in _ACTIVE.items():
+        if seconds and now - started >= seconds and process not in _EXPIRED and process.poll() is None:
+            _EXPIRED.add(process)
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
 def _finish(process: subprocess.Popen[bytes]) -> bool:
-    name, output = _ACTIVE.pop(process)
+    name, output, _started, seconds = _ACTIVE.pop(process)
     status = process.wait()
-    if status:
+    expired = process in _EXPIRED
+    _EXPIRED.discard(process)
+    if status or expired:
         _ = output.seek(0)
         print(f"✗ {name}\n{output.read().decode(errors='replace')}", end="", flush=True)
+        if expired:
+            print(f"\n✗ {name}: killed at the {seconds} s step deadline ({STEP_SECONDS_VARIABLE})", flush=True)
     else:
         print(f"✓ {name}", flush=True)
     output.close()
-    return status == 0
+    return status == 0 and not expired
 
 
 def run_step(name: str, command: list[str]) -> bool:
@@ -191,6 +229,7 @@ def run_step(name: str, command: list[str]) -> bool:
     process = next(iter(_ACTIVE))
     while process.poll() is None:
         _check_cancelled()
+        _expire_overdue()
         time.sleep(0.02)
     _check_cancelled()
     return _finish(process)
@@ -211,6 +250,7 @@ def run_jobs(jobs: list[Job], workers: int) -> bool:
                 passed = False
         if not _ACTIVE:
             return passed
+        _expire_overdue()
         finished = [process for process in _ACTIVE if process.poll() is not None]
         if not finished:
             time.sleep(0.02)
@@ -237,7 +277,8 @@ def _stop_children() -> None:
         except ProcessLookupError:
             pass
         _ = process.wait(timeout=2)
-        _name, output = _ACTIVE.pop(process)
+        _EXPIRED.discard(process)
+        output = _ACTIVE.pop(process)[1]
         output.close()
 
 
@@ -280,16 +321,16 @@ def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None
     eat = fsync_wrapper()
     data_dir = data_dir or cache_root / "cov"
 
-    def pytest(lane: str, runner: list[str], paths: list[str], key: str) -> Job:
+    def pytest(lane: str, runner: list[str], paths: list[str], key: str, timeout: int = UNIT_TIMEOUT) -> Job:
         prefix, measured = _covered(lane, data_dir)
         return lane, eat + prefix + runner + [*measured, *paths, "-q", "-n", str(test_workers), "--dist", "worksteal",
-                                              "--basetemp", str(cache_root / key),
+                                              *timeout_args(timeout), "--basetemp", str(cache_root / key),
                                               "-o", f"cache_dir={cache_root / (key + 'c')}"]
 
     # The slow process-level e2e suite runs as its own job, in parallel with the skillz unit tests.
     skillz_e2e = "packages/skillz/tests/skillz_experiments/e2e"
     return [
-        pytest("skillz-e2e-pytest", skillz, [skillz_e2e], "e"),
+        pytest("skillz-e2e-pytest", skillz, [skillz_e2e], "e", E2E_TIMEOUT),
         pytest("wedge-pytest", wedge, ["packages/wedge/tests"], "l"),
         pytest("skillz-pytest", skillz, ["packages/skillz/tests", "--ignore", skillz_e2e], "s"),
         pytest("fromargs-pytest", fromargs, ["packages/fromargs/tests"], "f"),
@@ -310,6 +351,8 @@ def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None
         ("dead-code-tests", root + ["python", ".github/scripts/test_check_dead_code.py"]),
         ("file-size-tests", root + ["python", ".github/scripts/test_check_file_lengths.py"]),
         ("file-size", root + ["python", ".github/scripts/check_file_lengths.py", "check"]),
+        ("test-size-tests", root + ["python", ".github/scripts/test_check_test_counts.py"]),
+        ("test-size", root + ["python", ".github/scripts/check_test_counts.py", "check"]),
         ("coverage-tests", root + ["python", ".github/scripts/test_check_coverage.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
         ("pr-title-workflow-tests", root + ["python", ".github/scripts/test_pr_title_workflow.py"]),
@@ -436,6 +479,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         workers, test_workers = _workers("GATE_JOBS"), _workers("TEST_WORKERS")
         slots = _host_slots()
+        _ = _step_seconds()
         skip = _skipped()
         shard = os.environ.get(SHARD_VARIABLE, "")
         if shard and args[0] != "skillz":
@@ -459,7 +503,7 @@ def main(argv: list[str] | None = None) -> int:
                     if len(args) == 2 and args[1]:
                         command += ["--python", args[1]]
                     command += ["--project", f"packages/{package}", "pytest", f"packages/{package}/tests",
-                                "-q", "-n", str(test_workers), "--dist", "worksteal",
+                                "-q", "-n", str(test_workers), "--dist", "worksteal", *timeout_args(UNIT_TIMEOUT),
                                 "--basetemp", str(temp_root / "f"),
                                 "-o", f"cache_dir={temp_root / 'fc'}"]
                     # `uv run --locked` can sync the environment, so this lane keeps fsync.

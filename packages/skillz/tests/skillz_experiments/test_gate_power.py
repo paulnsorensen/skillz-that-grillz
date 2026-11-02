@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import cache
 from typing import cast, get_args
 
 import pytest
@@ -68,7 +69,12 @@ def test_the_cli_reports_a_count_and_a_rate_for_each_effect() -> None:
         assert type(printed[f"true_promotions_effect_{label}"]) is int
 
 
-def test_a_selected_figure_equals_the_same_key_of_the_full_report() -> None:
+def test_a_selected_figure_equals_the_same_key_of_the_full_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Each simulation is deterministic, so the full report and the selectors share one real run per argument set.
+    # A selector that runs the wrong simulation, field, or arguments still reads another value or type.
+    monkeypatch.setattr(_cli, "simulate_gate", cache(simulate))
+    monkeypatch.setattr(_cli, "simulate_power", cache(simulate_power))
+    monkeypatch.setattr(_cli, "simulate_cheaper", cache(simulate_cheaper))
     full = cast(dict[str, object], _cli.self_test(simulate=True))
     for metric in cast(tuple[_cli.Metric, ...], get_args(_cli.Metric)):
         selected = _cli.self_test(simulate=True, metric=metric)
