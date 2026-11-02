@@ -18,6 +18,18 @@ def test_fresh_fixture_passes(fixture_skill_dir: Path) -> None:
     assert check([fixture_skill_dir]) == []
 
 
+@pytest.mark.ac("gh-581:AC-13")
+def test_format_eight_lock_is_stale(tmp_path: Path, copy_locked_fixture: Callable[[Path], Path]) -> None:
+    skill = copy_locked_fixture(tmp_path / "checkout")
+    lock = skill / "scripts" / "cheese-cave.wedge.json"
+    data = cast(dict[str, object], json.loads(lock.read_text()))
+    data["format"] = 8
+    _ = lock.write_text(json.dumps(data))
+    issues = check([skill])
+    assert len(issues) == 1
+    assert "stale lock format 8; expected 9" in issues[0].reason
+
+
 @pytest.mark.ac("wedge-skill-packaging:AC-W5")
 def test_stale_cli_source_fails_with_one_issue(
     tmp_path: Path, copy_locked_fixture: Callable[[Path], Path]

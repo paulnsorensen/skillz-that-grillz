@@ -148,7 +148,9 @@ def load_lock(skill_dir: Path, name: str) -> LockData:
     )
     if lock_data.name != name or not _HEX64.fullmatch(lock_data.key) or not _HEX64.fullmatch(lock_data.content_sha256):
         raise ValueError("lock name or digest is invalid")
-    if lock_data.format != FORMAT_VERSION or lock_data.release != "wedge" or lock_data.asset != f"{name}-{lock_data.content_sha256[:12]}.pyz":
+    if lock_data.format != FORMAT_VERSION:
+        raise ValueError(f"stale lock format {lock_data.format}; expected {FORMAT_VERSION}")
+    if lock_data.release != "wedge" or lock_data.asset != f"{name}-{lock_data.content_sha256[:12]}.pyz":
         raise ValueError("lock invariants are invalid")
     return lock_data
 

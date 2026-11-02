@@ -1,7 +1,7 @@
 """Run one operation across many items at once.
 
 Every skill operation (build, lock, publish) spends its time in ``uv``,
-shiv, and ``gh`` subprocesses. Threads give the parallelism, and one item's
+archive writing, and ``gh`` subprocesses. Threads give the parallelism, and one item's
 failure never stops the others. Callers get one outcome per item, in the
 order the items were given, and decide how to report the failures.
 """

@@ -5,8 +5,8 @@ project's third-party closure and installs it into a layer directory; this
 is the only step that needs the network. ``stage_sources`` copies the
 configured local ``include`` trees and the skill's CLI source into a staged
 tree. ``build_from_layer`` lays the layer and the staged tree out in a fresh
-site directory, without volatile install metadata, and shivs the result with a
-fixed shebang and ``SOURCE_DATE_EPOCH``. The same key always gives the same
+site directory, without volatile install metadata, and packages the result with a
+fixed shebang and canonical ZIP metadata. The same key always gives the same
 uncompressed contents, so the content digest (``wedge._digest``) matches on
 every host even when two zlib builds compress those contents differently.
 Third-party wheels never come from the uv cache (``--no-cache``), so a
@@ -19,20 +19,17 @@ the asset.
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 import shutil
 import stat
 import subprocess
-import sys
 import sysconfig
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from io import BytesIO
 from pathlib import Path
-from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
+from zipfile import ZipFile
 
 from wedge._config import ConfigError, WedgeConfig, load_config, load_targets, validate_name
 from wedge._digest import content_sha256
@@ -48,6 +45,7 @@ from wedge._key import (
 )
 from wedge._layer_cache import cached_layer
 from wedge._resolve import export_requirements, resolve_closure
+from wedge._zipapp import write_archive
 
 _VOLATILE_INSTALL_FILES = {"RECORD", "INSTALLER", "REQUESTED", "direct_url.json"}
 # --no-cache: see _install_third_party. These flags join the layer cache key.
@@ -57,10 +55,6 @@ _LAYER_RECIPE = 1
 # Installed console scripts live in a top-level `bin`. Keep that name free of first-party sources.
 _RESERVED_TOP_LEVEL = {"bin"}
 _IMPORTABLE_SUFFIXES = {".py", ".so", ".pyd"}
-# 1980-01-01T00:00:00Z: the earliest timestamp a zip member can hold. shiv's
-# reproducible mode floors SOURCE_DATE_EPOCH=0 to this same value, but set it
-# explicitly so the build does not depend on that floor.
-_SOURCE_DATE_EPOCH = "315532800"
 _NO_NAMES: frozenset[str] = frozenset()
 
 _LayerId = tuple[Path, tuple[str, ...]]
@@ -384,16 +378,17 @@ def _build_from_layer(
                 _copy_tree(entry, destination)
             else:
                 _ = shutil.copy2(entry, destination, follow_symlinks=False)
+        _strip_volatile(site_dir, preserve_install_metadata=True)
         _reject_links(site_dir, linked)
         check = None if expected is None else (expected, frozenset(first_party))
-        return _shiv_into(site_dir, target.name, target.entry, out_dir, check)
+        return _archive_into(site_dir, target.name, target.entry, out_dir, check)
 
 
 def _view_layer(layer: Path, site_dir: Path) -> frozenset[str]:
     """Fill the new ``site_dir`` with the layer's entries; return the names that are links into the layer.
 
     A top-level entry that holds only regular files and directories, and no
-    volatile file, becomes a symlink to the layer entry. shiv follows such a
+    volatile file, becomes a symlink to the layer entry. The writer follows such a
     link, so the archive gets the same paths and bytes as from a copy, and a
     build does not create and delete one file per installed file. Any other
     entry is copied and stripped as before, so ``_reject_links`` still sees
@@ -440,7 +435,7 @@ def _build_prepared(
     out_dir: Path,
     expected: Mapping[str, str] | None = None,
 ) -> BuildResult:
-    """Stage one target's sources and shiv them over ``layer`` into ``out_dir``."""
+    """Stage one target's sources and package them over ``layer`` into ``out_dir``."""
     if layer.project != prepared.paths.project:
         raise ValueError(f"site layer project {layer.project} is not the target's project {prepared.paths.project}")
     sources = stage_sources(prepared.paths, stage_dir)
@@ -448,14 +443,14 @@ def _build_prepared(
     return BuildResult(prepared.config.name, prepared.key, digest, out_path)
 
 
-def _shiv_into(
+def _archive_into(
     site_dir: Path,
     name: str,
     entry: str,
     out_dir: Path,
     check: tuple[Mapping[str, str], frozenset[str]] | None = None,
 ) -> tuple[str, Path]:
-    """Shiv ``site_dir`` and place the archive in ``out_dir``.
+    """Package ``site_dir`` and place the archive in ``out_dir``.
 
     With ``check``, a layer manifest and the first-party top-level names, every
     other ``site-packages`` member must match the manifest, file for file.
@@ -464,8 +459,7 @@ def _shiv_into(
     validate_name(name)
     with tempfile.TemporaryDirectory(prefix="wedge-build-") as tmp:
         built = Path(tmp) / f"{name}.pyz"
-        _shiv(site_dir, entry, built)
-        _canonicalize_archive(built)
+        write_archive(site_dir, entry, built)
         if check is not None:
             _check_layer_members(built, *check)
         digest = content_sha256(built)
@@ -540,12 +534,12 @@ def build_many(
     with tempfile.TemporaryDirectory(prefix="wedge-stage-") as tmp:
         root = Path(tmp)
         stage_dirs = {id(p): root / f"stage-{index}" for index, p in enumerate(ready)}
-        shivved = fan_out(
+        archived = fan_out(
             ready,
             lambda p: _build_prepared(p, layers[p.layer_id][0], stage_dirs[id(p)], out_dir, layers[p.layer_id][1]),
             jobs=jobs,
         )
-        built = {(p.skill_dir, p.config.name): o for p, o in zip(ready, shivved)}
+        built = {(p.skill_dir, p.config.name): o for p, o in zip(ready, archived)}
 
     outcomes: list[Outcome[Path, BuildResult]] = []
     for skill_dir, o in zip(skill_dirs, prepared):
@@ -654,7 +648,7 @@ def _copy_source(source: Path, site_dir: Path, selectors: tuple[str, ...] = ()) 
 
 
 def _reject_links(root: Path, linked: frozenset[str] = _NO_NAMES) -> None:
-    """Reject any symlink or special file in the build tree, just before shiv reads it.
+    """Reject any symlink or special file in the build tree, just before the writer reads it.
 
     A top-level name in ``linked`` is a link that ``_view_layer`` made and checked; it is allowed.
     """
@@ -685,7 +679,7 @@ def _is_volatile(path: Path, is_dir: bool, *, top_level: bool = False) -> bool:
     )
 
 
-def _strip_volatile(site_dir: Path) -> None:
+def _strip_volatile(site_dir: Path, *, preserve_install_metadata: bool = False) -> None:
     # Installed console scripts embed the builder's absolute Python path.
     shutil.rmtree(site_dir / "bin", ignore_errors=True)
     # os.walk does not follow a link, so a strip never deletes through a link into the layer.
@@ -695,61 +689,5 @@ def _strip_volatile(site_dir: Path) -> None:
             directories.remove(name)
             shutil.rmtree(here / name, ignore_errors=True)
         for name in files:
-            if _is_volatile(here / name, False):
+            if _is_volatile(here / name, False) and not (preserve_install_metadata and name in _VOLATILE_INSTALL_FILES):
                 (here / name).unlink()
-
-
-def _shiv(site_dir: Path, entry: str, out_path: Path) -> None:
-    env = dict(os.environ)
-    env["SOURCE_DATE_EPOCH"] = _SOURCE_DATE_EPOCH
-    # Inside a wedge.pyz, sys.executable is the host interpreter, which cannot
-    # import the archive's shiv. Point the child at the directory that holds it.
-    shiv_spec = importlib.util.find_spec("shiv")
-    if shiv_spec is not None and shiv_spec.origin is not None:
-        shiv_root = str(Path(shiv_spec.origin).parent.parent)
-        env["PYTHONPATH"] = os.pathsep.join(filter(None, [shiv_root, env.get("PYTHONPATH")]))
-    _ = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "shiv",
-            "--reproducible",
-            "--uncompressed",
-            "--site-packages",
-            str(site_dir),
-            "-p",
-            "/usr/bin/env python3",
-            "-e",
-            entry,
-            "-o",
-            str(out_path),
-        ],
-        env=env,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-
-def _canonicalize_archive(path: Path) -> None:
-    """Sort, normalize, and deflate ZIP members.
-
-    shiv does not sort its bundled bootstrap files. The deflate bytes can vary
-    with the zlib build; the content digest ignores them.
-    """
-    original = path.read_bytes()
-    shebang, separator, _ = original.partition(b"\n")
-    if not separator or not shebang.startswith(b"#!"):
-        raise ValueError(f"shiv output lacks a shebang: {path}")
-    with ZipFile(BytesIO(original)) as source, path.open("wb") as output:
-        _ = output.write(shebang + separator)
-        with ZipFile(output, "w") as target:
-            for info in sorted(source.infolist(), key=lambda item: item.filename):
-                data = source.read(info)
-                info.date_time = (1980, 1, 1, 0, 0, 0)
-                info.create_system = 3
-                is_dir = info.filename.endswith("/")
-                mode = 0o40755 if is_dir else 0o100644
-                info.external_attr = (mode << 16) | (0x10 if is_dir else 0)
-                info.compress_type = ZIP_STORED if is_dir else ZIP_DEFLATED
-                target.writestr(info, data)

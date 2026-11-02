@@ -20,7 +20,7 @@ from wedge._fanout import Outcome
 DEFAULT_ROOT = "skills"
 T = TypeVar("T")
 
-app = fromargs.App("wedge", help="Shiv a fromargs CLI into a skill as a content-addressed .pyz.")
+app = fromargs.App("wedge", help="Package a fromargs CLI into a skill as a content-addressed .pyz.")
 
 
 _BUILD_EXPORTS = frozenset({

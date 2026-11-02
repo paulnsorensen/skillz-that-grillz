@@ -1,7 +1,7 @@
 """Adversarial tests for multi-target ``wedge.toml`` and the reusable site layer.
 
 The builds run offline: a fake closure and a fake third-party install replace
-the network step, while shiv and the real archive code run for real.
+the network step, while the real archive writer runs.
 """
 
 from __future__ import annotations
@@ -35,6 +35,7 @@ from wedge._bundle import bundle_many
 from wedge._config import ConfigError, WedgeConfig, load_config, load_targets
 from wedge._guard import GuardError
 from wedge._key import FORMAT_VERSION, BuildPaths, compute_key
+from wedge._zipapp import write_archive
 
 SOURCE = "../../../../fromargs/examples/cheese_cave.py"
 ENTRY = "cheese_cave:main"
@@ -540,7 +541,7 @@ def test_bundle_many_the_same_skill_twice_in_one_call_fails_both_entries(
 
 @pytest.mark.ac("skillz-wedge-first-class:AC-3")
 @pytest.mark.usefixtures("installs")
-def test_bundle_many_failing_shiv_for_one_target_leaves_no_partial_output(
+def test_bundle_many_failing_writer_for_one_target_leaves_no_partial_output(
     tmp_path: Path,
     copy_repo_subset: CopySubset,
     monkeypatch: pytest.MonkeyPatch,
@@ -550,15 +551,15 @@ def test_bundle_many_failing_shiv_for_one_target_leaves_no_partial_output(
     scripts = skill / "scripts"
     scripts.mkdir()
     _ = (scripts / "bad.pyz").write_bytes(b"previous bundle")
-    real_shiv = wedge_build._shiv  # pyright: ignore[reportPrivateUsage]
+    real_writer = write_archive
 
     def flaky(site_dir: Path, entry: str, out_path: Path) -> None:
         if entry == "bad:main":
             _ = out_path.write_bytes(b"half written")
-            raise subprocess.CalledProcessError(2, ["shiv"], stderr="boom")
-        real_shiv(site_dir, entry, out_path)
+            raise OSError("boom")
+        real_writer(site_dir, entry, out_path)
 
-    monkeypatch.setattr(wedge_build, "_shiv", flaky)
+    monkeypatch.setattr(wedge_build, "write_archive", flaky)
 
     outcomes = bundle_many([skill])
 
@@ -1036,7 +1037,7 @@ def test_build_from_layer_missing_layer_or_sources_leaves_out_dir_empty(tmp_path
 
 
 @pytest.mark.ac("skillz-wedge-first-class:AC-4")
-def test_build_from_layer_failing_shiv_leaves_out_dir_empty(
+def test_build_from_layer_failing_writer_leaves_out_dir_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     layer = _hand_layer(tmp_path / "layer")
@@ -1044,11 +1045,11 @@ def test_build_from_layer_failing_shiv_leaves_out_dir_empty(
 
     def boom(_site: Path, _entry: str, out_path: Path) -> None:
         _ = out_path.write_bytes(b"half")
-        raise subprocess.CalledProcessError(1, ["shiv"])
+        raise OSError("writer failed")
 
-    monkeypatch.setattr(wedge_build, "_shiv", boom)
+    monkeypatch.setattr(wedge_build, "write_archive", boom)
 
-    with pytest.raises(subprocess.CalledProcessError):
+    with pytest.raises(OSError, match="writer failed"):
         _ = build_from_layer(layer, sources, _target(), tmp_path / "out")
 
     assert list((tmp_path / "out").iterdir()) == []
@@ -1331,15 +1332,15 @@ def test_a_first_party_top_level_bin_is_rejected_not_silently_stripped(
 
 
 @pytest.mark.ac("skillz-wedge-first-class:AC-4")
-def test_a_symlink_in_the_layer_is_rejected_before_shiv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_a_symlink_in_the_layer_is_rejected_before_archive_writer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     layer = _hand_layer(tmp_path / "layer")
     (layer.path / "fakepkg" / "alias.py").symlink_to(layer.path / "fakepkg" / "__init__.py")
     sources = _sources(tmp_path / "sources")
 
-    def no_shiv(*_args: object) -> None:
-        raise AssertionError("shiv must not run on a tree with a symlink")
+    def no_writer(*_args: object) -> None:
+        raise AssertionError("writer must not run on a tree with a symlink")
 
-    monkeypatch.setattr(wedge_build, "_shiv", no_shiv)
+    monkeypatch.setattr(wedge_build, "write_archive", no_writer)
 
     with pytest.raises(ValueError, match="symlink"):
         _ = build_from_layer(layer, sources, _target(), tmp_path / "out")

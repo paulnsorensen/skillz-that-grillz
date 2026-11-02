@@ -29,6 +29,7 @@ class _HashLike(Protocol):
 
 
 @pytest.mark.ac("wedge-skill-packaging:AC-W2")
+@pytest.mark.ac("gh-581:AC-12")
 def test_build_is_byte_identical_across_checkouts(
     tmp_path: Path,
     copy_repo_subset: Callable[[Path], Path],
@@ -47,6 +48,8 @@ def test_build_is_byte_identical_across_checkouts(
         assert not any(name.startswith("site-packages/bin/") for name in archive.namelist())
         files = [info for info in archive.infolist() if not info.is_dir()]
         assert files and all(info.compress_type == ZIP_DEFLATED for info in files)
+        assert "environment.json" in archive.namelist()
+        assert "__main__.py" in archive.namelist()
         assert archive.namelist() == sorted(archive.namelist())
 
     lock = load_lock(fixture_skill_dir, FIXTURE_NAME)
@@ -58,6 +61,15 @@ def test_build_is_byte_identical_across_checkouts(
         )
         pytest.fail(f"Archive contents differ from lock:\n{detail}", pytrace=False)
 
+
+@pytest.mark.ac("gh-581:AC-11")
+def test_archive_has_no_shiv_bootstrap(tmp_path: Path, copy_repo_subset: Callable[[Path], Path]) -> None:
+    result = build(copy_repo_subset(tmp_path / "checkout"), tmp_path / "out")
+    with ZipFile(result.path) as archive:
+        names = archive.namelist()
+        forbidden = {"shiv", "pip", "setuptools", "click"}
+        assert not any(name.split("/")[1] in forbidden for name in names if name.startswith("site-packages/"))
+        assert not any(name.split("/")[1] in forbidden for name in names if name.startswith("cpython-") and "/" in name)
 
 
 @pytest.mark.ac("wedge-skill-packaging:AC-W2")
