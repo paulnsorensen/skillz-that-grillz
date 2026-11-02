@@ -59,8 +59,11 @@ def test_write_bytes_returns_true_when_the_directory_fsync_fails_after_the_repla
             raise OSError("directory fsync unsupported")
         return real_open(path, flags, *args)
 
-    monkeypatch.setattr(os, "open", no_directory)
-    assert write_bytes(target, b"one") and target.read_bytes() == b"one"
+    # Undo the patch before teardown: tmp_path cleanup calls os.open with dir_fd while it removes the directory.
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "open", no_directory)
+        assert write_bytes(target, b"one")
+    assert target.read_bytes() == b"one"
 
 
 @pytest.mark.ac("gh-580:AC-2")

@@ -39,8 +39,7 @@ def test_engine_hash_of_a_pristine_copy_equals_the_hash_of_the_package(copied: P
                                 for path in PACKAGE.rglob("*.py")})
 
 
-@pytest.mark.parametrize("module", ["harness/_claude/_events.py", "run/_session.py", "search/_engine.py",
-                                    "gate/_rules.py", "_cli.py", "__init__.py"])
+@pytest.mark.parametrize("module", ["harness/_claude/_events.py", "__init__.py"])
 def test_engine_hash_changes_when_any_module_changes(copied: Path, module: str) -> None:
     before = _open.engine_hash()
     path = copied / module

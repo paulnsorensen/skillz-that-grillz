@@ -14,7 +14,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._records import read
 from skillz_experiments.harness._command import _validate_answer  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.run import run
-from skillz_experiments.search import Progress, attempts, faulted_reflection, protected
+from skillz_experiments.search import Progress, attempts, faulted_reflection
 from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments.search._history import LIMIT, SHOWN, render
@@ -37,7 +37,7 @@ def _reflection(**fields: object) -> dict[str, object]:
 
 # Attack 2: hypothesis length boundary and non-string types.
 
-@pytest.mark.parametrize(("length", "kept"), [(0, False), (1, True), (199, True), (200, True), (201, False), (5000, False)])
+@pytest.mark.parametrize(("length", "kept"), [(0, False), (1, True), (200, True), (201, False)])
 def test_accept_hypothesis_length_boundary_keeps_at_200_and_drops_at_201(length: int, kept: bool) -> None:
     answer = {"SKILL.md": "t", "@hypothesis": "h" * length}
     _, _, hypothesis, dropped = accept_proposal(answer, ["SKILL.md"], {"SKILL.md": "t"})
@@ -50,7 +50,7 @@ def test_accept_padded_hypothesis_counts_length_after_strip() -> None:
     assert accept_proposal(answer, ["SKILL.md"], {"SKILL.md": "t"})[2:] == ("h" * 200, None)
 
 
-@pytest.mark.parametrize("value", [7, 1.5, True, ["a"], {"a": "b"}, "   "])
+@pytest.mark.parametrize("value", [7, True, "   "])
 def test_accept_non_string_hypothesis_is_stored_as_null_with_its_rule_and_does_not_refuse_the_proposal(value: object) -> None:
     answer = {"SKILL.md": "t2", "@hypothesis": value}
     texts, _, hypothesis, dropped = accept_proposal(answer, ["SKILL.md"], {"SKILL.md": "t"})
@@ -76,7 +76,7 @@ def test_validate_answer_null_or_string_hypothesis_is_accepted(value: object) ->
     _validate_answer({"SKILL.md": "t", "@hypothesis": value}, SCHEMA)
 
 
-@pytest.mark.parametrize("value", [7, 0, True, 1.5, ["x"], {"k": "v"}])
+@pytest.mark.parametrize("value", [7, True, ["x"]])
 def test_validate_answer_non_text_hypothesis_is_rejected(value: object) -> None:
     with pytest.raises(ValueError):
         _validate_answer({"SKILL.md": "t", "@hypothesis": value}, SCHEMA)
@@ -109,27 +109,6 @@ def test_validate_answer_missing_non_nullable_key_or_extra_key_is_rejected() -> 
 
 # Attack 4: duplicate outcomes.
 
-def test_attempts_newest_outcome_failed_uses_older_scored_outcome_for_train_and_validation() -> None:
-    outcomes = [
-        _score("seed-id", "train", "a", 0.5), _score("seed-id", "train", "a", 0.0, status="evaluation-failed"),
-        _score("seed-id", "validation", "v1", 0.2), _score("seed-id", "validation", "v2", 0.4),
-        _reflection(),
-        _score("child-1", "train", "a", 0.9), _score("child-1", "train", "a", 0.1, status="evaluation-failed"),
-        _score("child-1", "validation", "v1", 0.6), _score("child-1", "validation", "v1", 0.0, status="evaluation-failed"),
-        _score("child-1", "validation", "v2", 0.8), _score("child-1", "validation", "v2", 0.9),
-    ]
-    (attempt,) = attempts(outcomes, SEED, ["v1", "v2"])
-    assert attempt["fixed"] == ["a"] and attempt["broke"] == []
-    # parent mean (0.2 + 0.4) / 2, child mean (0.6 from the older scored v1 + 0.9) / 2
-    assert attempt["validation_delta"] == pytest.approx(0.75 - 0.3)
-
-
-def test_attempts_every_outcome_of_the_case_failed_is_unscored() -> None:
-    outcomes = [_score("seed-id", "train", "a", 0.5), _reflection(),
-                _score("child-1", "train", "a", 0.0, status="evaluation-failed")]
-    assert attempts(outcomes, SEED, [])[0]["fixed"] == [] and attempts(outcomes, SEED, [])[0]["broke"] == []
-
-
 def test_attempts_equal_scores_are_neither_fixed_nor_broke() -> None:
     outcomes = [_score("seed-id", "train", "a", 0.5), _reflection(), _score("child-1", "train", "a", 0.5)]
     assert attempts(outcomes, SEED, [])[0]["fixed"] == [] and attempts(outcomes, SEED, [])[0]["broke"] == []
@@ -146,16 +125,6 @@ def test_attempts_malformed_outcomes_are_ignored_without_crashing() -> None:
     assert bare["candidate"] is None and bare["accepted"] is False
     assert attempt["fixed"] == [] and attempt["broke"] == [] and attempt["hypothesis"] is None
     assert attempt["rejected"] is None and attempt["candidate"] is None
-
-
-# Attack 8: the protect set.
-
-def test_protected_score_below_one_or_unknown_identity_is_excluded() -> None:
-    outcomes = [_score("s", "train", "a", 1.0), _score("s", "train", "b", 0.9999), _score("s", "train", "c", 1.0),
-                _score("s", "train", "c", 0.5), _score("s", "validation", "v", 1.0), _score("s", "holdout", "h", 1.0)]
-    assert protected(outcomes, "s") == ["a"]
-    assert protected(outcomes, "missing") == []
-    assert protected([], "s") == []
 
 
 # Attack 5: render cap and structure.

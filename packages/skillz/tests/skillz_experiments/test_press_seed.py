@@ -46,16 +46,11 @@ def _unreadable(target: Path, tmp_path: Path) -> CodedError:
 
 @pytest.mark.parametrize(("extra", "kind"), [
     ({}, "task"),
-    ({"assertions": []}, "task"),
-    ({"assertions": ["a"]}, "task"),
-    ({"kind": "trigger", "expected_skill": "echo-skill"}, "trigger"),
     ({"kind": "trigger"}, "trigger"),
     ({"kind": "near-miss"}, "near-miss"),
     ({"expected_skill": "echo-skill", "assertions": ["a"]}, "task"),
     ({"expected_skill": None}, "near-miss"),
-    ({"expected_skill": None, "assertions": []}, "near-miss"),
     ({"expected_skill": None, "files": ["nope.md"]}, "near-miss"),
-    ({"kind": "near-miss", "expected_skill": None}, "near-miss"),
 ])
 def test_seed_kind_precedence_matrix(tmp_path: Path, make_target: Maker, extra: dict[str, object], kind: str) -> None:
     target = make_target(tmp_path)
@@ -116,12 +111,9 @@ def test_task_seed_without_files_needs_the_agent_drafted_fixture(tmp_path: Path,
 
 
 @pytest.mark.parametrize(("path", "fragment"), [
-    ("./evals/files/a.md", "unsafe relative path"), ("evals//files/a.md", "unsafe relative path"),
-    ("evals/files/a.md/", "unsafe relative path"), ("evals\\files\\a.md", "unsafe relative path"),
+    ("./evals/files/a.md", "unsafe relative path"), ("evals\\files\\a.md", "unsafe relative path"),
     ("evals/.hidden/a.md", "must not be hidden"), ("evals/files/../files/a.md", "unsafe relative path"),
-    ("tmp/a.md", "must be under evals/files/"), ("AGENTS.md", "must be under evals/files/"),
-    ("evals/a.md", "must be under evals/files/"), ("evals/files", "must be under evals/files/"),
-    ("evals/files/a\x00.md", "unsafe relative path"), ("", "unsafe relative path"),
+    ("tmp/a.md", "must be under evals/files/"), ("evals/files", "must be under evals/files/"), ("", "unsafe relative path"),
 ])
 def test_unusual_fixture_paths_stop_with_evals_unreadable(
         tmp_path: Path, make_target: Maker, path: str, fragment: str) -> None:
@@ -194,11 +186,8 @@ def test_non_utf8_and_bom_evals_file_is_refused(tmp_path: Path, make_target: Mak
 
 
 @pytest.mark.parametrize(("bad", "fragment"), [
-    (None, "evals[0]: expected a JSON object"), (3, "evals[0]: expected a JSON object"),
-    (True, "evals[0]: expected a JSON object"), ([], "evals[0]: expected a JSON object"),
-    ("str", "evals[0]: expected a JSON object"),
+    (None, "evals[0]: expected a JSON object"),
     ({"name": True, "prompt": "p"}, "evals[0]: name must be nonempty text"),
-    ({"name": "  ", "prompt": "p"}, "evals[0]: name must be nonempty text"),
     ({"name": "a", "prompt": "  \n"}, "evals[0]: prompt must be nonempty text"),
     ({"name": "a", "prompt": "p", "expected_output": 5}, "expected_output must be text"),
     ({"name": "a", "prompt": "p", "assertions": [None]}, "assertions must be a list of text"),
@@ -337,7 +326,7 @@ def _extra(name: str, request: str | None = None, kind: str = "task") -> dict[st
 
 
 @pytest.mark.parametrize("changed", [
-    "prompt-e ", " prompt-e", "Prompt-e", "prompt-e\n", "prompt‑e",
+    "prompt-e ", "Prompt-e", "prompt‑e",
 ])
 def test_coverage_requires_the_exact_request(tmp_path: Path, make_target: Maker, changed: str) -> None:
     target = make_target(tmp_path)

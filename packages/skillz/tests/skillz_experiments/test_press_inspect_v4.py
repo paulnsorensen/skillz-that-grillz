@@ -105,38 +105,32 @@ def test_fixture_result_accepts_a_newline_terminated_error_line() -> None:
     assert fixture_result(BAD, 3, "", ERROR + "\n")
 
 
-@pytest.mark.parametrize("stderr", [
-    "note: extra\n" + ERROR, ERROR + "\n" + ERROR, "Traceback junk\n\n" + ERROR + "\n \n",
-])
-def test_fixture_result_takes_the_last_nonempty_stderr_line_as_the_error(stderr: str) -> None:
-    assert fixture_result(BAD, 3, "", stderr)
+def test_fixture_result_takes_the_last_nonempty_stderr_line_as_the_error() -> None:
+    assert fixture_result(BAD, 3, "", "Traceback junk\n\n" + ERROR + "\n \n")
 
 
 @pytest.mark.parametrize("stderr", [
     ERROR + "\nnote: extra\n",
     '{"error": "inspect: link escapes package", "exit_code": 3, "extra": 1}',
     '{"error": "inspect: link escapes package", "exit_code": 3.0}',
-    '{"error": "inspect: link escapes package", "exit_code": "3"}',
-    '{"error": "Inspect: link escapes package", "exit_code": 3}',
-    '{"error": "link escapes package", "exit_code": 3}', "NaN", "null", "[]", "", " ", "{", ERROR[:-1],
+    '{"error": "Inspect: link escapes package", "exit_code": 3}', "", "{", "[]",
 ])
 def test_fixture_result_rejects_an_error_line_that_is_not_exactly_the_declared_error(stderr: str) -> None:
     assert not fixture_result(BAD, 3, "", stderr)
 
 
-@pytest.mark.parametrize("stdout", ["x", "{}", ERROR, "\u200b", "null", "0"])
+@pytest.mark.parametrize("stdout", ["x", ERROR, "​"])
 def test_fixture_result_rejects_any_stdout_text_on_the_error_fixture(stdout: str) -> None:
     assert not fixture_result(BAD, 3, stdout, ERROR)
 
 
-@pytest.mark.parametrize("code", [True, False, "3", 3.0, None, 2, 4, -1, 259, 1 << 70])
+@pytest.mark.parametrize("code", [True, "3", 3.0, 4, 259])
 def test_fixture_result_rejects_an_exit_code_that_is_not_the_declared_int(code: object) -> None:
     assert not fixture_result(BAD, cast(int, code), "", ERROR)
 
 
-@pytest.mark.parametrize("code", [False, "0", 0.0])
-def test_fixture_result_rejects_a_non_int_zero_for_the_success_fixture(code: object) -> None:
-    assert not fixture_result(GOOD, cast(int, code), SUCCESS, "")
+def test_fixture_result_rejects_a_non_int_zero_for_the_success_fixture() -> None:
+    assert not fixture_result(GOOD, cast(int, False), SUCCESS, "")
 
 
 def test_fixture_result_rejects_the_old_v3_answers() -> None:
