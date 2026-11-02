@@ -298,6 +298,10 @@ A `task` case holds the fixtures in `files`, keyed by their listed paths, and an
 The `expected` object holds `expected_output`, which defaults to an empty string, and `assertions`, which defaults to an empty list. A `task` entry needs `expected_output` or `assertions`.
 Each fixture path starts with `evals/files/`. A path outside `evals/files/` stops the seed.
 The runner stages each fixture at its `evals/files/` path in the workspace, so the request must name that directory.
+The runner does not list the case files to the task. Name in the request each fixture that the task must read.
+A request may leave out an auxiliary file. A fixture reference is a relative path in a directory where a draft case stages files.
+When a request names a fixture reference that its own case does not stage, the run stops with `case-fixture-missing`.
+The stop comes before the case question and any model call. `validate` reports the same code.
 When the entry lists no fixture, `files` is empty. Draft the starting fixture that the request needs.
 A seed case has a `family` only when the entry has a nonempty-text `family` key. Otherwise set the `family` by the rule below.
 Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged, and a journey case with its `brief` unchanged. You can extend `files`, `expected`, and `family`.
@@ -410,7 +414,11 @@ Give each family one trap:
 
 The run stops with `cases-too-easy` when the seed already scores 0.9 or more on a family.
 A run that sets `min_token_saving` does not stop, because a token-saving run expects saturated cases.
-After a stop, draft harder cases for that family in a new run directory. Do not edit the stopped run directory.
+The stop data holds `baseline`: `search`, `holdout_gate`, and `replay` are `not-run`, and `export` is `unavailable`.
+`baseline.failing` lists each seed outcome below 1, with its family and the redacted reason of each unmet criterion. Another family can fail while one family saturates.
+`baseline.spent` holds the spent calls. `approved_calls` and `estimate` are the approved ceiling and the plan, not spending. `baseline.unscored` counts the holdout and pending cases that did not run.
+A resume returns the same stop and data with no model call. Report the baseline and do not call `export`.
+When the user asks to optimize, draft harder cases for that family in a new run directory. Do not edit the stopped run directory.
 
 When session analytics exists, mine past sessions for hard cases. Follow these steps:
 

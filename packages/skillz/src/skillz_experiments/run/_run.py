@@ -33,7 +33,7 @@ from skillz_experiments._intake import (
     too_few,
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
-from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_document, seed_inferred, seed_projection, seed_summary
+from skillz_experiments._seed import SEED_NAME, check_coverage, check_fixture_paths, seed_cases, seed_document, seed_inferred, seed_projection, seed_summary
 from skillz_experiments.run._wedge_targets import plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
@@ -122,13 +122,13 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     extra = [] if requested_kinds else [kind for kind in journeys if kind not in kinds]
     drafted = load_draft(draft, contract.journey_kinds())
     task_adapter = configuration.roles["task"].adapter if configuration is not None else adapter
-    evaluated = {*kinds, *extra}
-    if not Configuration.supports_conversation(task_adapter) and any(case.journey is not None and case.kind in evaluated for case in drafted):
+    if not Configuration.supports_conversation(task_adapter) and any(case.journey is not None and case.kind in {*kinds, *extra} for case in drafted):
         retry = "; or pass --kind task" if "task" in contract.kinds and "task" not in journeys else ""
         raise CodedError("journey-unsupported", "a journey case needs a task transport that can hold a conversation; "
                          + f"run with --harness claude or codex{retry}")
     check_helper_input(contract, drafted)
     check_coverage(target, drafted)
+    check_fixture_paths(drafted)
     plain = [kind for kind in kinds if kind not in journeys]
     cases = split_cases(drafted, split_seed, plain[0] if plain else None, [kind for kind in kinds if kind in journeys], extra)
     check_criteria(contract, cases)
@@ -380,7 +380,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if path.exists():
             record = open_record(path)
             refuse_terminated(record)
-            refuse_too_easy(record)
+            refuse_too_easy(record, out)
             if record.get("phase") == "complete":
                 # A completed run summarises without reading its statistics unless a flag asks to compare them.
                 if statistics_given:
