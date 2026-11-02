@@ -122,6 +122,14 @@ class TestCountTest(unittest.TestCase):
             f'"{WIDE}" = {{ max_cases = 7, {REASON} }}  # split later\n"{over}" = {{ {REASON}, max_cases = 7 }}\n',
             f'"{TABLE}" = {{ reason = "was max_rows = 40", max_rows = 6 }}\n'))
 
+    def test_tighten_skips_a_ceiling_key_inside_the_reason_string(self) -> None:
+        reasons = ('reason = "cut, max_rows = 40 before"', "reason = 'cut, max_rows = 40 before'",
+                   'reason = "a \\" quote, max_rows = 40"')
+        for reason in reasons:
+            text = _config("", f'"{TABLE}" = {{ {reason}, max_rows = 9 }}  # max_rows = 9\n')
+            tightened = counts.tighten(text, _budget(functions={TABLE: 9}), counts.Counts({}, {TABLE: 6}))
+            self.assertEqual(tightened, _config("", f'"{TABLE}" = {{ {reason}, max_rows = 6 }}  # max_rows = 9\n'))
+
     def test_tighten_rewrites_the_pyproject_to_the_measured_counts(self) -> None:
         with _root() as root:
             _tree(root, {WIDE: _table(4)}, _config(f'"{WIDE}" = {{ max_cases = 9, {REASON} }}\n',

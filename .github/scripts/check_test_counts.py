@@ -99,8 +99,11 @@ def _waivers(size: dict[str, object], kind: _Kind) -> dict[str, Waiver]:
 
 def load_budget(root: Path) -> Budget:
     """Read the budget table; raise `ConfigError` on a missing key or a wrong type."""
-    with (root / PYPROJECT).open("rb") as stream:
-        config = cast(dict[str, object], tomllib.load(stream))
+    return _parse_budget((root / PYPROJECT).read_text(encoding="utf-8"))
+
+
+def _parse_budget(text: str) -> Budget:
+    config = cast(dict[str, object], tomllib.loads(text))
     table = cast(dict[str, object], cast(dict[str, object], config.get("tool", {})).get("skillz", {}))
     size = table.get("test-size")
     if not isinstance(size, dict):
@@ -177,28 +180,64 @@ def _entry_pattern(name: str) -> re.Pattern[str]:
     return re.compile(rf'^"{re.escape(name)}"[ \t]*=[ \t]*\{{.*\}}[ \t]*(#.*)?\n', re.MULTILINE)
 
 
+def _set_ceiling(line: str, key: str, value: int) -> str:
+    """Set `key = value` in one inline-table waiver line; text inside a TOML string never matches the key."""
+    pair = re.compile(rf"([{{,]\s*){key}\s*=\s*\d+")
+    quote = ""
+    index = 0
+    while index < len(line):
+        char = line[index]
+        if quote:
+            if quote == '"' and char == "\\":
+                index += 1
+            elif char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "#":
+            break
+        elif match := pair.match(line, index):
+            return f"{line[:index]}{match.group(1)}{key} = {value}{line[match.end():]}"
+        index += 1
+    raise ConfigError(f"{line.strip()}: tighten found no {key} key outside a string")
+
+
 def _tighten(text: str, kind: _Kind, counts: dict[str, int], default: int, waivers: dict[str, Waiver]) -> str:
-    # The ceiling key of an inline table follows `{` or `,`, so a reason string that names it never matches.
-    ceiling = re.compile(rf"([{{,]\s*){kind.key}\s*=\s*\d+")
     for name, waiver in waivers.items():
         actual = counts.get(name)
         pattern = _entry_pattern(name)
-        if not pattern.search(text):
+        match = pattern.search(text)
+        if match is None:
             raise ConfigError(f"{name}: tighten needs the waiver on one line")
         if actual is None or actual <= default:
-            text = pattern.sub("", text, count=1)
+            text = text[:match.start()] + text[match.end():]
         elif actual < waiver.ceiling:
-            text = pattern.sub(
-                lambda match: ceiling.sub(rf"\g<1>{kind.key} = {actual}", match.group(0), count=1),
-                text, count=1,
-            )
+            text = text[:match.start()] + _set_ceiling(match.group(0), kind.key, actual) + text[match.end():]
     return text
 
 
+def _kept(counts: dict[str, int], default: int, waivers: dict[str, Waiver]) -> dict[str, int]:
+    """Return the ceiling that `tighten` must leave for each waiver it keeps."""
+    return {name: min(actual, waiver.ceiling) for name, waiver in waivers.items()
+            if (actual := counts.get(name)) is not None and actual > default}
+
+
 def tighten(text: str, budget: Budget, counts: Counts) -> str:
-    """Lower each loose ceiling to its count and drop the waivers no longer needed; never raise one."""
+    """Lower each loose ceiling to its count and drop the waivers no longer needed; never raise one.
+
+    Parse the result and compare every ceiling, so a rewrite that misses its key fails instead of passing.
+    """
     text = _tighten(text, _FILE, counts.files, budget.max_cases, budget.files)
-    return _tighten(text, _FUNCTION, counts.functions, budget.max_rows, budget.functions)
+    text = _tighten(text, _FUNCTION, counts.functions, budget.max_rows, budget.functions)
+    after = _parse_budget(text)
+    for kind, written, expected in (
+        (_FILE, after.files, _kept(counts.files, budget.max_cases, budget.files)),
+        (_FUNCTION, after.functions, _kept(counts.functions, budget.max_rows, budget.functions)),
+    ):
+        ceilings = {name: waiver.ceiling for name, waiver in written.items()}
+        if ceilings != expected:
+            raise ConfigError(f"tighten wrote the {kind.table} ceilings {ceilings}, not {expected}")
+    return text
 
 
 def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
