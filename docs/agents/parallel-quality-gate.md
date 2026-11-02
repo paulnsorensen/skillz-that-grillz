@@ -72,6 +72,11 @@ A stored duration is the sum of the setup, call, and teardown phases.
 Each shard job uploads its files as the `durations-shard-<n>` artifact.
 The `coverage` job merges them with `merge_durations.py` and uploads the result as the `test-durations` artifact.
 The merge fails when a test is in two shard files.
+Each lane also writes a JUnit report, `<lane>.<index>of<count>.xml`, beside its durations file.
+The `coverage` job then runs the time ratchet, `check_test_durations.py check`, on the merged file.
+It fails on a test file above its ceiling, and when the merged file holds fewer test ids than the JUnit reports count.
+Local `just build` and `just ci` print the same per-file report from the committed file and do not fail on it
+(`docs/agents/decisions/quality-ratchets.md` ADR-006).
 The first committed file gives each test the same value, so that split balances by test count
 (`docs/agents/decisions/quality-ratchets.md` ADR-004).
 One unsharded `skillz tests` job took 478 to 509 seconds on four runs.
