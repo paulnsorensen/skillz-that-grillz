@@ -16,6 +16,9 @@ NEW_MODULE = (
     "    print(json.dumps({'text': text.upper()}))\n"
 )
 NEW_VALUE = f"name = {json.dumps('transform-cli')}\nmodule = {json.dumps(NEW_MODULE)}\n"
+# A wedge archive needs Python 3.11 or newer. `/usr/bin/python3` is Python 3.9 on macOS, so the workspace interpreter
+# runs each archive on every host. The scoring trace accepts its name, `python`.
+ARCHIVE_PYTHON = Path(__file__).resolve().parents[6] / ".venv/bin/python"
 
 
 def propose_target(candidate: dict[str, str], fields: list[str], answer: dict[str, str]) -> None:
@@ -45,7 +48,7 @@ def task_target(
         script = skill / "scripts" / f"{name}.pyz"
         if not script.is_file() or f"scripts/{name}.pyz" not in instructions:
             continue
-        argv = ["/usr/bin/python3", "-I", str(script.relative_to(workspace)), "fixture.md"]
+        argv = [str(ARCHIVE_PYTHON), "-I", str(script.relative_to(workspace)), "fixture.md"]
         result = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, check=False)
         if result.returncode != 0:
             raise ValueError(f"staged {name} failed: {result.stderr}")
