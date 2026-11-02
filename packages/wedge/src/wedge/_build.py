@@ -1,13 +1,10 @@
 """Build a reproducible .pyz for one skill's CLI.
 
 The flow has three steps. ``populate_site_layer`` resolves and guards the
-project's third-party closure and installs it into a layer directory; this
-is the only step that needs the network. ``stage_sources`` copies the
+project's third-party closure into a layer; compiler resolution can need the network. ``stage_sources`` copies the
 configured local ``include`` trees and the skill's CLI source into a staged
-tree. ``build_from_layer`` lays the layer and the staged tree out in a fresh
-site directory, without volatile install metadata, and packages the result with a
-fixed shebang and canonical ZIP metadata. The same key always gives the same
-uncompressed contents, so the content digest (``wedge._digest``) matches on
+tree. ``build_from_layer`` verifies a private site snapshot before compilation.
+It writes a canonical ZIP: equal keys give equal content digests on
 every host even when two zlib builds compress those contents differently.
 Third-party wheels never come from the uv cache (``--no-cache``), so a
 modified uv cache cannot change the contents. ``build`` and ``build_many``
@@ -29,10 +26,10 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from zipfile import ZipFile
 
-from wedge._config import ConfigError, WedgeConfig, load_config, load_targets, validate_name
-from wedge._digest import content_sha256
+from wedge._archive import archive_into, check_layer_snapshot
+from wedge._bytecode import build_bytecode_trees
+from wedge._config import ConfigError, WedgeConfig, load_config, load_targets
 from wedge._fanout import Outcome, fan_out
 from wedge._guard import guard_closure
 from wedge._key import (
@@ -45,7 +42,6 @@ from wedge._key import (
 )
 from wedge._layer_cache import cached_layer
 from wedge._resolve import export_requirements, resolve_closure
-from wedge._zipapp import write_archive
 
 _VOLATILE_INSTALL_FILES = {"RECORD", "INSTALLER", "REQUESTED", "direct_url.json"}
 # --no-cache: see _install_third_party. These flags join the layer cache key.
@@ -340,8 +336,8 @@ def stage_sources(paths: BuildPaths, dest: Path, overlay: Path | None = None, *,
 
 
 def build_from_layer(layer: SiteLayer, sources_tree: Path, target: WedgeConfig, out_dir: Path) -> Path:
-    """Shiv ``target`` from ``layer`` plus ``sources_tree``, with no network.
-
+    """Build ``target`` from ``layer`` plus ``sources_tree``.
+    Missing pinned interpreters require an ``uv python install`` download.
     The layer key must match the current ``uv.lock`` and the target's groups.
     The build never writes to the layer. A first-party path that collides
     with an installed one is an error. The output is byte-identical to
@@ -379,9 +375,14 @@ def _build_from_layer(
             else:
                 _ = shutil.copy2(entry, destination, follow_symlinks=False)
         _strip_volatile(site_dir, preserve_install_metadata=True)
+        first_party.intersection_update(child.name for child in site_dir.iterdir())
         _reject_links(site_dir, linked)
         check = None if expected is None else (expected, frozenset(first_party))
-        return _archive_into(site_dir, target.name, target.entry, out_dir, check)
+        with tempfile.TemporaryDirectory(prefix="wedge-bytecode-") as scratch:
+            snapshot = shutil.copytree(site_dir, Path(scratch) / "site")
+            check_layer_snapshot(snapshot, expected, frozenset(first_party))
+            trees = build_bytecode_trees(snapshot, Path(scratch), target.entry, target, frozenset(first_party))
+            return archive_into(snapshot, target.name, target.entry, out_dir, check, trees)
 
 
 def _view_layer(layer: Path, site_dir: Path) -> frozenset[str]:
@@ -441,59 +442,6 @@ def _build_prepared(
     sources = stage_sources(prepared.paths, stage_dir)
     digest, out_path = _build_from_layer(layer, sources, prepared.config, out_dir, expected)
     return BuildResult(prepared.config.name, prepared.key, digest, out_path)
-
-
-def _archive_into(
-    site_dir: Path,
-    name: str,
-    entry: str,
-    out_dir: Path,
-    check: tuple[Mapping[str, str], frozenset[str]] | None = None,
-) -> tuple[str, Path]:
-    """Package ``site_dir`` and place the archive in ``out_dir``.
-
-    With ``check``, a layer manifest and the first-party top-level names, every
-    other ``site-packages`` member must match the manifest, file for file.
-    Otherwise nothing lands in ``out_dir``.
-    """
-    validate_name(name)
-    with tempfile.TemporaryDirectory(prefix="wedge-build-") as tmp:
-        built = Path(tmp) / f"{name}.pyz"
-        write_archive(site_dir, entry, built)
-        if check is not None:
-            _check_layer_members(built, *check)
-        digest = content_sha256(built)
-        out_path = out_dir / f"{name}-{digest[:12]}.pyz"
-        # A temp file in out_dir plus an atomic replace never writes through a
-        # symlink that already sits at out_path.
-        descriptor, temporary = tempfile.mkstemp(prefix=f".{name}.", dir=out_dir)
-        os.close(descriptor)
-        try:
-            _ = shutil.copyfile(built, temporary)
-            os.chmod(temporary, stat.S_IMODE(built.stat().st_mode))
-            os.replace(temporary, out_path)
-        except BaseException:
-            Path(temporary).unlink(missing_ok=True)
-            raise
-    return digest, out_path
-
-
-def _check_layer_members(archive: Path, expected: Mapping[str, str], first_party: frozenset[str]) -> None:
-    """Raise ``ValueError`` when the archive's third-party files differ from the layer manifest ``expected``.
-
-    Every ``site-packages`` member outside the ``first_party`` top-level names
-    is third-party; ``_check_free`` keeps the two name sets apart.
-    """
-    files = {path: digest for path, digest in expected.items() if digest != "dir"}
-    found: dict[str, str] = {}
-    with ZipFile(archive) as zf:
-        for info in zf.infolist():
-            name = info.filename.removeprefix("site-packages/")
-            if name != info.filename and not info.is_dir() and name.split("/", 1)[0] not in first_party:
-                found[name] = hashlib.sha256(zf.read(info)).hexdigest()
-    if found != files:
-        changed = sorted(set(found) ^ set(files) | {p for p in found.keys() & files.keys() if found[p] != files[p]})
-        raise ValueError(f"the cached site layer changed during the build ({', '.join(changed[:3])}); build again")
 
 
 def build(skill_dir: Path, out_dir: Path) -> BuildResult:

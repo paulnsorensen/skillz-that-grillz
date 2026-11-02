@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable, Protocol, cast
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -12,7 +13,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 import pytest
 
 import wedge._build as wedge_build
-from wedge._build import build
+from wedge._build import BuildResult, build
 from wedge._config import ConfigError
 import wedge._digest as wedge_digest
 from wedge._digest import content_sha256
@@ -269,3 +270,54 @@ def test_source_selections_stage_different_trees(
         "fromargs",
         "fromargs/__init__.py",
     ]
+
+
+@pytest.mark.ac("gh-581:AC-10")
+def test_cold_interpreter_roots_produce_identical_archives(
+    tmp_path: Path, copy_repo_subset: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    results: list[BuildResult] = []
+    for label in ("a", "b"):
+        skill = copy_repo_subset(tmp_path / f"checkout-{label}")
+        install_root = tmp_path / f"python-{label}"
+        install_root.mkdir()
+        assert list(install_root.iterdir()) == []
+        monkeypatch.setenv("UV_PYTHON_INSTALL_DIR", str(install_root))
+        monkeypatch.setenv("UV_PYTHON_INSTALL_BIN", "0")
+        results.append(build(skill, tmp_path / f"out-{label}"))
+    assert results[0].key == results[1].key
+    assert results[0].content_sha256 == results[1].content_sha256
+    assert results[0].path.read_bytes() == results[1].path.read_bytes()
+
+
+@pytest.mark.ac("gh-581:AC-10")
+def test_build_resolves_managed_pins_from_a_non_uv_host(
+    tmp_path: Path, copy_repo_subset: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skill = copy_repo_subset(tmp_path / "checkout")
+    monkeypatch.setenv("UV_PYTHON_INSTALL_DIR", str(tmp_path / "managed"))
+    monkeypatch.setenv("UV_PYTHON_INSTALL_BIN", "0")
+    monkeypatch.setattr(sys, "executable", "/usr/bin/python3")
+    built = build(skill, tmp_path / "out")
+    with ZipFile(built.path) as archive:
+        assert "cpython-311/" in archive.namelist()
+
+
+@pytest.mark.ac("gh-581:AC-10")
+def test_warm_managed_pin_resolves_without_a_writable_install_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from wedge._bytecode import _python_for_pin  # pyright: ignore[reportPrivateUsage]
+
+    pin = ".".join(map(str, sys.version_info[:3]))
+    minor = ".".join(pin.split(".")[:2])
+    root = tmp_path / "managed"
+    interpreter = root / f"cpython-{pin}-linux-x86_64-gnu/bin/python{minor}"
+    interpreter.parent.mkdir(parents=True)
+    interpreter.symlink_to(sys.executable)
+    monkeypatch.setenv("UV_PYTHON_INSTALL_DIR", str(root))
+    root.chmod(0o555)
+    try:
+        assert _python_for_pin(pin) == str(interpreter)
+    finally:
+        root.chmod(0o755)

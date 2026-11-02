@@ -3,18 +3,70 @@
 MAIN_SOURCE = '''\
 import importlib
 import importlib.machinery
+import io
+import linecache
 import json
 import os
 import re
 import sys
+import tokenize
 from zipfile import ZipFile
 
 archive_path = os.path.abspath(sys.argv[0])
 with ZipFile(archive_path) as archive:
     environment = json.loads(archive.read("environment.json"))
+    has_tree = sys.implementation.cache_tag + "/" in archive.NameToInfo
 
 site_path = archive_path + "/site-packages"
+tree_path = archive_path + "/" + sys.implementation.cache_tag
 sys.path.insert(0, site_path)
+if has_tree:
+    sys.path.insert(0, tree_path)
+
+
+class _SourceFallbackFinder:
+    def find_spec(self, fullname, path=None, target=None):
+        if not has_tree or path is None:
+            return None
+        mapped = [site_path + item[len(tree_path):] for item in path if item.startswith(tree_path + "/")]
+        if not mapped:
+            return None
+        tree_spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+        if tree_spec is not None and tree_spec.loader is not None:
+            return tree_spec
+        return importlib.machinery.PathFinder.find_spec(fullname, mapped, target)
+
+
+_original_getlines = linecache.getlines
+
+
+def _archive_getlines(filename, module_globals=None):
+    if filename.startswith("site-packages/"):
+        cached = linecache.cache.get(filename)
+        if cached is not None and len(cached) == 4:
+            return cached[2]
+        with ZipFile(archive_path) as archive:
+            try:
+                source_bytes = archive.read(filename)
+            except KeyError:
+                pass
+            else:
+                encoding, _ = tokenize.detect_encoding(io.BytesIO(source_bytes).readline)
+                source = source_bytes.decode(encoding)
+                lines = io.StringIO(source, newline=None).readlines()
+                linecache.cache[filename] = (len(source), None, lines, filename)
+                return lines
+    return _original_getlines(filename, module_globals)
+
+
+linecache.getlines = _archive_getlines
+if sys.version_info < (3, 13) and sys.excepthook is sys.__excepthook__:
+    def _archive_excepthook(exc_type, exc_value, exc_traceback):
+        import traceback
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+
+    sys.excepthook = _archive_excepthook
+sys.meta_path.insert(sys.meta_path.index(importlib.machinery.PathFinder), _SourceFallbackFinder())
 
 
 class _ArchiveMetadataFinder(importlib.machinery.PathFinder):

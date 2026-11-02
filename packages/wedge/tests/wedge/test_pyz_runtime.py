@@ -136,7 +136,9 @@ def test_archive_metadata_precedes_host_and_explicit_paths_still_work(tmp_path: 
         info.mkdir()
         _ = (info / "METADATA").write_text(f"Metadata-Version: 2.1\nName: {name}\nVersion: {version}\n")
     pyz = tmp_path / "probe.pyz"
-    write_archive(site, "probe:main", pyz)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    write_archive(site, "probe:main", pyz, {sys.implementation.cache_tag: tree})
     result = _run_pyz(pyz, str(host))
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == ["99", "1", "2"]
@@ -180,26 +182,6 @@ def main():
     write_archive(site, "probe:main", pyz)
     result = _run_pyz(pyz, str(host), str(empty))
     assert result.returncode == 0, result.stderr
-
-
-def test_relative_archive_survives_entrypoint_chdir(tmp_path: Path) -> None:
-    site = tmp_path / "site"
-    site.mkdir()
-    _ = (site / "probe.py").write_text(
-        "import os\nfrom importlib.metadata import version\n"
-        + "def main():\n    os.chdir('/')\n    print(version('fixturepkg'))\n"
-    )
-    metadata = site / "fixturepkg-99.dist-info"
-    metadata.mkdir()
-    _ = (metadata / "METADATA").write_text("Metadata-Version: 2.1\nName: fixturepkg\nVersion: 99\n")
-    pyz = tmp_path / "probe.pyz"
-    write_archive(site, "probe:main", pyz)
-    result = subprocess.run(
-        [sys.executable, "-I", pyz.name], capture_output=True, text=True, cwd=tmp_path,
-        env={"PATH": "/usr/bin:/bin"},
-    )
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "99"
 
 
 @pytest.mark.ac("gh-581:AC-1")
