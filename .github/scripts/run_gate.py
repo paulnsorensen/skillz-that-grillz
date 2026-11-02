@@ -38,6 +38,14 @@ COVERAGE_DIR_VARIABLE = "GATE_COVERAGE_DIR"
 COVERAGE_LANE = "coverage"
 # The report-only step that prints the per-file test times of the committed durations (quality-ratchets ADR-006).
 TIME_REPORT = "test-time-report"
+# The pytest-timeout limit of one test, in seconds: a hung test fails with a timeout error, so no lane hangs.
+UNIT_TIMEOUT = 120
+E2E_TIMEOUT = 600
+
+
+def timeout_args(seconds: int) -> list[str]:
+    """Return the pytest-timeout options; the `signal` method fails only the hung test and keeps the worker."""
+    return ["--timeout", str(seconds), "--timeout-method", "signal"]
 
 
 def _environment() -> dict[str, str]:
@@ -280,16 +288,16 @@ def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None
     eat = fsync_wrapper()
     data_dir = data_dir or cache_root / "cov"
 
-    def pytest(lane: str, runner: list[str], paths: list[str], key: str) -> Job:
+    def pytest(lane: str, runner: list[str], paths: list[str], key: str, timeout: int = UNIT_TIMEOUT) -> Job:
         prefix, measured = _covered(lane, data_dir)
         return lane, eat + prefix + runner + [*measured, *paths, "-q", "-n", str(test_workers), "--dist", "worksteal",
-                                              "--basetemp", str(cache_root / key),
+                                              *timeout_args(timeout), "--basetemp", str(cache_root / key),
                                               "-o", f"cache_dir={cache_root / (key + 'c')}"]
 
     # The slow process-level e2e suite runs as its own job, in parallel with the skillz unit tests.
     skillz_e2e = "packages/skillz/tests/skillz_experiments/e2e"
     return [
-        pytest("skillz-e2e-pytest", skillz, [skillz_e2e], "e"),
+        pytest("skillz-e2e-pytest", skillz, [skillz_e2e], "e", E2E_TIMEOUT),
         pytest("wedge-pytest", wedge, ["packages/wedge/tests"], "l"),
         pytest("skillz-pytest", skillz, ["packages/skillz/tests", "--ignore", skillz_e2e], "s"),
         pytest("fromargs-pytest", fromargs, ["packages/fromargs/tests"], "f"),
@@ -310,6 +318,8 @@ def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None
         ("dead-code-tests", root + ["python", ".github/scripts/test_check_dead_code.py"]),
         ("file-size-tests", root + ["python", ".github/scripts/test_check_file_lengths.py"]),
         ("file-size", root + ["python", ".github/scripts/check_file_lengths.py", "check"]),
+        ("test-size-tests", root + ["python", ".github/scripts/test_check_test_counts.py"]),
+        ("test-size", root + ["python", ".github/scripts/check_test_counts.py", "check"]),
         ("coverage-tests", root + ["python", ".github/scripts/test_check_coverage.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
         ("pr-title-workflow-tests", root + ["python", ".github/scripts/test_pr_title_workflow.py"]),
@@ -458,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
                     if len(args) == 2 and args[1]:
                         command += ["--python", args[1]]
                     command += ["--project", f"packages/{package}", "pytest", f"packages/{package}/tests",
-                                "-q", "-n", str(test_workers), "--dist", "worksteal",
+                                "-q", "-n", str(test_workers), "--dist", "worksteal", *timeout_args(UNIT_TIMEOUT),
                                 "--basetemp", str(temp_root / "f"),
                                 "-o", f"cache_dir={temp_root / 'fc'}"]
                     # `uv run --locked` can sync the environment, so this lane keeps fsync.
