@@ -1,10 +1,11 @@
 name: refresh test durations
 
-# Each week, replace packages/skillz/.test_durations with the merged `test-durations` artifact of the newest
-# green `validate` push run on main, then lower the improved time ceilings in pyproject.toml
-# (docs/agents/decisions/quality-ratchets.md ADR-004 and ADR-006). `refresh_durations.py` decides whether
-# anything changed. On no change, the run logs `no change` and opens no PR. On a change, the run force-pushes
-# one fixed branch and opens or updates its PR against main, so at most one refresh PR is open.
+# Each week, read the merged `test-durations` artifacts of the last three green `validate` push runs on main.
+# Per-file wall time varies from run to run, so `refresh_durations.py` gives each test of the newest run its
+# maximum seconds over these runs. It writes that map to packages/skillz/.test_durations and, with three runs,
+# lowers the improved time ceilings in pyproject.toml (docs/agents/decisions/quality-ratchets.md ADR-004 and
+# ADR-006). On no change, the run logs `no change` and opens no PR. On a change, the run force-pushes one fixed
+# branch and opens or updates its PR against main, so at most one refresh PR is open.
 #
 # Token gap: the repository has no bot token and no GitHub App, so this job uses GITHUB_TOKEN.
 # - The repository setting "Allow GitHub Actions to create and approve pull requests" is off. Until the
@@ -53,43 +54,58 @@ jobs:
 
       - name: Download the merged durations
         id: source
+        env:
+          # refresh_durations.py TIGHTEN_RUNS needs the same number.
+          RUNS: 3
         run: |
           set -euo pipefail
-          run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow validate.yml --branch main --event push \
-            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
-          if [ -z "$run" ]; then
-            echo "::error::REFRESH-NO-RUN: no green validate push run on main"
+          downloaded=()
+          for run in $(gh run list --repo "$GITHUB_REPOSITORY" --workflow validate.yml --branch main \
+            --event push --status success --limit "$RUNS" --json databaseId --jq '.[].databaseId'); do
+            if gh run download "$run" --repo "$GITHUB_REPOSITORY" --name test-durations \
+              --dir "$RUNNER_TEMP/test-durations/$run"; then
+              downloaded+=("$run")
+            else
+              echo "::warning::validate run $run has no test-durations artifact; the refresh skips it"
+            fi
+          done
+          if [ "${#downloaded[@]}" -eq 0 ]; then
+            echo "::error::REFRESH-NO-ARTIFACT: no green validate push run on main has a test-durations artifact"
             exit 1
           fi
-          if ! gh run download "$run" --repo "$GITHUB_REPOSITORY" --name test-durations \
-            --dir "$RUNNER_TEMP/test-durations"; then
-            echo "::error::REFRESH-NO-ARTIFACT: validate run $run has no test-durations artifact"
-            exit 1
-          fi
-          echo "source: validate run $run"
-          echo "run=$run" >>"$GITHUB_OUTPUT"
+          echo "source: validate runs ${downloaded[*]} (newest first)"
+          echo "runs=${downloaded[*]}" >>"$GITHUB_OUTPUT"
 
       - name: Refresh the durations and the ceilings
         id: refresh
-        run: >-
-          python .github/scripts/refresh_durations.py "$RUNNER_TEMP/test-durations/.test_durations"
-          --github-output "$GITHUB_OUTPUT"
+        env:
+          RUNS: ${{ steps.source.outputs.runs }}
+        run: |
+          set -euo pipefail
+          artifacts=()
+          for run in $RUNS; do
+            artifacts+=("$RUNNER_TEMP/test-durations/$run/.test_durations")
+          done
+          python .github/scripts/refresh_durations.py "${artifacts[@]}" --github-output "$GITHUB_OUTPUT"
 
       - name: Open or update the refresh PR
         if: steps.refresh.outputs.changed == 'true'
         env:
-          RUN: ${{ steps.source.outputs.run }}
+          RUNS: ${{ steps.source.outputs.runs }}
         run: |-
           set -euo pipefail
-          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN"
+          links=""
+          for run in $RUNS; do
+            links+="${links:+, }[$run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run)"
+          done
           git config user.name "github-actions[bot]"
           git config user.email "41898828+github-actions[bot]@users.noreply.github.com"
           git switch -C "$BRANCH"
-          git commit -am "$TITLE" -m "Source: the test-durations artifact of validate run $url."
+          git commit -am "$TITLE" -m "Source: the per-test maximum of the test-durations artifacts of validate runs $RUNS."
           git push --force origin "HEAD:refs/heads/$BRANCH"
           body="$RUNNER_TEMP/body.md"
           {
-            echo "Replaces \`packages/skillz/.test_durations\` with the merged durations of [validate run $RUN]($url)"
+            echo "Replaces \`packages/skillz/.test_durations\` with the per-test maximum of validate runs $links"
             echo "and lowers the improved ceilings in \`[tool.skillz.test-time.exceptions]\` (quality-ratchets ADR-004, ADR-006)."
             echo
             echo "GITHUB_TOKEN made this PR, so no check runs on it yet. Close and reopen the PR to start the checks."
