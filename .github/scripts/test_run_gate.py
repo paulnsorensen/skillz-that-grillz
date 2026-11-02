@@ -389,12 +389,13 @@ class GateRunnerTest(unittest.TestCase):
             self.assertEqual(sorted(path.name for path in durations.iterdir()),
                              ["skillz-e2e-pytest.2of4.json", "skillz-pytest.2of4.json"])
             self.assertFalse(any("--splits" in event for event in events if " pytest " not in event))
-            # A lane that GATE_SKIP skips stores no durations, so the merge sees no copy of the committed file.
-            env = {**env, "GATE_SKIP": "skillz-e2e-pytest", "GATE_COVERAGE_DIR": str(root / "skip")}
+            # A retry in the same directory that skips a lane removes the earlier run's copy for that lane,
+            # so the merge sees only this run's files.
+            env = {**env, "GATE_SKIP": "skillz-e2e-pytest"}
             result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual([path.name for path in (root / "skip" / "durations").iterdir()], ["skillz-pytest.2of4.json"])
+            self.assertEqual([path.name for path in durations.iterdir()], ["skillz-pytest.2of4.json"])
 
     def test_every_pytest_lane_writes_its_own_coverage_then_the_coverage_lane_runs_last(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

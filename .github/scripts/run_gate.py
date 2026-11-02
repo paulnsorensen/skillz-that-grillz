@@ -65,9 +65,13 @@ def _sharded(jobs: list[Job], shard: str, directory: Path) -> list[Job]:
     """Run one group of each lane; each lane stores its durations to `<directory>/<lane>.<i>of<n>.json`.
 
     Each lane starts from a copy of the committed durations file, so the split reads the committed data.
+    Remove the durations files of an earlier run first: a retry that skips a lane must not leave that lane's
+    stale copy, because the merge rejects a test id that two files hold.
     """
     index, count = parse_shard(shard)
     directory.mkdir(parents=True, exist_ok=True)
+    for stale in directory.glob("*.json"):
+        stale.unlink()
     sharded: list[Job] = []
     for name, command in jobs:
         durations = directory / f"{name}.{index}of{count}.json"
