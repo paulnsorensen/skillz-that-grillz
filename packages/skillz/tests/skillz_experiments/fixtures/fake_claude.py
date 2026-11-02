@@ -22,7 +22,6 @@ import sys
 import time
 import traceback
 from collections.abc import Mapping
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TextIO, cast
 
@@ -34,17 +33,22 @@ ACCOUNT_SKILL = "anthropic-skills:pdf"
 PLUGIN_SKILL = "plug:tool"
 
 
-@dataclass(frozen=True)
 class Call:
-    """The process state of one run: the script path that names the sidecar files, and what the OS gives a child."""
+    """The process state of one run: the script path that names the sidecar files, and what the OS gives a child.
 
-    script: Path
-    argv: list[str]
-    cwd: Path
-    environ: Mapping[str, str]
-    stdin: TextIO
-    stdout: TextIO
-    stderr: TextIO
+    A plain class, not a dataclass: a test loads this file with `spec_from_file_location` and does not register it in
+    `sys.modules`, and the dataclass decorator looks the module up there.
+    """
+
+    def __init__(self, script: Path, argv: list[str], cwd: Path, environ: Mapping[str, str], stdin: TextIO,
+                 stdout: TextIO, stderr: TextIO) -> None:
+        self.script: Path = script
+        self.argv: list[str] = argv
+        self.cwd: Path = cwd
+        self.environ: Mapping[str, str] = environ
+        self.stdin: TextIO = stdin
+        self.stdout: TextIO = stdout
+        self.stderr: TextIO = stderr
 
 
 _CALL: contextvars.ContextVar[Call] = contextvars.ContextVar("fake_claude_call")
