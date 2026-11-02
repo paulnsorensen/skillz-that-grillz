@@ -42,3 +42,5 @@ testpaths = ["tests/skillz_experiments", "tests/skillz_inspect"]
 markers = ["ac(id): ties a test to an acceptance-criterion ID",
            "live: makes real model calls; runs only with SKILLZ_LIVE=1 (just live-smoke)"]
 addopts = "--strict-markers"
+# Remove the tmp_path of a passed test at its teardown, so one gate run does not fill the disk.
+tmp_path_retention_policy = "failed"
