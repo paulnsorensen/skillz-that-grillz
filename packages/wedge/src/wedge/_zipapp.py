@@ -31,6 +31,8 @@ def write_archive(site_dir: Path, entry: str, out_path: Path) -> None:
             members["site-packages/" + relative.as_posix() + "/"] = None
         for name in files:
             path = Path(directory) / name
+            if path.suffix in {".so", ".pyd"}:
+                raise ValueError(f"native extension modules are not supported in ZIP archives: {path.relative_to(site_dir)}")
             members["site-packages/" + path.relative_to(site_dir).as_posix()] = path
     with out_path.open("wb") as output:
         _ = output.write(_SHEBANG)

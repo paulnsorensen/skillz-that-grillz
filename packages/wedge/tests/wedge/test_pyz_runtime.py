@@ -14,6 +14,25 @@ from wedge._build import build
 from wedge._zipapp import write_archive
 
 
+@pytest.mark.parametrize("filename", ["native.so", "native.cpython-312-x86_64-linux-gnu.so", "native.pyd"])
+@pytest.mark.parametrize("existing", [False, True])
+def test_archive_rejects_native_modules_before_opening_output(tmp_path: Path, filename: str, existing: bool) -> None:
+    site = tmp_path / "site" / "app"
+    site.mkdir(parents=True)
+    _ = (site / filename).write_bytes(b"native module")
+    output = tmp_path / "app.pyz"
+    if existing:
+        _ = output.write_bytes(b"keep this archive")
+
+    with pytest.raises(ValueError, match="native extension modules are not supported"):
+        write_archive(site.parent, "app:main", output)
+
+    if existing:
+        assert output.read_bytes() == b"keep this archive"
+    else:
+        assert not output.exists()
+
+
 @pytest.fixture(scope="module")
 def built_pyz(tmp_path_factory: pytest.TempPathFactory, fixture_skill_dir: Path) -> Path:
     out_dir = tmp_path_factory.mktemp("wedge-pyz-runtime")

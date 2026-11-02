@@ -28,6 +28,21 @@ class _HashLike(Protocol):
     def hexdigest(self) -> str: ...
 
 
+@pytest.mark.parametrize("suffix", [".so", ".pyd"])
+def test_build_rejects_first_party_native_modules(
+    tmp_path: Path, copy_repo_subset: Callable[[Path], Path], suffix: str,
+) -> None:
+    skill = copy_repo_subset(tmp_path / "checkout")
+    native = skill.parents[3] / "fromargs" / "src" / "fromargs" / f"native{suffix}"
+    _ = native.write_bytes(b"native module")
+    output = tmp_path / "output"
+
+    with pytest.raises(ValueError, match="native extension modules are not supported"):
+        _ = build(skill, output)
+
+    assert list(output.iterdir()) == []
+
+
 @pytest.mark.ac("wedge-skill-packaging:AC-W2")
 @pytest.mark.ac("gh-581:AC-12")
 def test_build_is_byte_identical_across_checkouts(
