@@ -7,7 +7,7 @@ requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Paul Sorensen", email = "paulnsorensen@gmail.com" }]
-keywords = ["cli", "skills", "shiv", "wedge"]
+keywords = ["cli", "skills", "zipapp", "wedge"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Programming Language :: Python :: 3.11",
@@ -17,10 +17,7 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
 ]
-# Exact shiv pin: shiv writes its version into every .pyz, so a different shiv
-# changes the asset bytes. `uvx --from git+...` ignores uv.lock, so the pin
-# must live here for a local `wedge lock` to match the action's build.
-dependencies = ["fromargs>=0.2.0,<0.3", "shiv==1.0.8"]
+dependencies = ["fromargs>=0.2.0,<0.3"]
 
 [project.urls]
 Homepage = "https://github.com/paulnsorensen/skillz-that-grillz"

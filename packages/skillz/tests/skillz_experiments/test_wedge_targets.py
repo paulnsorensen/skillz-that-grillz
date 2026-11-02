@@ -422,14 +422,14 @@ def test_a_broken_build_rejects_the_candidate_with_build_failed(
     out = prepared(world, tmp_path, write_draft, approvals)
 
     def broken(*_args: object, **_kwargs: object) -> None:
-        raise subprocess.CalledProcessError(1, ["shiv"], stderr="shiv exploded")
+        raise OSError("archive writer failed")
 
-    monkeypatch.setattr(wedge_build, "_shiv", broken)
+    monkeypatch.setattr(wedge_build, "write_archive", broken)
     recorder = Recorder()
     score, feedback = evaluate(out, recorder, lambda components: components.update({BETA: BETA_SOURCE + "\n# edit\n"}))
     assert score == 0.0 and recorder.seen == []
     assert feedback["reason"] == "build-failed" and str(feedback["rejected"]).startswith("target beta: ")
-    assert "shiv exploded" in str(feedback["rejected"])
+    assert "archive writer failed" in str(feedback["rejected"])
 
 
 def test_candidate_source_never_runs_on_the_host_during_the_build(
@@ -764,9 +764,9 @@ def test_a_winner_that_no_longer_builds_stops_the_gate_with_build_failed(
     session = _gated(out, recorder, {BETA: BETA_SOURCE.replace("v1", "v2")})
 
     def broken(*_args: object, **_kwargs: object) -> None:
-        raise subprocess.CalledProcessError(1, ["shiv"], stderr="shiv exploded")
+        raise OSError("archive writer failed")
 
-    monkeypatch.setattr(wedge_build, "_shiv", broken)
+    monkeypatch.setattr(wedge_build, "write_archive", broken)
     try:
         with pytest.raises(Stop) as stopped:
             session.gate()

@@ -20,9 +20,6 @@ dev = [
 experiments = ["gepa==0.1.4"]
 # Keep this pin inside packages/skillz/pyproject.toml's tenacity range; the skillz-experiment bundle carries it.
 retry = ["tenacity==9.2.1"]
-# skills/skillz/wedge.toml bundles the wedge CLI. Keep this pin equal to packages/wedge/pyproject.toml:
-# shiv writes its version into every archive it builds.
-wedge = ["shiv==1.0.8"]
 
 [tool.uv]
 package = false
@@ -151,4 +148,4 @@ max_lines = 300
 "packages/skillz/src/skillz_experiments/run/_wedge_targets.py" = { max_lines = 820, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/search/_history.py" = { max_lines = 334, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/wrapper/_gemini.py" = { max_lines = 492, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
-"packages/wedge/src/wedge/_build.py" = { max_lines = 755, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/wedge/src/wedge/_build.py" = { max_lines = 693, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
