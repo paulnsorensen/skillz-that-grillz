@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -12,9 +14,11 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from typing import cast
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import merge_durations  # noqa: E402
 import run_gate  # noqa: E402
 
 RUNNER = Path(run_gate.__file__).resolve()
@@ -25,8 +29,6 @@ with open(os.environ['EVENT_LOG'], 'a') as log:
     log.write(pathlib.Path(sys.argv[0]).name + ' ' + ' '.join(args) + '\\n')
     if 'SKILLZ_LIVE' in os.environ:
         log.write('live-flag-leaked\\n')
-    if 'GATE_SHARD' in os.environ:
-        log.write('pythonpath ' + os.environ.get('PYTHONPATH', '') + '\\n')
     if 'COVERAGE_FILE' in os.environ:
         log.write('coverage-file ' + os.environ['COVERAGE_FILE'] + '\\n')
 if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
@@ -362,21 +364,37 @@ class GateRunnerTest(unittest.TestCase):
             self.assertEqual(len(events), 4)
             self.assertTrue(any(f"pytest {e2e} " in event for event in events[2:]))
             self.assertTrue(any(f"pytest packages/skillz/tests --ignore {e2e} " in event for event in events[2:]))
+            # Without GATE_SHARD, both lanes run whole, as in local `just build` and `just ci`.
+            self.assertFalse(any("--splits" in event or "--durations-path" in event for event in events))
 
-    def test_skillz_shard_loads_the_plugin_into_both_skillz_lanes(self) -> None:
+    def test_skillz_shard_runs_one_split_group_of_both_skillz_lanes_and_stores_its_durations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            env = {**self._fake_env(root), "GATE_SHARD": "2/4", "PYTHONPATH": "/elsewhere"}
+            data = root / "data"
+            env = {**self._fake_env(root), "GATE_SHARD": "2/4", "GATE_COVERAGE_DIR": str(data)}
             result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             pytest_events = [event for event in events if " pytest " in event]
             self.assertEqual(len(pytest_events), 2)
-            self.assertTrue(all(event.endswith(" -p pytest_shard") for event in pytest_events))
-            paths = {event for event in events if event.startswith("pythonpath ")}
-            self.assertEqual(paths, {f"pythonpath {RUNNER.parent}{os.pathsep}/elsewhere"})
-
+            durations = data.resolve() / "durations"
+            for lane in ("skillz-e2e-pytest", "skillz-pytest"):
+                stored = durations / f"{lane}.2of4.json"
+                split = ("--splits 4 --group 2 --splitting-algorithm least_duration "
+                         f"--durations-path {stored} --store-durations --clean-durations")
+                self.assertEqual(sum(event.endswith(" " + split) for event in pytest_events), 1, pytest_events)
+                # The split reads a copy of the committed file; pytest-split then replaces it with this shard's data.
+                self.assertEqual(stored.read_bytes(), run_gate.DURATIONS_FILE.read_bytes())
+            self.assertEqual(sorted(path.name for path in durations.iterdir()),
+                             ["skillz-e2e-pytest.2of4.json", "skillz-pytest.2of4.json"])
+            self.assertFalse(any("--splits" in event for event in events if " pytest " not in event))
+            # A lane that GATE_SKIP skips stores no durations, so the merge sees no copy of the committed file.
+            env = {**env, "GATE_SKIP": "skillz-e2e-pytest", "GATE_COVERAGE_DIR": str(root / "skip")}
+            result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual([path.name for path in (root / "skip" / "durations").iterdir()], ["skillz-pytest.2of4.json"])
     def test_every_pytest_lane_writes_its_own_coverage_then_the_coverage_lane_runs_last(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -459,25 +477,40 @@ class GateRunnerTest(unittest.TestCase):
                     self.assertFalse((root / "events").exists())
 
     @unittest.skipUnless(importlib.util.find_spec("pytest"), "pytest is not installed")
-    def test_the_shards_partition_the_collected_tests(self) -> None:
+    def test_the_six_split_groups_partition_the_collected_tests_under_xdist(self) -> None:
+        """Spec test-suite-cost-gates AC-6: each collected test runs in exactly one shard."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            _ = (root / "test_sample.py").write_text("".join(f"def test_{n}():\n    pass\n" for n in range(7)))
-            env = {**self._fake_env(root), "PYTHONPATH": str(RUNNER.parent)}
+            tests = root / "tests"
+            tests.mkdir()
+            for module in "abc":
+                _ = (tests / f"test_{module}.py").write_text("".join(f"def test_{n}():\n    pass\n" for n in range(7)))
+            # Uneven recorded durations for some tests; the rest get the average, as a new test does.
+            committed = root / "committed.json"
+            _ = committed.write_text(json.dumps({"tests/test_a.py::test_0": 9.0, "tests/test_b.py::test_3": 4.0,
+                                                 "tests/test_c.py::test_6": 0.5, "tests/gone.py::test_x": 50.0}))
+            env = self._fake_env(root)
 
-            def collected(*extra: str, shard: str | None = None) -> list[str]:
-                run_env = env if shard is None else {**env, "GATE_SHARD": shard}
-                result = subprocess.run([sys.executable, "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
-                                         *extra, str(root / "test_sample.py")], cwd=root, env=run_env,
-                                        capture_output=True, text=True, check=False, timeout=30)
+            def pytest(*extra: str) -> str:
+                result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *extra, "tests"],
+                                        cwd=root, env=env, capture_output=True, text=True, check=False, timeout=60)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-                return [line for line in result.stdout.splitlines() if "::" in line]
+                return result.stdout
 
-            everything = collected()
-            shards = [collected("-p", "pytest_shard", shard=f"{index}/3") for index in (1, 2, 3)]
-            self.assertEqual(len(everything), 7)
-            self.assertEqual([len(shard) for shard in shards], [3, 2, 2])
-            self.assertEqual(sorted(test for shard in shards for test in shard), sorted(everything))
+            everything = {line for line in pytest("--collect-only").splitlines() if "::" in line}
+            stored = root / "stored"
+            stored.mkdir()
+            for index in range(1, 7):
+                durations = stored / f"skillz-pytest.{index}of6.json"
+                _ = shutil.copyfile(committed, durations)
+                # The CI shard runs its lanes with xdist workers, so this run does too.
+                _ = pytest("-n", "2", "--dist", "worksteal", *run_gate.split_arguments(index, 6, durations))
+            ran = {path.name: set(cast(dict[str, float], json.loads(path.read_text()))) for path in stored.iterdir()}
+            self.assertEqual(len(everything), 21)
+            self.assertTrue(all(ran.values()), ran)
+            # merge() fails when a test is in two shard files; the union is the whole collection.
+            self.assertEqual(set(merge_durations.merge(stored)), everything)
+            self.assertEqual(sum(len(tests) for tests in ran.values()), len(everything))
 
     def test_invalid_worker_count_fails_before_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

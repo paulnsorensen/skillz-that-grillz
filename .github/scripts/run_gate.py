@@ -21,8 +21,10 @@ _cancelled = False
 PACKAGE_MODES = frozenset({"fromargs", "agent-session-analytics"})
 LIVE_FLAG = "SKILLZ_LIVE"
 SKIP_VARIABLE = "GATE_SKIP"
-# `skillz` mode only: run one shard of each skillz lane through the `pytest_shard` plugin.
+# `skillz` mode only: run one pytest-split group of each skillz lane.
 SHARD_VARIABLE = "GATE_SHARD"
+# The committed per-test durations that pytest-split balances the shards by (quality-ratchets ADR-004).
+DURATIONS_FILE = ROOT / "packages/skillz/.test_durations"
 # CI runs these lanes in their own job (`just test-skillz`) and skips them in the gate job.
 SKILLZ_LANES = ("skillz-e2e-pytest", "skillz-pytest")
 # `0` keeps fsync in the pytest lanes; otherwise they run under `eatmydata` when it is on PATH.
@@ -37,15 +39,8 @@ COVERAGE_LANE = "coverage"
 
 
 def _environment() -> dict[str, str]:
-    """Return the step environment without `SKILLZ_LIVE`, so no gate step makes a real model call.
-
-    With `GATE_SHARD` set, put this directory on `PYTHONPATH`, so pytest can load the `pytest_shard` plugin.
-    """
-    environment = {name: value for name, value in os.environ.items() if name != LIVE_FLAG}
-    if environment.get(SHARD_VARIABLE):
-        scripts = str(Path(__file__).resolve().parent)
-        environment["PYTHONPATH"] = os.pathsep.join(filter(None, [scripts, environment.get("PYTHONPATH")]))
-    return environment
+    """Return the step environment without `SKILLZ_LIVE`, so no gate step makes a real model call."""
+    return {name: value for name, value in os.environ.items() if name != LIVE_FLAG}
 
 
 def parse_shard(value: str) -> tuple[int, int]:
@@ -54,6 +49,31 @@ def parse_shard(value: str) -> tuple[int, int]:
     if separator and index.isdigit() and count.isdigit() and 1 <= int(index) <= int(count):
         return int(index), int(count)
     raise ValueError(f"{SHARD_VARIABLE} must be <index>/<count> with 1 <= index <= count: {value!r}")
+
+
+def split_arguments(index: int, count: int, durations: Path) -> list[str]:
+    """Return the pytest-split arguments that run group `index` of `count` and store its durations to `durations`.
+
+    pytest-split reads the split data from the file that it then writes. `--clean-durations` makes it write
+    only the tests of this run, so the stored file holds this shard's durations alone.
+    """
+    return ["--splits", str(count), "--group", str(index), "--splitting-algorithm", "least_duration",
+            "--durations-path", str(durations), "--store-durations", "--clean-durations"]
+
+
+def _sharded(jobs: list[Job], shard: str, directory: Path) -> list[Job]:
+    """Run one group of each lane; each lane stores its durations to `<directory>/<lane>.<i>of<n>.json`.
+
+    Each lane starts from a copy of the committed durations file, so the split reads the committed data.
+    """
+    index, count = parse_shard(shard)
+    directory.mkdir(parents=True, exist_ok=True)
+    sharded: list[Job] = []
+    for name, command in jobs:
+        durations = directory / f"{name}.{index}of{count}.json"
+        _ = shutil.copyfile(DURATIONS_FILE, durations)
+        sharded.append((name, command + split_arguments(index, count, durations)))
+    return sharded
 
 
 def fsync_wrapper() -> list[str]:
@@ -285,6 +305,7 @@ def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
         ("pr-title-workflow-tests", root + ["python", ".github/scripts/test_pr_title_workflow.py"]),
         ("dist-publisher-tests", root + ["python", ".github/scripts/test_publish_dist.py"]),
+        ("durations-merge-tests", root + ["python", ".github/scripts/test_merge_durations.py"]),
         pytest("agent-session-analytics-pytest", analytics, ["packages/agent-session-analytics/tests"], "a"),
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),
         ("wedge-check", wedge + ["wedge", "check", "--root", "packages/wedge/examples/skills",
@@ -418,11 +439,14 @@ def main(argv: list[str] | None = None) -> int:
                         return 0 if run_step(f"{package}-pytest", command) else 1
                 if args[0] in {"test", "skillz"}:
                     # These modes write the lane data but do not check it: CI's coverage job combines the shards.
-                    jobs = _test_jobs(test_workers, temp_root, coverage_dir(temp_root))
+                    data_dir = coverage_dir(temp_root)
+                    jobs = _test_jobs(test_workers, temp_root, data_dir)
                     if args[0] == "skillz":
-                        plugin = ["-p", "pytest_shard"] if shard else []
-                        jobs = [(name, command + plugin) for name, command in jobs if name in SKILLZ_LANES]
+                        jobs = [job for job in jobs if job[0] in SKILLZ_LANES]
                     jobs = _without(jobs, skip)
+                    if shard:
+                        # The shard durations sit below the coverage directory, apart from the lane data.
+                        jobs = _sharded(jobs, shard, data_dir / "durations")
                     if not _prepare():
                         return 1
                     with host_slot(slots):
