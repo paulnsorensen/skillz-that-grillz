@@ -179,7 +179,7 @@ Map each coded stop to its next step:
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_file` (the path of `RUN/cases.seed.json`) and `seed_summary` (`cases`, `journeys` (the journey case count), and the case count of each kind and each family; a task case with no family is in no family count; both only when `evals/evals.json` or `evals/journeys.json` exists), `doctor` (the host checks) | Write the case draft. Start from the `seed_file` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
 | `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey; `reflection` with `calls`, `editable_chars`, and `seconds`), `statistics`, `reflection_warning` (only when the editable text exceeds 200000 characters), `reflection_time_warning` (only when the reflection time takes the run past its seconds cap) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
-| `cases-too-easy` | The seed already scores at least 0.9 on a train or validation family. The message names each family, its split, and its mean. | Do not ask a new question. Draft harder cases in a new run directory, then ask question 2 again. No search call ran. A resume of this run returns the same stop. |
+| `cases-too-easy` | `next`, and `baseline` with `headroom` (each family, its split, and its mean), `failing` (each seed outcome below 1 with its unmet criteria), `scored`, `unscored` (the holdout and pending cases), `spent`, `approved_calls`, `estimate`, `search`, `holdout_gate`, and `replay` as `not-run`, and `export` as `unavailable` | Report the baseline. Do not call `export`. Do not ask a new question. When the user asks to optimize, draft harder cases in a new run directory. Then ask question 2 again. No search call ran. A resume of this run returns the same stop. |
 | `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `baseline-check-timeout` | `next`, and optional `detail` | The contract check of the original skill reached the sandbox time limit twice, before the search or in the holdout gate. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
 | `winner-check-timeout` | `next`, and optional `detail` | The contract check of the winner reached the sandbox time limit twice in the holdout gate or the replay. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
@@ -298,6 +298,14 @@ A `task` case holds the fixtures in `files`, keyed by their listed paths, and an
 The `expected` object holds `expected_output`, which defaults to an empty string, and `assertions`, which defaults to an empty list. A `task` entry needs `expected_output` or `assertions`.
 Each fixture path starts with `evals/files/`. A path outside `evals/files/` stops the seed.
 The runner stages each fixture at its `evals/files/` path in the workspace, so the request must name that directory.
+The runner does not list the case files to the task. Name in the request each fixture that the task must read.
+A request may leave out an auxiliary file.
+A known fixture is a file that a draft case stages or a file under the skill's `evals/files/`.
+When a request names a known fixture that its own case does not stage, the run stops with `case-fixture-missing`.
+The stop comes before the case question and any model call. `validate` reports the same code.
+A request word counts without its edge punctuation, a leading `./`, and a line reference such as `:3`.
+A word counts only when it has a `/` or a file extension. A URL, an absolute path, and a `~` path do not count.
+An output, a rename target, or an absent file passes when its name differs from each known fixture.
 When the entry lists no fixture, `files` is empty. Draft the starting fixture that the request needs.
 A seed case has a `family` only when the entry has a nonempty-text `family` key. Otherwise set the `family` by the rule below.
 Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged, and a journey case with its `brief` unchanged. You can extend `files`, `expected`, and `family`.
@@ -410,7 +418,11 @@ Give each family one trap:
 
 The run stops with `cases-too-easy` when the seed already scores 0.9 or more on a family.
 A run that sets `min_token_saving` does not stop, because a token-saving run expects saturated cases.
-After a stop, draft harder cases for that family in a new run directory. Do not edit the stopped run directory.
+The stop data holds `baseline`: `search`, `holdout_gate`, and `replay` are `not-run`, and `export` is `unavailable`.
+`baseline.failing` lists each seed outcome below 1, with its family and the redacted reason of each unmet criterion. Another family can fail while one family saturates.
+`baseline.spent` holds the spent calls. `approved_calls` and `estimate` are the approved ceiling and the plan, not spending. `baseline.unscored` counts the holdout and pending cases that did not run.
+A resume returns the same stop and data with no model call. Report the baseline. Do not call `export`.
+When the user asks to optimize, draft harder cases for that family in a new run directory. Do not edit the stopped run directory.
 
 When session analytics exists, mine past sessions for hard cases. Follow these steps:
 
