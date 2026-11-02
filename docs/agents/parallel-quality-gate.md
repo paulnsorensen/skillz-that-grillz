@@ -82,7 +82,8 @@ The first committed file gives each test the same value, so that split balances 
 The `refresh test durations` workflow refreshes the committed file each Monday and on `workflow_dispatch`.
 It reads the `test-durations` artifacts of the last three green `validate` push runs on main.
 `refresh_durations.py` gives each test of the newest run its maximum seconds over these runs.
-It writes that map to the file when the map differs, then lowers the improved time ceilings.
+It writes that map to the file when the map differs.
+It then lowers the improved time ceilings from the slowest of the runs for each test file.
 With fewer than three runs, it does not lower a ceiling.
 On no change, the run logs `no change` and opens no PR.
 On a change, the run force-pushes `chore/refresh-test-durations` and opens or updates one PR against main.

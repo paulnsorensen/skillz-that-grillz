@@ -72,10 +72,10 @@ def _snapshot(root: Path) -> tuple[str, str]:
 
 class CombineTest(unittest.TestCase):
     def test_each_test_of_the_newest_run_gets_its_maximum_over_the_runs(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            runs = _artifacts(Path(directory), {"a": 1.0, "c": 3.0}, {"a": 5.0, "b": 9.0}, {"c": 1.0})
-            # `b` left the suite after the older run, so the newest run's ids decide the set.
-            self.assertEqual(refresh.combine(runs), {"a": 5.0, "c": 3.0})
+        newest = {"a": 1.0, "c": 3.0}
+        # `b` left the suite after the older run, so the newest run's ids decide the set.
+        self.assertEqual(refresh.combine([newest, {"a": 5.0, "b": 9.0}, {"c": 1.0}]), {"a": 5.0, "c": 3.0})
+        self.assertEqual(newest, {"a": 1.0, "c": 3.0})
 
 
 class RefreshTest(unittest.TestCase):
@@ -88,17 +88,26 @@ class RefreshTest(unittest.TestCase):
             self.assertEqual(_snapshot(root), before)
             self.assertEqual(output.read_text(), "changed=false\n")
 
-    def test_three_runs_commit_their_maximum_and_tighten_from_it(self) -> None:
+    def test_three_runs_commit_the_per_test_maximum_and_tighten_from_the_slowest_run(self) -> None:
+        a, b, c = f"{SLOW}::test_a", f"{SLOW}::test_b", f"{FAST}::test_c"
+        # Each run takes 12 s for the slow file, but each test peaks in a different run.
+        newest, middle, oldest = {a: 10.0, b: 2.0, c: 1.0}, {a: 2.0, b: 10.0, c: 1.0}, {a: 6.0, b: 6.0, c: 1.0}
         with _tree(_durations(40), _waiver(LOOSE)) as root:
-            runs = _artifacts(root, _durations(22), _durations(28), _durations(25))
+            runs = _artifacts(root, newest, middle, oldest)
             output = root / "github-output"
             self.assertEqual(_run(root, *runs, "--github-output", output), (0, BOTH))
             pyproject, durations = _snapshot(root)
-            self.assertEqual(durations, _text(_durations(28)))
-            # The slowest run sets the ceiling, not the newest run (22 s).
-            self.assertGreater(ratchet.ceiling_for(28), 20)
-            self.assertEqual(pyproject, BUDGET + _waiver(ratchet.ceiling_for(28)))
+            self.assertEqual(durations, _text({a: 10.0, b: 10.0, c: 1.0}))
+            # The ceiling comes from the slowest run (12 s), not from the 20 s sum of the per-test maximum.
+            self.assertGreater(ratchet.ceiling_for(12), 20)
+            self.assertEqual(pyproject, BUDGET + _waiver(ratchet.ceiling_for(12)))
             self.assertEqual(output.read_text(), "changed=true\n")
+
+    def test_the_slowest_run_sets_the_ceiling_not_the_newest(self) -> None:
+        with _tree(_durations(40), _waiver(LOOSE)) as root:
+            runs = _artifacts(root, _durations(22), _durations(28), _durations(25))
+            self.assertEqual(_run(root, *runs), (0, BOTH))
+            self.assertEqual(_snapshot(root), (BUDGET + _waiver(ratchet.ceiling_for(28)), _text(_durations(28))))
 
     def test_fewer_than_three_runs_refresh_the_durations_but_do_not_tighten(self) -> None:
         for count in (1, 2):

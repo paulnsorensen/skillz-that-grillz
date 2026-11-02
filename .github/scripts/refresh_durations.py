@@ -7,8 +7,9 @@ Each `<artifact>` is the `test-durations` file of a green `validate` push run on
 time varies from run to run, so the script combines the runs: it keeps the test ids of the newest run and gives
 each id the maximum of its seconds in all the runs. When that map differs from `packages/skillz/.test_durations`,
 the script writes it there, so the shard split reads a conservative basis. With at least `TIGHTEN_RUNS` artifacts,
-it then runs the time ratchet's `tighten` on `pyproject.toml` with the same map; with fewer, it does not tighten,
-because one fast run is not a stable measure. It prints `changed: <paths>` or `no change`, then a note when it
+it then runs the time ratchet's `tighten` on `pyproject.toml` with every run, so each file's ceiling comes from its
+slowest run (`check_test_durations.slowest`). With fewer, it does not tighten, because few runs are not a stable
+measure. It prints `changed: <paths>` or `no change`, then a note when it
 does not tighten. `--github-output` appends `changed=true` or `changed=false` to that file for the workflow.
 The script writes no file when an artifact or the budget is bad.
 
@@ -38,9 +39,9 @@ def _committed(path: Path) -> dict[str, float] | None:
         return None
 
 
-def combine(artifacts: list[Path]) -> dict[str, float]:
-    """Return the test ids of the newest artifact, each with its maximum seconds over all the artifacts."""
-    newest, *older = (ratchet.load_durations(path) for path in artifacts)
+def combine(runs: list[dict[str, float]]) -> dict[str, float]:
+    """Return the test ids of the newest run, each with its maximum seconds over all the runs."""
+    newest, older = dict(runs[0]), runs[1:]
     for run in older:
         for test, seconds in run.items():
             if test in newest:
@@ -50,13 +51,15 @@ def combine(artifacts: list[Path]) -> dict[str, float]:
 
 def refresh(root: Path, artifacts: list[Path]) -> tuple[list[str], bool]:
     """Apply the artifacts to the tree at `root`; return the changed paths, relative to `root`, and if it tightened."""
-    durations = combine(artifacts)
+    runs = [ratchet.load_durations(path) for path in artifacts]
+    durations = combine(runs)
     budget = ratchet.load_budget(root)
     pyproject = root / ratchet.PYPROJECT
     text = pyproject.read_text(encoding="utf-8")
     tightens = len(artifacts) >= TIGHTEN_RUNS
     # Compute every new text before the first write, so a bad input leaves the tree as it was.
-    tightened = ratchet.tighten(text, budget, ratchet.per_file(durations)) if tightens else text
+    files = ratchet.slowest([ratchet.per_file(run) for run in runs])
+    tightened = ratchet.tighten(text, budget, files) if tightens else text
     target = root / DURATIONS
     writes: dict[str, tuple[Path, str]] = {}
     if _committed(target) != durations:

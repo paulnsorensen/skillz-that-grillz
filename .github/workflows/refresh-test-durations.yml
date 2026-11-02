@@ -2,8 +2,8 @@ name: refresh test durations
 
 # Each week, read the merged `test-durations` artifacts of the last three green `validate` push runs on main.
 # Per-file wall time varies from run to run, so `refresh_durations.py` gives each test of the newest run its
-# maximum seconds over these runs. It writes that map to packages/skillz/.test_durations and, with three runs,
-# lowers the improved time ceilings in pyproject.toml (docs/agents/decisions/quality-ratchets.md ADR-004 and
+# maximum seconds over these runs. It writes that map to packages/skillz/.test_durations. With three runs, it
+# lowers the improved time ceilings in pyproject.toml from each file's slowest run (quality-ratchets ADR-004 and
 # ADR-006). On no change, the run logs `no change` and opens no PR. On a change, the run force-pushes one fixed
 # branch and opens or updates its PR against main, so at most one refresh PR is open.
 #
