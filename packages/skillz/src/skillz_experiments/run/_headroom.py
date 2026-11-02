@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import math
 from concurrent.futures import ThreadPoolExecutor
-from collections.abc import Mapping
 from typing import cast
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS
-from skillz_experiments._cases import Case, CodedError, Split, mapping
+from skillz_experiments._cases import Case, CodedError, Split
 from skillz_experiments.gate import close
+from skillz_experiments.run._baseline import too_easy_stop
 from skillz_experiments.run._outcomes import failed_outcome, is_failed
 from skillz_experiments.run._plan import repeat_indices
 from skillz_experiments.run._search_phase import SearchPhase
@@ -20,23 +20,10 @@ from skillz_experiments.search import unit_score
 HEADROOM_CEILING = 0.9
 
 
-def too_easy_message(headroom: Mapping[str, object]) -> str:
-    """Return the `cases-too-easy` stop text from a recorded headroom block.
-
-    The text comes from the block alone, so a resume gets the same stop when the run died before it recorded `failure`.
-    """
-    ceiling = cast(float, headroom["ceiling"])
-    families = [(name, mapping(item)) for name, item in mapping(headroom["families"]).items()]
-    named = "; ".join(f"{name} ({item['split']}) mean {cast(float, item['mean']):.2f}" for name, item in families
-                      if cast(float, item["mean"]) >= ceiling or close(cast(float, item["mean"]), ceiling))
-    return (f"the seed already scores at least {ceiling} on {named}; a search cannot show a gain on cases this easy; "
-            + "draft harder cases in a new run directory, then call run again")
-
-
 def run_headroom(state: RunState, search: SearchPhase) -> None:
     """Score the seed once on every train case and once per repeat index on every validation case.
 
-    Stop with `cases-too-easy` when a family is saturated.
+    Stop with `cases-too-easy` when a family is saturated. The stop data holds the baseline report.
     Each score is a normal search outcome of the seed, so `SearchPhase` serves it to the search once. The validation
     outcomes stand in for the seed validation pass of GEPA. Only the train outcomes add to the search ceiling, so
     the search keeps the room it had after its own seed pass. A resume scores only the runs that have no scored seed
@@ -90,4 +77,4 @@ def run_headroom(state: RunState, search: SearchPhase) -> None:
     state.record["headroom"] = block
     state.checkpoint()
     if stop:
-        raise CodedError("cases-too-easy", too_easy_message(block))
+        raise too_easy_stop(state.record, state.out)
