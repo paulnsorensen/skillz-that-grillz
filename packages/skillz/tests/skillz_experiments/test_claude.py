@@ -19,6 +19,7 @@ from typing import NoReturn, cast, final
 
 import pytest
 
+from in_process_claude import in_process_claude
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
 from skillz_experiments.harness._claude._preflight import READ_INTRO, SANDBOX_INTRO, probe_sandbox
@@ -59,7 +60,9 @@ def _bwrap_works() -> bool:
 needs_bwrap = pytest.mark.skipif(not _bwrap_works(), reason="bubblewrap is unavailable")
 linux_only = pytest.mark.skipif(sys.platform == "darwin", reason="macOS uses the real config directory")
 darwin_only = pytest.mark.skipif(sys.platform != "darwin", reason="only macOS uses the real config directory")
-pytestmark = pytest.mark.usefixtures("host_login")
+# A test that checks only parse or verdict logic uses `in_process_claude`. A test whose contract is the child's argv,
+# environment, stdin, sandbox, or process group uses `fake_claude`, and so does one test for each event type.
+pytestmark = pytest.mark.usefixtures("host_login", "claude_in_process")
 
 
 @pytest.fixture
@@ -102,7 +105,7 @@ def calls(executable: Path) -> list[dict[str, object]]:
 def test_a_failed_claude_call_books_its_seconds_under_failed(tmp_path: Path) -> None:
     from skillz_experiments._budget import FAILED
     budget = Budget(10, 120, 0)
-    session = harness(tmp_path, fake_claude(tmp_path, "auth-fail"), budget)
+    session = harness(tmp_path, in_process_claude(tmp_path, "auth-fail"), budget)
     try:
         task = cast(ClaudeCode, session.transports["task"])
         with pytest.raises(RuntimeError, match="Claude Code fails"):
@@ -187,7 +190,7 @@ def test_a_claude_role_effort_reaches_every_call_and_the_fingerprint(tmp_path: P
 
 
 def test_default_role_fingerprints_keep_the_pre_option_digest(tmp_path: Path) -> None:
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     role = _claude_config(tmp_path, executable).roles["judge"]
     files = {str(executable.resolve()): (str(executable.resolve()), hashlib.sha256(executable.read_bytes()).hexdigest())}
     base = {"adapter": role.adapter, "model": role.model, "command": role.command, "identity": role.identity, "files": files}
@@ -201,12 +204,12 @@ def test_default_role_fingerprints_keep_the_pre_option_digest(tmp_path: Path) ->
     ({"sandbox_seconds": 601}, "sandbox_seconds must be an integer"), ({"sandbox_seconds": 2.5}, "sandbox_seconds must be an integer")])
 def test_invalid_claude_options_stop_the_configuration(tmp_path: Path, options: dict[str, object], message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        _ = _claude_config(tmp_path, fake_claude(tmp_path), **options)
+        _ = _claude_config(tmp_path, in_process_claude(tmp_path), **options)
 
 
 def test_a_role_configuration_with_an_isolation_key_is_refused(tmp_path: Path) -> None:
     with pytest.raises(CodedError, match="is removed") as caught:
-        _ = _claude_config(tmp_path, fake_claude(tmp_path), isolation="claude")
+        _ = _claude_config(tmp_path, in_process_claude(tmp_path), isolation="claude")
     assert caught.value.code == "isolation-removed"
 
 
@@ -219,7 +222,7 @@ def test_claude_options_are_normalized_unique_and_sorted() -> None:
 def test_claude_options_are_refused_for_another_adapter(tmp_path: Path) -> None:
     config = tmp_path / "harness.json"
     _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "command", "identity": "w",
-                                      "command": [str(fake_claude(tmp_path))], "effort": "high"}))
+                                      "command": [str(in_process_claude(tmp_path))], "effort": "high"}))
     with pytest.raises(ValueError, match="only to a claude role"):
         _ = Configuration.load(config, "m")
     _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "codex", "effort": "high"}))
@@ -251,7 +254,7 @@ def test_sandbox_read_roots_that_overlap_the_login_temp_home_or_run_directory_ar
     browsers.mkdir()
     assert resolve_read_roots((str(browsers),), out) == (str(browsers.resolve()),)
     with pytest.raises(CodedError, match="overlaps"):
-        _ = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path),
+        _ = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path),
                        options=ClaudeOptions(sandbox_read=(str(host_login.parent),)))
 
 
@@ -372,7 +375,7 @@ def test_a_slow_sandbox_command_raises_sandbox_timeout_but_budget_exhaustion_sti
     monkeypatch.setattr(_transport, "sandboxed", slow)
     monkeypatch.setattr(shutil, "which", which)
     workspace = make_workspace(tmp_path / "workspace")
-    roomy = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=1))
+    roomy = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=1))
     try:
         with pytest.raises(_runtime.SandboxTimeout):
             _ = roomy.sandbox(workspace, ["/usr/bin/true"])
@@ -400,7 +403,7 @@ def test_the_claude_sandbox_limit_is_the_configured_sandbox_seconds_and_the_prob
 
     monkeypatch.setattr(_transport, "sandboxed", sandboxed)
     monkeypatch.setattr(shutil, "which", which)
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=5))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path), options=ClaudeOptions(sandbox_seconds=5))
     workspace = make_workspace(tmp_path / "workspace")
     try:
         _ = adapter.sandbox(workspace, ["/usr/bin/true"])
@@ -421,7 +424,7 @@ def test_a_sandbox_probe_timeout_fails_the_probe_like_exit_124(tmp_path: Path, m
         del self, workspace, argv, seconds
         return 124, "", ""
 
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     messages: list[str] = []
     try:
         for fake in (timeout, exit_124):
@@ -504,7 +507,7 @@ def test_the_macos_floor_denies_host_roots_and_the_temp_root_but_linux_denies_ev
 
 
 def test_argv_or_settings_or_usage_usage_comes_from_the_json_result(tmp_path: Path) -> None:
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
         result = session.transports["task"].invoke("hello")
@@ -522,7 +525,7 @@ def test_argv_or_settings_or_usage_usage_comes_from_the_json_result(tmp_path: Pa
 def test_preflight_stops_on_isolation_failure_without_fallback(
         tmp_path: Path, mode: str, reason: str, code: str, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     session = harness(tmp_path, executable)
     try:
         with pytest.raises(CodedError, match="isolation") as caught:
@@ -561,7 +564,7 @@ def test_preflight_passes_when_only_the_probe_skill_loads(
         tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
     monkeypatch.setattr(sys, "platform", "linux")  # macOS reads the Keychain, which holds no login file to link
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
         evidence = session.preflight()
@@ -588,6 +591,27 @@ def test_preflight_charges_and_reports_every_live_call(tmp_path: Path, sandbox_p
     assert evidence["live_calls"] == logged
 
 
+def test_an_in_process_preflight_starts_no_child_and_logs_the_same_calls(
+        tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The in-process fake answers the inventory and both check calls of each role, and no child process starts."""
+    del sandbox_passes
+
+    def refuse(*args: object, **kwargs: object) -> NoReturn:
+        del args, kwargs
+        raise AssertionError("an in-process claude call started a child process")
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    executable = in_process_claude(tmp_path)
+    budget = Budget(10, 120, 0)
+    session = harness(tmp_path, executable, budget)
+    try:
+        evidence = session.preflight()
+    finally:
+        session.close()
+    logged = len(calls(executable))
+    assert logged == 2 * len(session.transports) == budget.calls == evidence["live_calls"]
+    assert len(inventory_calls(executable)) == len(session.transports)
+
+
 @needs_bwrap
 def test_preflight_passes_through_the_real_sandbox(tmp_path: Path) -> None:
     session = harness(tmp_path, fake_claude(tmp_path))
@@ -607,7 +631,7 @@ def test_preflight_runs_the_isolation_probe_through_the_sandbox(
         seen.append(argv)
         return 1, "", ""
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
         with pytest.raises(CodedError, match="isolation preflight fails.*no unsafe fallback") as caught:
@@ -621,7 +645,7 @@ def test_preflight_runs_the_isolation_probe_through_the_sandbox(
 
 def test_preflight_stops_when_a_host_file_is_readable(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path, "read-host")
+    executable = in_process_claude(tmp_path, "read-host")
     session = harness(tmp_path, executable)
     try:
         with pytest.raises(CodedError, match="read isolation.*no unsafe fallback") as caught:
@@ -636,7 +660,7 @@ def test_preflight_stops_when_a_host_file_is_readable(tmp_path: Path, sandbox_pa
 def test_preflight_asks_the_read_tool_for_the_outside_file_and_passes_when_it_is_denied(
         tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     budget = Budget(10, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -655,7 +679,7 @@ def test_preflight_asks_the_read_tool_for_the_outside_file_and_passes_when_it_is
 def test_preflight_stops_when_the_read_tool_leaves_the_workspace_or_is_not_probed(
         tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     budget = Budget(10, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -672,7 +696,7 @@ def test_every_claude_call_blocks_reads_outside_the_working_directories(tmp_path
     del sandbox_passes
     floor = _settings.settings(tmp_path / "workspace")
     assert cast(dict[str, object], floor["permissions"])["blockReadsOutsideWorkingDirectories"] is True
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable, Budget(10, 120, 0))
     try:
         _ = session.preflight()
@@ -688,7 +712,7 @@ def test_every_claude_call_blocks_reads_outside_the_working_directories(tmp_path
 @pytest.mark.ac("gh-176:AC-2")
 def test_preflight_stops_when_the_read_tool_returns_the_host_file(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path, "read-tool-host")
+    executable = in_process_claude(tmp_path, "read-tool-host")
     budget = Budget(10, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -714,7 +738,7 @@ def test_preflight_stops_when_the_settings_lose_the_read_block(
         floor["permissions"] = {key: value for key, value in permissions.items() if key != "blockReadsOutsideWorkingDirectories"}
         return floor
     monkeypatch.setattr(_transport, "settings", without_block)
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
         with pytest.raises(CodedError, match=": read isolation failed: the Read tool reached a path outside the workspace;") as caught:
@@ -726,7 +750,7 @@ def test_preflight_stops_when_the_settings_lose_the_read_block(
 @pytest.mark.ac("gh-176:AC-3")
 def test_preflight_asks_the_read_tool_for_the_host_file_and_needs_its_refusal(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable, Budget(10, 120, 0))
     try:
         _ = session.preflight()
@@ -736,7 +760,7 @@ def test_preflight_asks_the_read_tool_for_the_host_file_and_needs_its_refusal(tm
     for sandbox, read in zip(prompts[::2], prompts[1::2], strict=True):
         assert "Read the file `/etc/hosts` with the Read tool. " in read and "/etc/hosts" not in sandbox, read
     (tmp_path / "skipped").mkdir()
-    skipped = fake_claude(tmp_path / "skipped", "read-tool-host-skipped")
+    skipped = in_process_claude(tmp_path / "skipped", "read-tool-host-skipped")
     session = harness(tmp_path / "skipped", skipped, Budget(10, 120, 0))
     try:
         with pytest.raises(CodedError, match="no Read tool call was refused for the host file /etc/hosts") as caught:
@@ -750,7 +774,7 @@ def test_preflight_asks_the_read_tool_for_the_host_file_and_needs_its_refusal(tm
 @pytest.mark.ac("gh-176:AC-4")
 def test_preflight_evidence_records_the_refused_host_file_read(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path))
+    session = harness(tmp_path, in_process_claude(tmp_path))
     try:
         evidence = session.preflight()
     finally:
@@ -760,7 +784,7 @@ def test_preflight_evidence_records_the_refused_host_file_read(tmp_path: Path, s
 
 
 def _preflight_prompts(tmp_path: Path, mode: str = "ok") -> tuple[list[str], dict[str, object], Budget, int]:
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     budget = Budget(20, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -809,7 +833,7 @@ def test_the_preflight_prompts_use_plain_check_words(tmp_path: Path, sandbox_pas
 def test_preflight_stops_with_a_refusal_reason_when_a_check_call_makes_no_tool_call(
         tmp_path: Path, sandbox_passes: None, mode: str, check: str, tool: str) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     budget = Budget(20, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -923,7 +947,7 @@ def test_read_tool_verdict_needs_a_control_read_that_returns_the_control_token(t
 def test_preflight_stops_when_the_read_tool_follows_the_symlink_or_cannot_read_the_workspace(
         tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     budget = Budget(10, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -943,7 +967,7 @@ def test_preflight_stops_before_the_model_call_when_the_host_file_is_missing(
     del sandbox_passes
     monkeypatch.setattr(_preflight, "HOST_FILE", str(tmp_path / "no-hosts"))
     budget = Budget(10, 120, 0)
-    session = harness(tmp_path, fake_claude(tmp_path), budget)
+    session = harness(tmp_path, in_process_claude(tmp_path), budget)
     try:
         with pytest.raises(CodedError, match="needs the host file .*/no-hosts") as caught:
             _ = session.preflight()
@@ -968,7 +992,7 @@ def test_the_reference_and_adr_006_document_the_read_block_and_why_read_stays() 
 
 
 def test_environment_key_changes_when_the_read_probe_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     before = session.environment_key()
     monkeypatch.setattr(_transport, "READ_PROBE", "other")
     assert session.environment_key() != before
@@ -977,7 +1001,7 @@ def test_environment_key_changes_when_the_read_probe_changes(tmp_path: Path, mon
 def test_preflight_passes_with_bundled_skills_only_when_they_are_disabled(
         tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path, "bundled-skill"))
+    session = harness(tmp_path, in_process_claude(tmp_path, "bundled-skill"))
     try:
         assert session.preflight()["live_calls"] == 2 * len(session.transports)
         original_settings = _settings.settings
@@ -1002,7 +1026,7 @@ def test_preflight_passes_with_bundled_skills_only_when_they_are_disabled(
 
 def test_auth_failure_without_an_init_event_is_reported_as_authentication(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path, "no-init-auth"))
+    session = harness(tmp_path, in_process_claude(tmp_path, "no-init-auth"))
     try:
         with pytest.raises(CodedError, match="authentication failed.*no unsafe fallback") as caught:
             _ = session.preflight()
@@ -1014,7 +1038,7 @@ def test_auth_failure_without_an_init_event_is_reported_as_authentication(tmp_pa
 
 
 def test_candidate_that_discovery_does_not_load_scores_zero_instead_of_aborting(tmp_path: Path) -> None:
-    session = harness(tmp_path, fake_claude(tmp_path, "missing-skill"))
+    session = harness(tmp_path, in_process_claude(tmp_path, "missing-skill"))
     candidate = Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",))
     try:
         result = session.transports["task"].invoke("hello", candidate)
@@ -1026,7 +1050,7 @@ def test_candidate_that_discovery_does_not_load_scores_zero_instead_of_aborting(
 
 def test_preflight_runs_a_network_attempt_through_bash_and_records_the_denial(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
         evidence = session.preflight()
@@ -1040,7 +1064,7 @@ def test_preflight_runs_a_network_attempt_through_bash_and_records_the_denial(tm
 def test_preflight_fails_with_a_code_when_the_listener_receives_the_token(
         tmp_path: Path, mode: str, sandbox_passes: None) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    session = harness(tmp_path, in_process_claude(tmp_path, mode))
     try:
         with pytest.raises(NetworkIsolationFailed, match="network isolation failed.*no unsafe fallback") as caught:
             _ = session.preflight()
@@ -1054,7 +1078,7 @@ def test_preflight_fails_with_a_code_when_the_listener_receives_the_token(
 def test_preflight_fails_closed_when_the_network_output_is_missing_malformed_or_not_from_the_command(
         tmp_path: Path, mode: str, sandbox_passes: None) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    session = harness(tmp_path, in_process_claude(tmp_path, mode))
     try:
         with pytest.raises(NetworkIsolationFailed, match="network probe has no evidence.*no unsafe fallback") as caught:
             _ = session.preflight()
@@ -1067,7 +1091,7 @@ def test_preflight_fails_closed_when_the_network_output_is_missing_malformed_or_
 def test_preflight_passes_when_curl_exits_with_a_code_that_shows_an_attempt(
         tmp_path: Path, code: int, sandbox_passes: None) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path, f"net-exit-{code}"))
+    session = harness(tmp_path, in_process_claude(tmp_path, f"net-exit-{code}"))
     try:
         evidence = session.preflight()
     finally:
@@ -1086,7 +1110,7 @@ def test_a_network_leak_keeps_its_code_when_the_run_then_fails(
             return result
         raise TimeoutError("deadline")
     monkeypatch.setattr(_transport, "process", run_then_time_out)
-    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    session = harness(tmp_path, in_process_claude(tmp_path, "net-open"))
     try:
         with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
             _ = session.preflight()
@@ -1104,7 +1128,7 @@ def test_the_listener_check_wins_over_the_write_check_and_keeps_the_network_code
         del events, files, wrote, controlled
         raise AssertionError("the listener check must stop the preflight before the write check")
     monkeypatch.setattr(_preflight, "write_failure", write_must_not_run)
-    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    session = harness(tmp_path, in_process_claude(tmp_path, "net-open"))
     try:
         with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
             _ = session.preflight()
@@ -1115,7 +1139,7 @@ def test_the_listener_check_wins_over_the_write_check_and_keeps_the_network_code
 
 def test_preflight_sends_the_http_probe_through_the_proxy_for_loopback_names(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
         _ = session.preflight()
@@ -1127,14 +1151,14 @@ def test_preflight_sends_the_http_probe_through_the_proxy_for_loopback_names(tmp
 
 
 def test_environment_key_changes_when_the_network_probe_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     before = session.environment_key()
     monkeypatch.setattr(_transport, "NETWORK_PROBE", "other")
     assert session.environment_key() != before
 
 
 def test_environment_key_changes_when_the_network_settings_change(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    session = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     before = session.environment_key()
     original = _settings.settings
 
@@ -1149,7 +1173,7 @@ def test_environment_key_changes_when_the_network_settings_change(tmp_path: Path
 
 
 def test_invoke_with_a_candidate_stops_when_a_foreign_skill_loads(tmp_path: Path) -> None:
-    session = harness(tmp_path, fake_claude(tmp_path, "foreign-skill"))
+    session = harness(tmp_path, in_process_claude(tmp_path, "foreign-skill"))
     candidate = Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",))
     try:
         with pytest.raises(CodedError, match="isolation") as caught:
@@ -1160,7 +1184,7 @@ def test_invoke_with_a_candidate_stops_when_a_foreign_skill_loads(tmp_path: Path
 
 
 def test_candidate_run_records_bash_commands_as_completed_executions(tmp_path: Path) -> None:
-    session = harness(tmp_path, fake_claude(tmp_path))
+    session = harness(tmp_path, in_process_claude(tmp_path))
     candidate = Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",))
     try:
         result = session.transports["task"].invoke("hello", candidate)
@@ -1207,7 +1231,7 @@ def test_sandbox_setup_failure_raises_instead_of_looking_like_a_helper_exit(
 
     def which(name: str) -> str:
         return f"/usr/bin/{name}"
-    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    adapter = harness(tmp_path, in_process_claude(tmp_path)).transports["task"]
     monkeypatch.setattr(_transport, "sandboxed", process)
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(shutil, "which", which)
@@ -1224,7 +1248,7 @@ def _macos_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command_stde
 
     def which(name: str) -> str:
         return f"/usr/bin/{name}"
-    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    adapter = harness(tmp_path, in_process_claude(tmp_path)).transports["task"]
     monkeypatch.setattr(_transport, "sandboxed", process)
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(shutil, "which", which)
@@ -1256,7 +1280,7 @@ def test_a_failed_stderr_redirect_raises_a_setup_failure(
 
     def which(name: str) -> str:
         return f"/usr/bin/{name}"
-    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    adapter = harness(tmp_path, in_process_claude(tmp_path)).transports["task"]
     monkeypatch.setattr(_transport, "sandboxed", process)
     monkeypatch.setattr(sys, "platform", platform)
     monkeypatch.setattr(shutil, "which", which)
@@ -1271,7 +1295,7 @@ def test_a_command_that_removes_its_stderr_file_still_returns_its_exit(
 
     def which(name: str) -> str:
         return f"/usr/bin/{name}"
-    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    adapter = harness(tmp_path, in_process_claude(tmp_path)).transports["task"]
     monkeypatch.setattr(_transport, "sandboxed", process)
     monkeypatch.setattr(sys, "platform", "darwin")
     monkeypatch.setattr(shutil, "which", which)
@@ -1283,7 +1307,7 @@ def test_sandbox_without_its_platform_tool_fails_closed(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, platform: str, tool: str) -> None:
     def which(name: str) -> None:
         del name
-    adapter = harness(tmp_path, fake_claude(tmp_path)).transports["task"]
+    adapter = harness(tmp_path, in_process_claude(tmp_path)).transports["task"]
     monkeypatch.setattr(sys, "platform", platform)
     monkeypatch.setattr(shutil, "which", which)
     with pytest.raises(CodedError, match=f"{tool} is unavailable; no unsafe fallback"):
@@ -1443,7 +1467,7 @@ def test_probe_environment_assertion_rejects_a_foreign_name(platform: str, monke
 
 
 def test_check_candidate_accepts_a_declared_skill_and_rejects_broken_frontmatter(tmp_path: Path) -> None:
-    session = harness(tmp_path, fake_claude(tmp_path))
+    session = harness(tmp_path, in_process_claude(tmp_path))
     adapter = session.transports["task"]
     good = echo_candidate(tmp_path)
     broken = Candidate({"SKILL.md": "---\nname: echo-skill\n---\n"}, ("SKILL.md",), contract=good.contract)
@@ -1471,7 +1495,7 @@ def test_nested_helper_fixture_runs_through_claude_adapter(tmp_path: Path, monke
         return 0, '{"ok": true}', ""
 
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
-    adapter = harness(tmp_path, fake_claude(tmp_path))
+    adapter = harness(tmp_path, in_process_claude(tmp_path))
     try:
         assert adapter.transports["task"].check_candidate(candidate).passed
     finally:
@@ -1498,7 +1522,7 @@ def test_check_candidate_compares_the_helper_stderr_with_the_fixture_error(
         return 3, "", stderr
 
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
-    adapter = harness(tmp_path, fake_claude(tmp_path))
+    adapter = harness(tmp_path, in_process_claude(tmp_path))
     try:
         result = adapter.transports["task"].check_candidate(_failing_helper_candidate())
         assert result == (CheckResult(True, None, "pass") if accepted
@@ -1508,7 +1532,7 @@ def test_check_candidate_compares_the_helper_stderr_with_the_fixture_error(
 
 
 def test_check_candidate_rejects_a_skill_that_declares_hooks(tmp_path: Path) -> None:
-    session = harness(tmp_path, fake_claude(tmp_path))
+    session = harness(tmp_path, in_process_claude(tmp_path))
     adapter = session.transports["task"]
     good = echo_candidate(tmp_path)
     hooked = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: x\nhooks:\n  PreToolUse: []\n---\n"},
@@ -1523,7 +1547,7 @@ def test_check_candidate_rejects_a_skill_that_declares_hooks(tmp_path: Path) -> 
     '"hooks":', "'hooks':", "? hooks", "Hooks:", "user-invocable: false",
 ])
 def test_check_candidate_rejects_hidden_forms_of_unsupported_frontmatter_keys(tmp_path: Path, extra: str) -> None:
-    session = harness(tmp_path, fake_claude(tmp_path))
+    session = harness(tmp_path, in_process_claude(tmp_path))
     adapter = session.transports["task"]
     good = echo_candidate(tmp_path)
     hooked = Candidate({"SKILL.md": f"---\nname: echo-skill\ndescription: x\n{extra}\n  x: y\n---\n"},
@@ -1535,7 +1559,7 @@ def test_check_candidate_rejects_hidden_forms_of_unsupported_frontmatter_keys(tm
 
 
 def test_check_candidate_reads_the_frontmatter_end_as_a_line_and_allows_nested_hooks(tmp_path: Path) -> None:
-    session = harness(tmp_path, fake_claude(tmp_path))
+    session = harness(tmp_path, in_process_claude(tmp_path))
     adapter = session.transports["task"]
     good = echo_candidate(tmp_path)
     inline = Candidate({"SKILL.md": "---\nname: echo-skill\ndescription: run a---b\nhooks: x\n---\n"},
@@ -1551,7 +1575,7 @@ def test_check_candidate_reads_the_frontmatter_end_as_a_line_and_allows_nested_h
 
 @pytest.mark.parametrize("candidate", [True, False])
 def test_a_stream_without_an_init_event_fails_closed(tmp_path: Path, candidate: bool) -> None:
-    session = harness(tmp_path, fake_claude(tmp_path, "no-init"))
+    session = harness(tmp_path, in_process_claude(tmp_path, "no-init"))
     skill = Candidate({"SKILL.md": "---\nname: skillz\ndescription: x\n---\n"}, ("SKILL.md",)) if candidate else None
     try:
         with pytest.raises(CodedError, match="no init event"):
@@ -1581,7 +1605,7 @@ def test_a_helper_cannot_forge_a_sandbox_setup_failure_through_stderr(tmp_path: 
 def test_preflight_needs_evidence_that_bash_ran_and_read_the_workspace(
         tmp_path: Path, mode: str, reason: str, sandbox_passes: None) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    session = harness(tmp_path, in_process_claude(tmp_path, mode))
     try:
         with pytest.raises(CodedError, match=reason) as caught:
             _ = session.preflight()
@@ -1601,7 +1625,7 @@ def test_preflight_fails_when_the_workspace_allow_is_missing(
         cast(dict[str, dict[str, object]], document["sandbox"])["filesystem"]["allowRead"] = []
         return document
     monkeypatch.setattr(_transport, "settings", without_allow)
-    session = harness(tmp_path, fake_claude(tmp_path))
+    session = harness(tmp_path, in_process_claude(tmp_path))
     try:
         with pytest.raises(CodedError, match="positive control") as caught:
             _ = session.preflight()
@@ -1612,7 +1636,7 @@ def test_preflight_fails_when_the_workspace_allow_is_missing(
 
 def test_preflight_reuses_the_recorded_pass_without_a_live_call(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     budget = Budget(10, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -1629,7 +1653,7 @@ def test_preflight_reuses_the_recorded_pass_without_a_live_call(tmp_path: Path, 
 def test_preflight_fails_without_a_charge_when_the_role_fingerprint_changes(
         tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     budget = Budget(10, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -1646,7 +1670,7 @@ def test_preflight_fails_without_a_charge_when_the_role_fingerprint_changes(
 def test_preflight_fails_without_a_charge_when_the_environment_changes(
         tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     budget = Budget(10, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -1669,7 +1693,7 @@ def test_preflight_runs_the_free_sandbox_probe_when_it_reuses_a_pass(
         runs.append(1)
         return (0, "isolation-ok\n", "") if len(runs) <= len(session.transports) else (1, "", "")
     monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable, Budget(10, 120, 0))
     try:
         first = session.preflight()
@@ -1729,7 +1753,7 @@ def test_the_login_comes_from_the_host_config_dir_when_it_is_set(
     other.mkdir()
     _ = (other / ".credentials.json").write_text("{}")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(other))
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     try:
         assert os.readlink(adapter.config_dir / ".credentials.json") == str((other / ".credentials.json").resolve())
     finally:
@@ -1740,14 +1764,14 @@ def test_the_login_comes_from_the_host_config_dir_when_it_is_set(
 def test_a_missing_login_is_coded_with_a_fix_hint(tmp_path: Path, host_login: Path) -> None:
     host_login.unlink()
     with pytest.raises(CodedError, match="run `claude` once and log in") as caught:
-        _ = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+        _ = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     assert caught.value.code == "login-missing"
     assert not list(Path(tempfile.gettempdir()).glob("skillz-claude-config-*"))
 
 
 @linux_only
 def test_close_deletes_the_config_dir(tmp_path: Path) -> None:
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     directory = adapter.config_dir
     assert [path.name for path in directory.iterdir()] == [".credentials.json"]
     adapter.close()
@@ -1757,7 +1781,7 @@ def test_close_deletes_the_config_dir(tmp_path: Path) -> None:
 
 @darwin_only
 def test_macos_uses_the_host_config_dir_and_links_no_login(tmp_path: Path, host_login: Path) -> None:
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     try:
         assert adapter.config_dir == host_login.parent
         assert adapter.login.credential is None
@@ -1773,7 +1797,7 @@ def test_macos_takes_the_config_dir_from_the_environment_and_close_keeps_it(
     other = tmp_path / "other-config"
     other.mkdir()
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(other))
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     assert adapter.config_dir == other
     adapter.close()
     adapter.close()
@@ -1792,7 +1816,7 @@ def test_close_reports_how_the_login_changed_and_deletes_the_config_dir(
     monkeypatch.setattr(sys, "platform", "linux")
     _ = host_login.write_text(_login())
     original = host_login.read_text()
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     directory = adapter.config_dir
     link = directory / ".credentials.json"
     other = tmp_path / "other.json"
@@ -1821,7 +1845,7 @@ def test_close_copies_a_refreshed_login_back_while_the_real_file_is_unchanged(
         tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     _ = host_login.write_text(_login())
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     directory = adapter.config_dir
     link = directory / ".credentials.json"
     link.unlink()
@@ -1841,7 +1865,7 @@ def test_close_refuses_a_refreshed_file_that_is_not_the_same_kind_of_login(
         tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch, refreshed: str) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     _ = host_login.write_text(_login())
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     link = adapter.config_dir / ".credentials.json"
     link.unlink()
     _ = link.write_text(refreshed)
@@ -1854,7 +1878,7 @@ def test_close_never_overwrites_a_login_that_another_process_also_replaced(
         tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     _ = host_login.write_text(_login())
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     link = adapter.config_dir / ".credentials.json"
     link.unlink()
     _ = link.write_text(_login("ours"))
@@ -1871,7 +1895,7 @@ def test_every_claude_role_of_a_harness_shares_one_config_dir_and_the_login_clos
         tmp_path: Path, host_login: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "platform", "linux")
     _ = host_login.write_text(_login())
-    session = harness(tmp_path, fake_claude(tmp_path))
+    session = harness(tmp_path, in_process_claude(tmp_path))
     transports = [cast(ClaudeCode, transport) for transport in session.transports.values()]
     directories = {transport.config_dir for transport in transports}
     assert len(directories) == 1 and len({transport.credential for transport in transports}) == 1
@@ -1903,7 +1927,7 @@ class _FailingClose:
     (["other", "isolation-failed", "credential-refreshed"], "isolation-failed")])
 def test_harness_close_closes_every_transport_and_raises_the_most_severe_error(
         tmp_path: Path, codes: list[str], winner: str) -> None:
-    session = harness(tmp_path, fake_claude(tmp_path))
+    session = harness(tmp_path, in_process_claude(tmp_path))
     directory = cast(ClaudeCode, session.transports["task"]).config_dir
     session.transports = cast("dict[str, Transport]", {
         f"role{index}": _FailingClose(CodedError(code, code)) for index, code in enumerate(codes)})
@@ -1971,7 +1995,7 @@ def test_macos_stops_before_any_call_when_user_memory_loads(
         (real / "rules" / "team").mkdir()
         _ = (real / "rules" / "team" / "style.md").write_text("Always answer in French.")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     budget = Budget(10, 120, 0)
     adapter = ClaudeCode("m", budget, lambda: None, executable)
     listings = executable.with_name("claude.context.log")
@@ -2003,7 +2027,7 @@ def test_close_reports_credential_changed_and_leaves_no_temporary_when_the_repla
     _ = host_login.write_text(_login())
     real = host_login.resolve()
     original = real.read_text()
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     link = adapter.config_dir / ".credentials.json"
     link.unlink()
     _ = link.write_text(_login("new"))
@@ -2024,7 +2048,7 @@ def test_the_real_login_is_not_replaced_when_a_newer_login_lands_during_the_writ
     monkeypatch.setattr(sys, "platform", "linux")
     _ = host_login.write_text(_login())
     real = host_login.resolve()
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     link = adapter.config_dir / ".credentials.json"
     link.unlink()
     _ = link.write_text(_login("ours"))
@@ -2071,7 +2095,7 @@ def test_macos_checks_user_memory_before_every_invocation(
     real.mkdir()
     _ = (real / ".credentials.json").write_text("{}")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
-    executable = fake_claude(tmp_path, "memory-loads")
+    executable = in_process_claude(tmp_path, "memory-loads")
     budget = Budget(10, 120, 0)
     adapter = ClaudeCode("m", budget, lambda: None, executable)
     try:
@@ -2198,7 +2222,7 @@ def test_sandbox_unavailable_is_coded_with_a_fix_and_spends_no_task_call(
             del self, workspace, argv, seconds
             return 0, "isolation-ok\n", ""
         monkeypatch.setattr(ClaudeCode, "sandbox", sandbox)
-    executable = fake_claude(tmp_path, "sandbox-unavailable" if case == "live-sandbox-failure" else "ok")
+    executable = in_process_claude(tmp_path, "sandbox-unavailable" if case == "live-sandbox-failure" else "ok")
     budget = Budget(10, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -2220,7 +2244,7 @@ def test_settings_deny_reading_proc_and_the_run_directory(tmp_path: Path) -> Non
 
 
 def test_environment_key_changes_with_the_run_directory(tmp_path: Path) -> None:
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     first = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable, tmp_path / "a")
     second = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable, tmp_path / "b")
     try:
@@ -2232,7 +2256,7 @@ def test_environment_key_changes_with_the_run_directory(tmp_path: Path) -> None:
 
 def test_environment_key_pins_the_documented_payload_with_the_fixed_isolation_entry(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    adapter = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     settings: dict[str, object] = {"sandbox": {"enabled": True}}
     environment = {"PATH": "/bin", "CLAUDE_CONFIG_DIR": "/config", "LANG": "C.UTF-8"}
     def floor(self: ClaudeCode, workspace: Path, overrides: Collection[str]) -> dict[str, object]:
@@ -2280,7 +2304,7 @@ def short_tempdir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 def test_preflight_allows_claude_codes_own_commands_and_builtin_plugins(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
         evidence = session.preflight()
@@ -2293,7 +2317,7 @@ def test_preflight_allows_claude_codes_own_commands_and_builtin_plugins(tmp_path
 
 def test_inventory_turns_off_an_account_skill_without_a_model_call(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path, "account-skill")
+    executable = in_process_claude(tmp_path, "account-skill")
     budget = Budget(10, 120, 0)
     transport = ClaudeCode("m", budget, lambda: None, executable)
     try:
@@ -2310,7 +2334,7 @@ def test_inventory_turns_off_an_account_skill_without_a_model_call(tmp_path: Pat
 @pytest.mark.ac("gh-448:AC-1")
 def test_preflight_accepts_a_builtin_skill_that_registers_after_the_first_listing(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path, "late-builtin")
+    executable = in_process_claude(tmp_path, "late-builtin")
     budget = Budget(10, 120, 0)
     transport = ClaudeCode("m", budget, lambda: None, executable)
     try:
@@ -2327,7 +2351,7 @@ def test_preflight_accepts_a_builtin_skill_that_registers_after_the_first_listin
 @pytest.mark.parametrize("mode", ["late-plain", "late-absent"])
 def test_preflight_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path, sandbox_passes: None, mode: str) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
     try:
         with pytest.raises(CodedError, match="foreign skill in init event: \\['design'\\]") as caught:
@@ -2340,7 +2364,7 @@ def test_preflight_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Pa
 
 @pytest.mark.ac("gh-448:AC-2")
 def test_invoke_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path) -> None:
-    executable = fake_claude(tmp_path, "late-plain")
+    executable = in_process_claude(tmp_path, "late-plain")
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
     try:
         with pytest.raises(CodedError, match="skills in init event \\['design', 'echo-skill'\\]") as caught:
@@ -2352,7 +2376,7 @@ def test_invoke_still_stops_for_a_late_skill_that_is_not_builtin(tmp_path: Path)
 
 @pytest.mark.ac("gh-448:AC-3")
 def test_invoke_accepts_a_late_builtin_skill_with_one_more_listing(tmp_path: Path) -> None:
-    executable = fake_claude(tmp_path, "late-builtin")
+    executable = in_process_claude(tmp_path, "late-builtin")
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
     candidate = echo_candidate(tmp_path)
     try:
@@ -2366,7 +2390,7 @@ def test_invoke_accepts_a_late_builtin_skill_with_one_more_listing(tmp_path: Pat
 
 @pytest.mark.ac("gh-448:AC-3")
 def test_invoke_with_only_the_candidate_skill_lists_the_commands_once(tmp_path: Path) -> None:
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
     candidate = echo_candidate(tmp_path)
     try:
@@ -2412,7 +2436,7 @@ def test_preflight_reports_a_reached_listener_before_it_relists(
         del self, args, kwargs
         raise RuntimeError("relist failed")
     monkeypatch.setattr(_late.LateBuiltins, "adopt", relist_fails)
-    session = harness(tmp_path, fake_claude(tmp_path, "net-open"))
+    session = harness(tmp_path, in_process_claude(tmp_path, "net-open"))
     try:
         with pytest.raises(NetworkIsolationFailed, match="network isolation failed") as caught:
             _ = session.preflight()
@@ -2432,7 +2456,7 @@ def calls_or_none(executable: Path) -> list[dict[str, object]] | None:
 def test_preflight_stops_before_any_model_call_when_the_inventory_cannot_be_cleaned(
         tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     budget = Budget(10, 120, 0)
     session = harness(tmp_path, executable, budget)
     try:
@@ -2445,7 +2469,7 @@ def test_preflight_stops_before_any_model_call_when_the_inventory_cannot_be_clea
 
 
 def test_invoke_never_turns_off_the_candidate_skill(tmp_path: Path) -> None:
-    executable = fake_claude(tmp_path, "account-skill")
+    executable = in_process_claude(tmp_path, "account-skill")
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
     try:
         _ = transport.invoke("hello", echo_candidate(tmp_path))
@@ -2457,7 +2481,7 @@ def test_invoke_never_turns_off_the_candidate_skill(tmp_path: Path) -> None:
 
 def test_preflight_stops_on_a_plugin_that_does_not_ship_with_claude_code(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path, "foreign-plugin"))
+    session = harness(tmp_path, in_process_claude(tmp_path, "foreign-plugin"))
     try:
         with pytest.raises(CodedError, match="foreign plugin.*user-plugin") as caught:
             _ = session.preflight()
@@ -2477,7 +2501,7 @@ def test_blocked_nested_namespace_turns_off_the_socket_filter_and_probes_a_host_
         tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes, short_tempdir
     monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
     try:
         evidence = transport.preflight()
@@ -2498,7 +2522,7 @@ def test_socket_probe_failure_stops_the_preflight(
         mode: str, reason: str) -> None:
     del sandbox_passes, short_tempdir
     monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
-    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path, mode))
     try:
         with pytest.raises(NetworkIsolationFailed, match=reason):
             _ = transport.preflight()
@@ -2507,7 +2531,7 @@ def test_socket_probe_failure_stops_the_preflight(
 
 
 def test_environment_key_changes_when_the_socket_filter_changes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     allowed = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
     blocked = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
     try:
@@ -2521,7 +2545,7 @@ def test_environment_key_changes_when_the_socket_filter_changes(tmp_path: Path, 
 
 @pytest.mark.parametrize("mode", ["builtin-echo", "account-echo"])
 def test_a_candidate_named_like_another_command_stops_before_the_call(tmp_path: Path, mode: str) -> None:
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     budget = Budget(10, 120, 0)
     transport = ClaudeCode("m", budget, lambda: None, executable)
     if mode == "account-echo":
@@ -2540,7 +2564,7 @@ def test_a_candidate_named_like_another_command_stops_before_the_call(tmp_path: 
 
 def test_a_taken_seed_name_stops_the_harness_before_any_live_call(tmp_path: Path) -> None:
     budget = Budget(10, 120, 0)
-    session = harness(tmp_path, fake_claude(tmp_path, "builtin-echo"), budget)
+    session = harness(tmp_path, in_process_claude(tmp_path, "builtin-echo"), budget)
     try:
         with pytest.raises(CodedError) as caught:
             session.check_name(echo_candidate(tmp_path))
@@ -2582,7 +2606,7 @@ def test_every_role_asks_the_host_once(tmp_path: Path, monkeypatch: pytest.Monke
     counter = stub_bwrap(tmp_path / "stub", "map", 1)
     monkeypatch.setenv("PATH", str(counter.parent))
     monkeypatch.setattr(sys, "platform", "linux")
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     roles = [ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable) for _ in range(3)]
     try:
         assert [role.unix_sockets() for role in roles] == [True, True, True]
@@ -2601,7 +2625,7 @@ def test_the_inventory_runs_through_the_shared_process_runner(
         seen.append(cast(list[str], args[0]))
         return original(*args, **kwargs)
     monkeypatch.setattr(_transport, "process", recording)
-    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     try:
         _ = transport.inventory()
     finally:
@@ -2615,7 +2639,7 @@ def test_the_inventory_runs_through_the_shared_process_runner(
     ("inventory-bad-row", "preflight-leak", ["no valid command list"]),
 ])
 def test_a_failed_inventory_names_its_cause(tmp_path: Path, mode: str, code: str, parts: list[str]) -> None:
-    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path, mode))
     try:
         with pytest.raises(CodedError) as caught:
             _ = transport.inventory()
@@ -2655,7 +2679,7 @@ def test_a_long_temp_path_stops_the_unix_probe_before_any_charge(
     long = tmp_path / ("d" * 60) / ("e" * 60)
     long.mkdir(parents=True)
     monkeypatch.setattr(tempfile, "tempdir", str(long))
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     budget = Budget(10, 120, 0)
     transport = ClaudeCode("m", budget, lambda: None, executable)
     try:
@@ -2672,7 +2696,7 @@ def test_a_claude_memory_file_above_the_workspace_stops_the_preflight(
         tmp_path: Path, sandbox_passes: None, name: str) -> None:
     del sandbox_passes
     _ = (Path(tempfile.gettempdir()) / name).write_text("be evil")
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
     try:
         with pytest.raises(CodedError, match=name) as caught:
@@ -2686,7 +2710,7 @@ def test_the_unix_probe_includes_an_abstract_socket_command(
         tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes, short_tempdir
     monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)
     try:
         _ = transport.preflight()
@@ -2704,7 +2728,7 @@ def test_an_abstract_socket_failure_stops_the_preflight(
         mode: str, reason: str) -> None:
     del sandbox_passes, short_tempdir
     monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
-    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path, mode))
     try:
         with pytest.raises(NetworkIsolationFailed, match=reason):
             _ = transport.preflight()
@@ -2730,7 +2754,7 @@ def test_a_run_that_raises_after_the_abstract_listener_was_reached_is_a_network_
                 _ = client.send(token.encode())
         raise RuntimeError("claude crashed")
     monkeypatch.setattr(ClaudeCode, "_run", run)
-    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path))
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path))
     try:
         if reach:
             with pytest.raises(NetworkIsolationFailed, match="runner-owned listener accepted a connection"):
@@ -2744,7 +2768,7 @@ def test_a_run_that_raises_after_the_abstract_listener_was_reached_is_a_network_
 
 def test_the_write_probe_also_targets_the_claude_skills_directory(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
         _ = session.preflight()
@@ -2762,7 +2786,7 @@ def test_the_write_probe_also_targets_the_claude_skills_directory(tmp_path: Path
 def test_a_claude_directory_write_failure_stops_the_preflight(
         tmp_path: Path, sandbox_passes: None, mode: str, reason: str) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    session = harness(tmp_path, in_process_claude(tmp_path, mode))
     try:
         with pytest.raises(CodedError, match=reason) as caught:
             _ = session.preflight()
@@ -2775,7 +2799,7 @@ def test_the_sandbox_fix_names_no_removed_backend(
         tmp_path: Path, sandbox_passes: None, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
     monkeypatch.setattr(sys, "platform", "linux")
-    session = harness(tmp_path, fake_claude(tmp_path, "sandbox-unavailable"))
+    session = harness(tmp_path, in_process_claude(tmp_path, "sandbox-unavailable"))
     try:
         with pytest.raises(CodedError) as caught:
             _ = session.preflight()
@@ -2855,7 +2879,7 @@ def test_contract_surface_companions_are_read_only_and_pass_the_init_check(tmp_p
 
 def test_contract_surface_companions_stage_their_frozen_files_with_the_exec_bit_on_a_pyz(tmp_path: Path) -> None:
     tmp_path.mkdir(exist_ok=True)
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = surface_harness(tmp_path, executable, SURFACE)
     frozen = {"skills/helper-skill/scripts/tool.pyz": b"PK\x03\x04", "skills/helper-skill/data.bin": b"\xff\x00"}
     try:
@@ -2874,7 +2898,7 @@ def test_contract_surface_reuse_key_follows_the_surface(tmp_path: Path) -> None:
                                                           SURFACE.companions)]):
         directory = tmp_path / str(index)
         directory.mkdir()
-        session = surface_harness(directory, fake_claude(directory), surface)
+        session = surface_harness(directory, in_process_claude(directory), surface)
         try:
             keys.append(cast(ClaudeCode, session.transports["task"]).environment_key())
         finally:
@@ -2884,7 +2908,7 @@ def test_contract_surface_reuse_key_follows_the_surface(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("missing", ["mcp/docs.json", "agents/reviewer.md", "skills/helper-skill/SKILL.md"])
 def test_contract_surface_missing_file_stops_before_any_call(tmp_path: Path, missing: str) -> None:
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     files = {name: text for name, text in SURFACE_FILES.items() if name != missing}
     with pytest.raises(CodedError, match="names files that the skill lacks") as caught:
         _ = surface_harness(tmp_path, executable, SURFACE, files)
@@ -2895,7 +2919,7 @@ def test_contract_surface_missing_file_stops_before_any_call(tmp_path: Path, mis
 @pytest.mark.parametrize("agent", ["---\nname: other\ndescription: r\n---\n", "---\ndescription: r\n---\n",
                                    "no frontmatter\n"], ids=["mismatch", "missing-name", "no-frontmatter"])
 def test_contract_surface_agent_name_must_equal_its_file_stem(tmp_path: Path, agent: str) -> None:
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     files = SURFACE_FILES | {"agents/reviewer.md": agent}
     with pytest.raises(CodedError, match="frontmatter name equal to its file name") as caught:
         _ = surface_harness(tmp_path, executable, SURFACE, files)
@@ -2904,7 +2928,7 @@ def test_contract_surface_agent_name_must_equal_its_file_stem(tmp_path: Path, ag
 
 
 def test_contract_surface_candidate_names_rechecked(tmp_path: Path) -> None:
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = surface_harness(tmp_path, executable, SURFACE)
     drifted = Candidate(SURFACE_FILES | {"agents/reviewer.md": "---\nname: other\ndescription: r\n---\n"}, ("SKILL.md",))
     try:
@@ -2920,7 +2944,7 @@ def test_contract_surface_candidate_names_rechecked(tmp_path: Path) -> None:
 
 
 def test_contract_surface_candidate_mcp_config_text_is_fixed(tmp_path: Path) -> None:
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = surface_harness(tmp_path, executable, SURFACE)
     config = SURFACE.mcp_config or ""
     edited = Candidate(SURFACE_FILES | {config: SURFACE_FILES[config].rstrip() + "\n\n"}, ("SKILL.md",))
@@ -2942,7 +2966,7 @@ def test_contract_surface_declared_server_agent_or_skill_passes_the_preflight(
     _ = (real / ".credentials.json").write_text("{}")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
     surface = Surface((), "mcp/docs.json", ("agents/reviewer.md",), ("skills/helper-skill",))
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     session = surface_harness(tmp_path, executable, surface)
     try:
         evidence = cast(ClaudeCode, session.transports["task"]).preflight()
@@ -2962,7 +2986,7 @@ def test_contract_surface_undeclared_name_stops_the_preflight(
     real.mkdir()
     _ = (real / ".credentials.json").write_text("{}")
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(real))
-    executable = fake_claude(tmp_path, mode)
+    executable = in_process_claude(tmp_path, mode)
     session = surface_harness(tmp_path, executable, Surface(("WebFetch",)))
     try:
         with pytest.raises(CodedError, match=f"foreign {kind}") as caught:
@@ -2974,7 +2998,7 @@ def test_contract_surface_undeclared_name_stops_the_preflight(
 
 @pytest.mark.ac("gh-295:AC-6")
 def test_a_nonzero_inventory_exit_with_no_control_response_is_host_not_ready(tmp_path: Path) -> None:
-    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, "inventory-crash"))
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path, "inventory-crash"))
     try:
         with pytest.raises(CodedError) as caught:
             _ = transport.inventory()
@@ -2987,7 +3011,7 @@ def test_a_nonzero_inventory_exit_with_no_control_response_is_host_not_ready(tmp
 @pytest.mark.ac("gh-295:AC-6")
 @pytest.mark.parametrize("mode", ["inventory-error", "inventory-bad-row", "inventory-broken"])
 def test_a_real_leak_or_a_malformed_list_with_a_control_response_keeps_preflight_leak(tmp_path: Path, mode: str) -> None:
-    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, fake_claude(tmp_path, mode))
+    transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, in_process_claude(tmp_path, mode))
     try:
         with pytest.raises(CodedError) as caught:
             _ = transport.inventory()
@@ -3034,7 +3058,7 @@ def test_the_network_probe_key_moved_past_the_loopback_only_probe() -> None:
 @pytest.mark.ac("gh-131:AC-12")
 def test_preflight_sends_a_name_lookup_and_a_non_loopback_probe(tmp_path: Path, sandbox_passes: None) -> None:
     del sandbox_passes
-    executable = fake_claude(tmp_path)
+    executable = in_process_claude(tmp_path)
     session = harness(tmp_path, executable)
     try:
         _ = session.preflight()
@@ -3051,7 +3075,7 @@ def test_preflight_sends_a_name_lookup_and_a_non_loopback_probe(tmp_path: Path, 
 def test_a_successful_lookup_or_non_loopback_connection_fails_the_preflight(
         tmp_path: Path, mode: str, reason: str, sandbox_passes: None) -> None:
     del sandbox_passes
-    session = harness(tmp_path, fake_claude(tmp_path, mode))
+    session = harness(tmp_path, in_process_claude(tmp_path, mode))
     try:
         with pytest.raises(NetworkIsolationFailed, match=reason) as caught:
             _ = session.preflight()
@@ -3083,7 +3107,7 @@ def test_missing_lookup_or_non_loopback_output_fails_closed() -> None:
 def _failed_preflight(tmp_path: Path, mode: str) -> tuple[CodedError, Path]:
     out = tmp_path / "run"
     out.mkdir(mode=0o700)
-    session = harness(tmp_path, fake_claude(tmp_path, mode), out=out)
+    session = harness(tmp_path, in_process_claude(tmp_path, mode), out=out)
     try:
         with pytest.raises(CodedError) as caught:
             _ = session.preflight()
@@ -3123,7 +3147,7 @@ def test_a_failed_transcript_write_keeps_the_original_stop(tmp_path: Path, sandb
     del sandbox_passes
     out = tmp_path / "run"
     out.mkdir(mode=0o500)
-    session = harness(tmp_path, fake_claude(tmp_path, "write-broken"), out=out)
+    session = harness(tmp_path, in_process_claude(tmp_path, "write-broken"), out=out)
     try:
         with pytest.raises(CodedError) as caught:
             _ = session.preflight()
@@ -3148,7 +3172,7 @@ def test_a_passed_preflight_keeps_no_transcript(tmp_path: Path, sandbox_passes: 
     out = tmp_path / "run"
     out.mkdir(mode=0o700)
     _ = (out / "preflight.events.json").write_text("{}", encoding="utf-8")  # left by an earlier failed preflight
-    session = harness(tmp_path, fake_claude(tmp_path), out=out)
+    session = harness(tmp_path, in_process_claude(tmp_path), out=out)
     try:
         _ = session.preflight()
     finally:
