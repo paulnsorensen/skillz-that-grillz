@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import os
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
@@ -18,7 +18,7 @@ from skillz_experiments._intake import (
     HOLDOUT_MINIMUM, MINIMUM_FAMILIES, TRAIN_FAMILIES_MINIMUM, TRAIN_MINIMUM, DraftCase, check_helper_input,
     intake_contract, load_draft, split_cases, too_few,
 )
-from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, seed_cases, seed_family
+from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, fixture_error, fixture_misses, seed_cases, seed_family
 from skillz_experiments.run import DEFAULT_SEED, resolve_statistics, scored_kinds
 
 Finding = dict[str, object]
@@ -94,6 +94,16 @@ def _counts(cases: Sequence[DraftCase]) -> dict[str, object]:
             "families": dict(sorted(Counter(case.family for case in cases).items()))}
 
 
+def _fixture_findings(target: Path, drafted: Sequence[DraftCase], file_of: Callable[[DraftCase], str],
+                      findings: list[Finding]) -> None:
+    """Add one `case-fixture-missing` finding for each file whose cases name a known fixture that they do not stage."""
+    by_file: dict[str, list[tuple[DraftCase, str]]] = {}
+    for case, path in fixture_misses(target, drafted):
+        by_file.setdefault(file_of(case), []).append((case, path))
+    for file, misses in by_file.items():
+        findings.append(_failure(fixture_error(misses), file))
+
+
 def validate(target: Path, draft: Path | None = None, seed: int | None = None,
              kinds: Sequence[str] = ()) -> dict[str, object]:
     """Report every problem of the target's eval files and the split that a run would build. Write nothing."""
@@ -125,12 +135,15 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
                 check_coverage(target, drafted)
             except FAILURES as error:
                 findings.append(_failure(error, str(draft)))
+            _fixture_findings(target, drafted, lambda _case: str(draft), findings)
     elif seeded is not None:
         origin = "seed"
         try:
             drafted = _from_seed(seeded, journeys, findings)
         except FAILURES as error:
             findings.append(_failure(error, EVALS))
+        else:
+            _fixture_findings(target, drafted, lambda case: JOURNEYS if case.journey is not None else EVALS, findings)
 
     chosen: tuple[str, ...] | None = None
     if contract is not None:

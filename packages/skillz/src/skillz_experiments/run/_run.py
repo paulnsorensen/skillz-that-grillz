@@ -24,7 +24,6 @@ from skillz_experiments._intake import (
     approval_question,
     case_hash,
     check_criteria,
-    check_helper_input,
     freeze,
     intake_contract,
     load_draft,
@@ -33,7 +32,7 @@ from skillz_experiments._intake import (
     too_few,
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
-from skillz_experiments._seed import SEED_NAME, check_coverage, seed_cases, seed_document, seed_inferred, seed_projection, seed_summary
+from skillz_experiments._seed import SEED_NAME, check_draft, seed_cases, seed_document, seed_inferred, seed_projection, seed_summary
 from skillz_experiments.run._wedge_targets import plan_targets, seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
@@ -127,8 +126,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         retry = "; or pass --kind task" if "task" in contract.kinds and "task" not in journeys else ""
         raise CodedError("journey-unsupported", "a journey case needs a task transport that can hold a conversation; "
                          + f"run with --harness claude or codex{retry}")
-    check_helper_input(contract, drafted)
-    check_coverage(target, drafted)
+    check_draft(contract, target, drafted)
     plain = [kind for kind in kinds if kind not in journeys]
     cases = split_cases(drafted, split_seed, plain[0] if plain else None, [kind for kind in kinds if kind in journeys], extra)
     check_criteria(contract, cases)
@@ -380,7 +378,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if path.exists():
             record = open_record(path)
             refuse_terminated(record)
-            refuse_too_easy(record)
+            refuse_too_easy(record, out)
             if record.get("phase") == "complete":
                 # A completed run summarises without reading its statistics unless a flag asks to compare them.
                 if statistics_given:

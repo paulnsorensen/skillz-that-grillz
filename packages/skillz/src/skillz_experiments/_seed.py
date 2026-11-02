@@ -3,19 +3,22 @@
 The runner never writes the draft. It maps each eval entry and each journey case to a seed case and writes
 the map to `RUN/cases.seed.json`, with each fixture text once under `fixtures`. The `cases-missing` stop names
 that file and shows only counts, because the fixtures can be large. The coverage check stops the run when the
-draft drops or changes an entry.
+draft drops or changes an entry. The fixture check stops the run when a request names a known fixture that its
+case does not stage. `check_draft` runs the draft checks before the case question.
 To drop an entry, remove it from its file.
 """
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from skillz_experiments._cases import CodedError, loads_untrusted, read_text, relative, text_map
+from skillz_experiments._contract import Contract
 from skillz_experiments._evals_format import EvalEntry, parse_evals, parse_journeys
-from skillz_experiments._intake import DRAFT_LIMIT, PENDING_KINDS, DraftCase, projection
+from skillz_experiments._intake import DRAFT_LIMIT, PENDING_KINDS, DraftCase, check_helper_input, projection
 from skillz_experiments._records import share_files
 
 EVALS = "evals/evals.json"
@@ -186,3 +189,58 @@ def check_coverage(target: Path, draft: Sequence[DraftCase]) -> None:
         raise CodedError("cases-uncovered", f"the draft drops or changes entries of {EVALS} or {JOURNEYS}:\n"
                          + "\n".join(problems) + f"\nrestore each entry in the draft, or remove it from {EVALS} or {JOURNEYS}"
                          + " to drop it on purpose, then call run again")
+
+
+# The punctuation that can wrap a path in prose or Markdown. A trailing `.` ends a sentence.
+_OPENERS = "`'\"([{<*"
+_CLOSERS = "`'\")]}>,;:!?.*"
+# A line reference after a path, such as `:3`, `:3:7`, or `#L3-L9`.
+_LINE = re.compile(r"(?::\d+)+$|#L\d+(?:-L?\d+)?$")
+
+
+def _named(request: str) -> list[str]:
+    """Return each path word of `request` once, in order, with a leading `./` and a line reference removed.
+
+    A Markdown link `[text](path)` yields its parts. A path word has a `/` or a file extension, so a bare word such as
+    `Makefile` is prose. A word with `://` is a URL, and a word that starts with `/` or `~` is a host path. Neither counts.
+    """
+    named: dict[str, None] = {}
+    for word in request.split():
+        for part in word.split("]("):
+            token = _LINE.sub("", part.lstrip(_OPENERS).rstrip(_CLOSERS)).rstrip(_CLOSERS)
+            path = PurePosixPath(token)
+            if (token and "://" not in token and not token.startswith(("/", "~"))
+                    and ("/" in token or path.suffix)):
+                named[path.as_posix()] = None
+    return list(named)
+
+
+def fixture_misses(target: Path, draft: Sequence[DraftCase]) -> list[tuple[DraftCase, str]]:
+    """Return each case and known fixture that its request names and its own `files` do not stage.
+
+    A known fixture is a file that a draft case stages or a file under the skill's `evals/files/`. The runner does not
+    list the case files to the task, so the task cannot read a named fixture that its case does not stage, while the
+    judge sees the case files. A name that is not a known fixture passes: an output, a rename target, or an absent file.
+    """
+    root = target / FIXTURES
+    shipped = ({path.relative_to(target).as_posix() for path in root.rglob("*") if path.is_file()}
+               if root.is_dir() and not root.is_symlink() else set[str]())
+    known = {name for case in draft for name in case.files} | shipped
+    return [(case, path) for case in draft for path in _named(case.request) if path in known and path not in case.files]
+
+
+def fixture_error(misses: Sequence[tuple[DraftCase, str]]) -> CodedError:
+    """Return the `case-fixture-missing` error that lists each case and the fixture that it does not stage."""
+    lines = "\n".join(f"- {case.identifier}: {path}" for case, path in misses)
+    return CodedError("case-fixture-missing", "a request names a fixture that its case files do not stage, so the "
+                      + f"task cannot read it:\n{lines}\nadd each file to the case files or the fixtures map, or fix "
+                      + "the path in the request, then call run again; no model call ran")
+
+
+def check_draft(contract: Contract, target: Path, draft: Sequence[DraftCase]) -> None:
+    """Raise the first problem of `draft` before the case question: the helper input, the coverage, then the fixtures."""
+    check_helper_input(contract, draft)
+    check_coverage(target, draft)
+    misses = fixture_misses(target, draft)
+    if misses:
+        raise fixture_error(misses)

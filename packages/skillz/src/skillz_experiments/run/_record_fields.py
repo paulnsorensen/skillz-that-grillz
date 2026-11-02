@@ -67,5 +67,18 @@ def record_outcomes(record: dict[str, object]) -> list[dict[str, object]]:
     return cast(list[dict[str, object]], value)
 
 
+def criterion_levels(item: dict[str, object]) -> dict[str, int]:
+    """Return the criterion levels (1 to 4) that the judged outcome `item` stores. Anything else yields nothing."""
+    criteria = item.get("criteria")
+    if not isinstance(criteria, dict):
+        return {}
+    found: dict[str, int] = {}
+    for name, verdict in cast(dict[str, object], criteria).items():
+        level = cast(dict[str, object], verdict).get("level") if isinstance(verdict, dict) else None
+        if type(level) is int and 1 <= level <= 4:
+            found[name] = level
+    return found
+
+
 def phase(record: dict[str, object]) -> str:
     return text_field(record, "phase")
