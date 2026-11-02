@@ -426,3 +426,14 @@ def test_bytecode_default_inherits_into_targets(tmp_path: Path) -> None:
     text += '[[target]]\nname = "y"\nentry = "x:main"\nbytecode = []\n'
     configs = parse_targets(tmp_path, text)
     assert [config.bytecode for config in configs] == [("3.12",), ()]
+
+
+@pytest.mark.ac("gh-581:AC-10")
+def test_reexec_format_changes_the_content_key(
+    tmp_path: Path, copy_repo_subset: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    skill = copy_repo_subset(tmp_path / "checkout")
+    assert wedge_key.FORMAT_VERSION == 10
+    current = _key(skill)
+    monkeypatch.setattr(wedge_key, "FORMAT_VERSION", 9)
+    assert _key(skill) != current

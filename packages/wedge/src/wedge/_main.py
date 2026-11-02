@@ -8,6 +8,7 @@ import linecache
 import json
 import os
 import re
+import shutil
 import sys
 import tokenize
 from zipfile import ZipFile
@@ -16,6 +17,36 @@ archive_path = os.path.abspath(sys.argv[0])
 with ZipFile(archive_path) as archive:
     environment = json.loads(archive.read("environment.json"))
     has_tree = sys.implementation.cache_tag + "/" in archive.NameToInfo
+
+if sys.version_info < (3, 11):
+    if os.name == "posix":
+        import subprocess
+
+        for minor in reversed(environment["python_minors"]):
+            candidate = shutil.which("python" + minor)
+            if candidate is not None:
+                flags = ["-I"] if sys.flags.isolated else [
+                    flag for active, flag in (
+                        (sys.flags.ignore_environment, "-E"),
+                        (sys.flags.no_user_site, "-s"),
+                    ) if active
+                ]
+                if sys.flags.no_site:
+                    flags.append("-S")
+                try:
+                    probe = subprocess.run(
+                        [candidate, *flags, "-c",
+                         "import sys; sys.exit('.'.join(map(str, sys.version_info[:2])) != sys.argv[1])", minor],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    )
+                    if probe.returncode:
+                        continue
+                    os.execv(candidate, [candidate, *flags, archive_path, *sys.argv[1:]])
+                except OSError:
+                    continue
+    found = ".".join(str(part) for part in sys.version_info[:2])
+    print(json.dumps({"error": f"Python {found} found; Python 3.11 or newer required", "exit_code": 3}), file=sys.stderr)
+    sys.exit(3)
 
 site_path = archive_path + "/site-packages"
 tree_path = archive_path + "/" + sys.implementation.cache_tag
