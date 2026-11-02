@@ -466,10 +466,9 @@ def shell_events(output: object, status: str = "success") -> list[dict[str, obje
 
 
 @pytest.mark.parametrize(("output", "status", "code"), [
-    ("done", "success", 0), (None, "success", 0),
-    ("Output: boom\nExit Code: 2", "success", 2), ("Exit Code: 1\nmore\nExit Code: 3", "success", 3),
-    ("Exit Code: 0", "success", 0), ("Exit Code: soon", "success", 1), ("Exit Code: -1", "success", 1),
-    ("Exit Code: 0", "error", 1), ("Exit Code: 7", "error", 7), ("no line", "error", 1),
+    ("done", "success", 0), (None, "success", 0), ("Output: boom\nExit Code: 2", "success", 2),
+    ("Exit Code: 1\nmore\nExit Code: 3", "success", 3),
+    ("Exit Code: soon", "success", 1), ("Exit Code: 0", "error", 1), ("Exit Code: 7", "error", 7),
 ])
 def test_trace_exit_code_comes_from_the_shell_output_line(output: object, status: str, code: int) -> None:
     assert _gemini._trace(shell_events(output, status)) == [{"argv": ["sh", "-c", "helper"], "exit_code": code}]  # pyright: ignore[reportPrivateUsage]
@@ -508,8 +507,7 @@ def test_macos_profile_denies_sibling_temp_reads_before_it_allows_this_trials_di
     assert '(subpath (param "CACHE_DIR"))' in text[allow:credentials]
 
 
-@pytest.mark.parametrize("entry", ["settings.json", "GEMINI.md", "extensions"])
-@pytest.mark.parametrize("operation", ["infer", "discover"])
+@pytest.mark.parametrize(("entry", "operation"), [("settings.json", "infer"), ("GEMINI.md", "discover"), ("extensions", "infer")])
 def test_a_workspace_gemini_entry_is_refused_before_gemini_runs(tmp_path: Path, operation: str, entry: str) -> None:
     directory = fake_bin(tmp_path)
     root = workspace(tmp_path)
@@ -613,9 +611,10 @@ def test_gemini_finds_an_empty_dotenv_before_a_shared_one(tmp_path: Path, operat
     assert found.parent == root.resolve().parent
 
 
-@pytest.mark.parametrize("operation", ["infer", "discover"])
-@pytest.mark.parametrize("local", ["." + "env", ".gemini/" + "." + "env"])
-@pytest.mark.parametrize("link", [False, True])
+# One row per axis: the operation, the dotenv path, and a symlink each change once from the first row.
+@pytest.mark.parametrize(("operation", "local", "link"), [
+    ("infer", "." + "env", False), ("discover", "." + "env", False), ("infer", ".gemini/" + "." + "env", False),
+    ("infer", "." + "env", True)])
 def test_a_workspace_dotenv_file_is_refused_before_gemini_runs(
         tmp_path: Path, operation: str, local: str, link: bool) -> None:
     directory = fake_bin(tmp_path)

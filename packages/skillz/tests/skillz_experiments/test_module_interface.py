@@ -9,7 +9,6 @@ import subprocess
 import sys
 from collections.abc import Iterator
 from pathlib import Path
-from typing import cast
 
 import pytest
 
@@ -182,16 +181,28 @@ def test_importing_the_harness_loads_no_wrapper_module() -> None:
     assert result.stdout.strip() == "[]"
 
 
-def _module_id(path: object) -> str:
-    return str(cast(Path, path).relative_to(SOURCE))
+_ALONE = """
+import importlib, sys, traceback
+failed = []
+for name in sys.argv[1:]:
+    for loaded in [key for key in sys.modules if key.split('.')[0] == 'skillz_experiments']:
+        del sys.modules[loaded]
+    try:
+        importlib.import_module(name)
+    except BaseException:
+        failed.append(name + '\\n' + traceback.format_exc())
+print('\\n'.join(failed))
+sys.exit(1 if failed else 0)
+"""
 
 
-@pytest.mark.parametrize("path", [path for path in _modules() if _slice(path) is not None], ids=_module_id)
-def test_each_slice_module_imports_alone_in_a_fresh_interpreter(path: Path) -> None:
-    relative = path.relative_to(SOURCE).with_suffix("")
-    name = ".".join(("skillz_experiments", *relative.parts)).removesuffix(".__init__")
-    result = subprocess.run([sys.executable, "-I", "-c", f"import {name}"], capture_output=True, text=True, check=False)
-    assert result.returncode == 0, result.stderr
+def test_each_slice_module_imports_alone_in_a_fresh_interpreter() -> None:
+    """One interpreter imports each slice module with no `skillz_experiments` module cached, and lists every failure."""
+    names = [".".join(("skillz_experiments", *path.relative_to(SOURCE).with_suffix("").parts)).removesuffix(".__init__")
+             for path in _modules() if _slice(path) is not None]
+    assert len(names) > len(SLICES)
+    result = subprocess.run([sys.executable, "-I", "-c", _ALONE, *names], capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_transport_and_the_credential_kinds_are_defined_only_in_the_harness_slice() -> None:

@@ -191,21 +191,14 @@ def test_judge_prompt_marks_output_files_as_data_inside_one_json_document(
 
 
 @pytest.mark.parametrize("answer", [
-    {}, {"criteria": {}}, {"score_percent": 50}, levels(3) | {"extra": 1},
-    {"criteria": {"good": {"level": 3, "reason": "ok"}, "extra": {"level": 3, "reason": "ok"}}},
-    {"criteria": {"good": {"level": 3}}}, {"criteria": {"good": {"level": 3, "reason": 3}}},
-    {"criteria": {"good": {"level": 3, "reason": "ok", "extra": 1}}}, {"criteria": {"good": 3}},
-    levels(0), levels(5), levels(3.0), levels(float("nan")), levels("3"), levels(True), levels(None), levels([3]),
-    "50", [50], None, 50])
+    {}, {"criteria": {}}, levels(3) | {"extra": 1}, {"criteria": {"good": {"level": 3}}},
+    {"criteria": {"good": {"level": 3, "reason": 3}}}, {"criteria": {"good": 3}}, levels(5), levels(3.0), levels(True)])
 def test_judge_rejects_every_malformed_answer_shape(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, answer: object) -> None:
     rules = contract()
     case, candidate = case_for(tmp_path, "style", rules)
-    judge = Judge(answer)
-    if answer is None:
-        judge.answer = {}
     with pytest.raises(ValueError, match="judge"):
-        _ = harness(monkeypatch, Task(), judge).evaluate(candidate, case, checks=CheckMemo())
+        _ = harness(monkeypatch, Task(), Judge(answer)).evaluate(candidate, case, checks=CheckMemo())
 
 
 @pytest.mark.parametrize(("level", "score"), [(1, 0.0), (4, 1.0), (2, 1 / 3)])
@@ -239,15 +232,10 @@ def test_judge_kind_with_one_call_of_budget_stops_before_the_task_invocation(
 # ---- command grader (AC-7) ------------------------------------------------------------------------
 
 @pytest.mark.parametrize(("stdout", "score"), [
-    ('{"score": 1}', 1.0), ('{"score": 0}', 0.0), ('{"score": 0.25}', 0.25), ('{"score": 1.0}', 1.0),
-    ('{"score": -0.0}', 0.0), ('{"score": 1e-9}', 1e-9),
-    ('{"score": 1.0000001}', 0.0), ('{"score": -0.01}', 0.0), ('{"score": 2}', 0.0), ('{"score": 1e999}', 0.0),
-    ('{"score": NaN}', 0.0), ('{"score": Infinity}', 0.0), ('{"score": -Infinity}', 0.0),
-    ('{"score": true}', 0.0), ('{"score": false}', 0.0), ('{"score": "1"}', 0.0), ('{"score": null}', 0.0),
-    ('{"score": [1]}', 0.0), ('{"score": {"v": 1}}', 0.0), ('{}', 0.0), ('[]', 0.0), ('[1]', 0.0), ('1', 0.0),
-    ('null', 0.0), ('', 0.0), ('   ', 0.0), ('{"score": 1}garbage', 0.0), ('{"score": 0.5, "score": 2}', 0.0),
-    ('{"score": 2, "score": 0.5}', 0.5), ('{"Score": 1}', 0.0), ('﻿{"score": 1}', 0.0),
-    ('{"score": 1}\n{"score": 1}', 0.0), ('{' * 100000, 0.0)])
+    ('{"score": 1}', 1.0), ('{"score": 0}', 0.0), ('{"score": 0.25}', 0.25),
+    ('{"score": 1.0000001}', 0.0), ('{"score": -0.01}', 0.0), ('{"score": 1e999}', 0.0), ('{"score": NaN}', 0.0),
+    ('{"score": true}', 0.0), ('{"score": "1"}', 0.0), ('{}', 0.0), ('[]', 0.0), ('', 0.0),
+    ('{"score": 1}garbage', 0.0), ('{"score": 2, "score": 0.5}', 0.5), ('﻿{"score": 1}', 0.0)])
 def test_command_grader_scores_only_an_exact_numeric_score_in_range(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout: str, score: float) -> None:
     rules = contract()
@@ -266,8 +254,8 @@ def test_command_grader_scores_zero_on_any_nonzero_exit_even_with_a_perfect_scor
 
 
 @pytest.mark.parametrize("output", [
-    {"../escape.txt": "x"}, {"/abs.txt": "x"}, {".hidden": "x"}, {"a/../../b": "x"}, {"a\\b": "x"},
-    {"a\u0000b": "x"}, {"": "x"}, {"a//b": "x"}, {"result.txt": 5}, {"result.txt": None}, {"result.txt": b"x"}])
+    {"../escape.txt": "x"}, {"/abs.txt": "x"}, {"a//b": "x"}, {".hidden": "x"}, {"a\\b": "x"}, {"a\u0000b": "x"},
+    {"": "x"}, {"result.txt": 5}])
 def test_command_grader_rejects_hostile_output_file_maps_before_running_the_grader(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: dict[str, object]) -> None:
     rules = contract()

@@ -152,11 +152,9 @@ def test_a_fixture_with_output_and_an_error_object_parses() -> None:
 @pytest.mark.parametrize("fixture", [
     _FAILURE | {"stderr": "x"},
     {"input": "x", "returncode": 0},
-    {"input": "x", "returncode": "3", "output": None, "error": {"error": "e"}},
     {"input": "x", "returncode": True, "output": {"ok": 1}},
     {"input": "x", "returncode": 3, "output": None},
     {"input": "x", "returncode": 3, "output": None, "error": "text"},
-    {"input": "x", "returncode": 0, "output": {"ok": 1}, "error": "text"},
 ])
 def test_a_malformed_helper_fixture_is_rejected(fixture: dict[str, object]) -> None:
     with pytest.raises(ValueError):

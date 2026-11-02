@@ -87,6 +87,7 @@ def test_the_protect_set_holds_the_train_cases_with_a_full_newest_score() -> Non
                 _score("best", "train", "c", 1.0), _score("best", "train", "c", 0.0, status="evaluation-failed"),
                 _score("best", "validation", "v", 1.0), _score("other", "train", "d", 1.0)]
     assert protected(outcomes, "best") == ["a", "c"]
+    assert protected(outcomes, "missing") == [] and protected([], "best") == []
 
 
 @pytest.mark.ac("gh-241:AC-1")

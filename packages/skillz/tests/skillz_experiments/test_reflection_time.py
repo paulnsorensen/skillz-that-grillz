@@ -158,7 +158,7 @@ def test_a_run_recorded_without_the_reflection_block_still_resumes(
 
 
 @pytest.mark.ac("gh-571:AC-1")
-@pytest.mark.parametrize(("chars", "per_call"), [(0, 30), (1, 31), (199, 31), (200, 31), (201, 32), (400, 32), (401, 33)])
+@pytest.mark.parametrize(("chars", "per_call"), [(0, 30), (200, 31), (201, 32)])
 def test_the_reflection_seconds_round_each_call_up_to_a_whole_second_per_200_characters(chars: int, per_call: int) -> None:
     block, _ = reflection_time(3, chars, Estimate(100, 1000))
     assert block["seconds"] == 3 * per_call

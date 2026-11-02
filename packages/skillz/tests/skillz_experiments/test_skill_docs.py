@@ -122,9 +122,10 @@ def _long(path: Path, inspector: ModuleType, maximum: int) -> list[dict[str, int
 PROSE_FILES = [SKILL, *sorted((SKILL_DIR / "references").glob("*.md"))]
 
 
-@pytest.mark.parametrize("path", PROSE_FILES, ids=[str(path.relative_to(SKILL_DIR)) for path in PROSE_FILES])
-def test_skill_prose_has_no_sentence_over_limit(path: Path, inspector: ModuleType, limits: tuple[int, int]) -> None:
-    assert _long(path, inspector, limits[1]) == []
+def test_skill_prose_has_no_sentence_over_limit(inspector: ModuleType, limits: tuple[int, int]) -> None:
+    offenders = {str(path.relative_to(SKILL_DIR)): hits for path in PROSE_FILES if (hits := _long(path, inspector, limits[1]))}
+    assert len(PROSE_FILES) > 1
+    assert offenders == {}
 
 
 @pytest.mark.ac("gh-298:AC-1")

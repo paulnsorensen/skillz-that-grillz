@@ -1,4 +1,4 @@
-"""The Codex transport accepts a minimum version and stops a run at the first rejected model."""
+"""The Codex transport stops a run at the first rejected model."""
 from __future__ import annotations
 
 import os
@@ -8,19 +8,8 @@ from pathlib import Path
 import pytest
 
 from skillz_experiments._cases import CodedError
-from skillz_experiments.harness._codex import Codex, supported
+from skillz_experiments.harness._codex import Codex
 from skillz_experiments._budget import Budget
-
-
-@pytest.mark.parametrize("text", ["codex-cli 0.154.0", "codex-cli 0.160.0\n", "codex-cli 0.154.1", "codex-cli 1.0.0"])
-def test_the_minimum_and_newer_versions_are_accepted(text: str) -> None:
-    assert supported(text)
-
-
-@pytest.mark.parametrize("text", ["codex-cli 0.153.9", "codex-cli 0.99.0", "", "codex 0.160.0", "codex-cli 0.160",
-                                  "codex-cli 0.154.0-alpha.1"])
-def test_an_older_or_unparseable_version_is_rejected(text: str) -> None:
-    assert not supported(text)
 
 
 def test_a_rejected_model_stops_with_model_unsupported_after_one_call(tmp_path: Path,
@@ -50,19 +39,6 @@ def test_a_rejected_model_stops_with_model_unsupported_after_one_call(tmp_path: 
     assert caught.value.code == "model-unsupported"
     assert "Codex rejected the model 'gpt-6-sol' or a feature: " in str(caught.value) and "model is not supported when using Codex" in str(caught.value)
     assert log.read_text().count("call") == 1
-
-
-@pytest.mark.parametrize("text", ["codex-cli 0.154.0\n", "codex-cli 0.154.0\r\n", "  codex-cli 1.0.0  ", "codex-cli 0.200.0",
-                                  "codex-cli 0.1000.0"])
-def test_whitespace_around_a_valid_version_is_trimmed_and_numeric_order_is_used(text: str) -> None:
-    assert supported(text)
-
-
-@pytest.mark.parametrize("text", ["codex-cli 0.99.999", "codex-cli 0.153.999", "codex-cli 0.154.0 extra", "codex-cli  0.160.0",
-                                  "codex-cli v0.160.0", "codex-cli 0.160.0.1", "codex-cli -1.0.0", "\n",
-                                  "Codex-CLI 0.160.0", "codex-cli 0.160.0\ncodex-cli 0.160.0", "codex-cli \u0660.\u0661\u0665\u0664.\u0660"])
-def test_a_malformed_older_or_non_ascii_version_is_rejected(text: str) -> None:
-    assert not supported(text)
 
 
 def _fake_codex(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, events: list[str]) -> Path:

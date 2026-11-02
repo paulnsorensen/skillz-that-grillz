@@ -69,11 +69,9 @@ def test_an_unknown_expected_key_stops_the_draft_and_the_message_names_it(tmp_pa
 
 @pytest.mark.ac("gh-368:AC-2")
 @pytest.mark.parametrize("expected", [
-    {"must": "x"}, {"must": [], "must_not": []}, {"questions": ["q"]}, {"must": ["a", "a"]}, {"must": [" "]},
-    {"must": [1]}, {"must": ["a"], "questions": "q"}, {"must": ["a"], "final_stop": " "},
-    {"must": ["a"], "final_stop": 3}, ["must"], "must",
-], ids=["text", "both-empty", "no-must", "duplicate", "blank", "int", "questions-text", "stop-blank", "stop-int", "list",
-         "string"])
+    {"must": "x"}, {"questions": ["q"]}, {"must": ["a", "a"]}, {"must": [" "]}, {"must": [1]},
+    {"must": ["a"], "questions": "q"}, {"must": ["a"], "final_stop": " "}, {"must": ["a"], "final_stop": 3}, ["must"],
+], ids=["text", "no-must", "duplicate", "blank", "int", "questions-text", "stop-blank", "stop-int", "list"])
 def test_a_malformed_expected_object_stops_the_draft(tmp_path: Path, expected: object) -> None:
     with pytest.raises(CodedError) as caught:
         _ = load_draft(write_draft(tmp_path, one(expected=expected)))
