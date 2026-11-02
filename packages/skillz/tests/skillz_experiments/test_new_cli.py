@@ -319,7 +319,9 @@ _BAD: list[tuple[str, str]] = [
     ("new-cli-module-size", "#" * (VALUE_LIMIT + 1)),
     ("new-cli-module-size", toml_value("hello-cli", "#" * (TEXT_FILE_LIMIT + 1))),
     ("new-cli-malformed", "a = " + "[" * 5000 + "]" * 5000),
-    ("new-cli-syntax", toml_value("hello-cli", "x = " + "1+" * 30000 + "1\n")),
+    # Python 3.14 and later check AST depth against the C stack size, so a deep `1+1+...` chain can parse.
+    # These two cases hit fixed limits on every version: the tokenizer's parenthesis nesting and the parser stack.
+    ("new-cli-syntax", toml_value("hello-cli", "x = " + "(" * 3000 + "1" + ")" * 3000 + "\n")),
     ("new-cli-syntax", toml_value("hello-cli", "x = " + "-" * 20000 + "1\n")),
     ("new-cli-name-collision", toml_value("alpha", HELLO)),
     ("new-cli-package-collision", toml_value("json", HELLO)),
