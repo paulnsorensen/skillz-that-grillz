@@ -19,6 +19,7 @@ skillz-experiment = "skillz_experiments._cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "pytest-timeout>=2.4.0",
     "pytest-xdist>=3",
     "basedpyright==1.40.2",
     "typing-extensions==4.16.0",

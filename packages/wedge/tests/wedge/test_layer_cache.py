@@ -198,6 +198,10 @@ def test_build_reuses_the_cached_layer_and_rebuilds_a_tampered_one(
     tmp_path: Path, copy_repo_subset: Callable[[Path], Path], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     skill = copy_repo_subset(tmp_path / "checkout")
+    # Source only: each default build compiles a tree per pinned CPython, and this test builds four times.
+    # test_bytecode_uses_verified_snapshot_when_layer_changes_during_compile covers bytecode over the cached layer.
+    with (skill / "wedge.toml").open("a") as config:
+        _ = config.write("bytecode = []\n")
     installs: list[Path] = []
     original = wedge_build._install_third_party  # pyright: ignore[reportPrivateUsage]
 

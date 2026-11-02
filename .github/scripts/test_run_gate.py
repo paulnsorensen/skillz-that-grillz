@@ -543,7 +543,8 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = self._fake_env(root)
             for name, value in (("GATE_JOBS", "0"), ("TEST_WORKERS", "auto"), ("TEST_WORKERS", "-1"),
-                                ("GATE_HOST_SLOTS", "-1"), ("GATE_HOST_SLOTS", "two")):
+                                ("GATE_HOST_SLOTS", "-1"), ("GATE_HOST_SLOTS", "two"),
+                                ("GATE_STEP_SECONDS", "-1"), ("GATE_STEP_SECONDS", "1h")):
                 with self.subTest(name=name, value=value):
                     result = subprocess.run([sys.executable, str(RUNNER), "fix"],
                                             env={**env, name: value}, capture_output=True,
@@ -573,6 +574,55 @@ class GateRunnerTest(unittest.TestCase):
                 if runner.poll() is None:
                     runner.kill()
                     _ = runner.wait()
+
+    def test_a_step_past_its_deadline_is_killed_and_fails_the_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # The fake `just` ignores SIGTERM and sleeps 30 s, like a cleanup that waits with no deadline.
+            env = {**self._fake_env(root), "HANG_JUST": "1", "CHILD_PID": str(root / "pid"), "GATE_STEP_SECONDS": "1"}
+            started = time.monotonic()
+            result = subprocess.run([sys.executable, str(RUNNER), "fix"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=20)
+            self.assertLess(time.monotonic() - started, 15)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("✗ markdown: killed at the 1 s step deadline (GATE_STEP_SECONDS)", result.stdout)
+            self.assertNotIn("✓ markdown", result.stdout)
+            with self.assertRaises(ProcessLookupError):
+                os.kill(int((root / "pid").read_text()), 0)
+
+    def test_each_pytest_lane_sets_its_per_test_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for mode in ("check", "fromargs"):
+                result = subprocess.run([sys.executable, str(RUNNER), mode], env=self._fake_env(root),
+                                        capture_output=True, text=True, check=False, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            events = (root / "events").read_text().splitlines()
+            # One `<test tree> <limit>` pair per pytest lane: `coverage run -m pytest <tree>` or `pytest <tree>`.
+            limits = sorted(event.split(" pytest ")[1].split()[0] + " " + event.split(" --timeout ")[1].split()[0]
+                            for event in events if " pytest " in event)
+            self.assertEqual(limits, [
+                "packages/agent-session-analytics/tests 120", "packages/fromargs/tests 120",
+                "packages/fromargs/tests 120", "packages/skillz/tests 120",
+                "packages/skillz/tests/skillz_experiments/e2e 600", "packages/wedge/tests 120"])
+            self.assertTrue(all(" --timeout-method signal " in event for event in events if " pytest " in event))
+            self.assertIn("uv run --locked --no-sync --all-groups python .github/scripts/check_test_counts.py check",
+                          events)
+            self.assertIn("uv run --locked --no-sync --all-groups python .github/scripts/test_check_test_counts.py",
+                          events)
+
+    def test_the_lane_timeout_fails_a_hung_test_and_does_not_hang(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            test = Path(directory) / "test_hang.py"
+            _ = test.write_text("import time\n\n\ndef test_hang():\n    time.sleep(60)\n\n\ndef test_quick():\n    pass\n")
+            started = time.monotonic()
+            result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-c", os.devnull,
+                                     "--rootdir", directory, str(test), *run_gate.timeout_args(1)],
+                                    cwd=directory, capture_output=True, text=True, check=False, timeout=30)
+            self.assertLess(time.monotonic() - started, 30)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("Failed: Timeout (>1.0s) from pytest-timeout.", result.stdout)
+            self.assertIn("1 failed, 1 passed", result.stdout)
 
 
 if __name__ == "__main__":
