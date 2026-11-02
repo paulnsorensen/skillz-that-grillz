@@ -1,8 +1,8 @@
 {
-  "asset": "hello-6b031e4ed318.pyz",
-  "content_sha256": "6b031e4ed318f8b3163a2888addbddab46c45358708fed13acdcb72520b03389",
-  "format": 9,
-  "key": "a86c747ff22b719e9c9c3e708bf185d28d7f12cd5c46132938f7e34b0bf5e5a7",
+  "asset": "hello-1156955917b0.pyz",
+  "content_sha256": "1156955917b07f77787f023f61fdc41e6c3236d13baa343869d2fa9e420068a2",
+  "format": 10,
+  "key": "b4b8543f562f1faac5b29ddfeefe258ce98b9a0c52a2568d211667fc6dea2ed8",
   "name": "hello",
   "release": "wedge",
   "repo": "example-owner/wedge-consumer"
