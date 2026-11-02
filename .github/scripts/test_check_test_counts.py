@@ -146,6 +146,13 @@ class TestCountTest(unittest.TestCase):
             _ = (root / "pyproject.toml").write_text("[tool.skillz.test-size]\nmax_cases = 80\n")
             self.assertEqual(_run(root, "check"), (2, "[tool.skillz.test-size].max_rows must be a positive integer\n"))
 
+    def test_a_waiver_collection_that_is_not_a_table_is_an_input_error(self) -> None:
+        for table in ("files", "functions"):
+            with _root() as root:
+                _ = (root / "pyproject.toml").write_text(
+                    f"[tool.skillz.test-size]\nmax_cases = 80\nmax_rows = 12\n{table} = []\n")
+                self.assertEqual(_run(root, "check"), (2, f"[tool.skillz.test-size.{table}] must be a table\n"))
+
     def test_a_collection_error_is_an_input_error(self) -> None:
         with _root() as root:
             _tree(root, {WIDE: "def test_broken(:\n"}, _config())

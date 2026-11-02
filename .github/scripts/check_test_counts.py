@@ -80,8 +80,11 @@ def _positive(table: dict[str, object], key: str) -> int:
 
 
 def _waivers(size: dict[str, object], kind: _Kind) -> dict[str, Waiver]:
+    table = size.get(kind.table, {})
+    if not isinstance(table, dict):
+        raise ConfigError(f"[tool.skillz.test-size.{kind.table}] must be a table")
     waivers: dict[str, Waiver] = {}
-    for name, entry in cast(dict[str, object], size.get(kind.table, {})).items():
+    for name, entry in cast(dict[str, object], table).items():
         if not isinstance(entry, dict):
             raise ConfigError(f"{name}: a waiver must be an inline table")
         entry = cast(dict[str, object], entry)
