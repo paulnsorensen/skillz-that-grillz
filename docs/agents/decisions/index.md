@@ -8,6 +8,7 @@
 - [quality-ratchets](./quality-ratchets.md) — Quality ratchet decisions
 - [skillz-analytics-engine](./skillz-analytics-engine.md) — skillz analytics engine decisions
 - [skillz-autoimprove](./skillz-autoimprove.md) — skillz autoimprove decisions
+- [skillz-harness-ergonomics](./skillz-harness-ergonomics.md) — skillz harness ergonomics decisions
 - [skillz-pragmatic-autoimprove](./skillz-pragmatic-autoimprove.md) — skillz pragmatic autoimprove decisions
 - [wedge-skill-packaging](./wedge-skill-packaging.md) — wedge skill packaging decisions
 <!-- HALLOUMINATE:INDEX-END -->
