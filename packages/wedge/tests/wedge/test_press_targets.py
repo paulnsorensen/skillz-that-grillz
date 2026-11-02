@@ -20,6 +20,7 @@ from zipfile import ZipFile
 
 import pytest
 
+import wedge._archive as wedge_archive
 import wedge._build as wedge_build
 from wedge._build import (
     SiteLayer,
@@ -553,13 +554,13 @@ def test_bundle_many_failing_writer_for_one_target_leaves_no_partial_output(
     _ = (scripts / "bad.pyz").write_bytes(b"previous bundle")
     real_writer = write_archive
 
-    def flaky(site_dir: Path, entry: str, out_path: Path) -> None:
+    def flaky(site_dir: Path, entry: str, out_path: Path, trees: dict[str, Path] | None) -> None:
         if entry == "bad:main":
             _ = out_path.write_bytes(b"half written")
             raise OSError("boom")
-        real_writer(site_dir, entry, out_path)
+        real_writer(site_dir, entry, out_path, trees)
 
-    monkeypatch.setattr(wedge_build, "write_archive", flaky)
+    monkeypatch.setattr(wedge_archive, "write_archive", flaky)
 
     outcomes = bundle_many([skill])
 
@@ -834,10 +835,12 @@ def test_build_from_layer_output_has_no_bytecode_or_install_metadata_and_keeps_l
     _ = (sources / "__pycache__" / "app.cpython-311.pyc").write_bytes(b"\0")
     before = _tree_digest(layer.path)
 
-    out = build_from_layer(layer, sources, _target(), tmp_path / "out")
+    target = WedgeConfig(name="app", entry="app:main", source="app.py", repo="o/n", bytecode=("3.11",))
+    out = build_from_layer(layer, sources, target, tmp_path / "out")
 
     members = _pyz_members(out)
-    assert not [m for m in members if "__pycache__" in m or m.endswith(".pyc") or m.endswith("RECORD")]
+    assert not [m for m in members if "__pycache__" in m or m == "site-packages/top.pyc" or m.endswith("RECORD")]
+    assert "cpython-311/app.pyc" in members
     assert "site-packages/app.py" in members and "site-packages/pkg/__init__.py" in members
     assert "site-packages/fakepkg/__init__.py" in members
     assert _tree_digest(layer.path) == before
@@ -1043,14 +1046,14 @@ def test_build_from_layer_failing_writer_leaves_out_dir_empty(
     layer = _hand_layer(tmp_path / "layer")
     sources = _sources(tmp_path / "sources")
 
-    def boom(_site: Path, _entry: str, out_path: Path) -> None:
+    def boom(_site: Path, _entry: str, out_path: Path, _trees: dict[str, Path] | None) -> None:
         _ = out_path.write_bytes(b"half")
         raise OSError("writer failed")
 
-    monkeypatch.setattr(wedge_build, "write_archive", boom)
+    monkeypatch.setattr(wedge_archive, "write_archive", boom)
 
     with pytest.raises(OSError, match="writer failed"):
-        _ = build_from_layer(layer, sources, _target(), tmp_path / "out")
+        _ = build_from_layer(layer, sources, replace(_target(), bytecode=()), tmp_path / "out")
 
     assert list((tmp_path / "out").iterdir()) == []
 
@@ -1340,7 +1343,7 @@ def test_a_symlink_in_the_layer_is_rejected_before_archive_writer(tmp_path: Path
     def no_writer(*_args: object) -> None:
         raise AssertionError("writer must not run on a tree with a symlink")
 
-    monkeypatch.setattr(wedge_build, "write_archive", no_writer)
+    monkeypatch.setattr(wedge_archive, "write_archive", no_writer)
 
     with pytest.raises(ValueError, match="symlink"):
         _ = build_from_layer(layer, sources, _target(), tmp_path / "out")

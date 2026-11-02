@@ -9,6 +9,7 @@ import io
 import json
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -18,6 +19,7 @@ from zipfile import ZipFile
 
 import pytest
 
+import wedge._archive as wedge_archive
 import wedge._build as wedge_build
 from wedge._build import build_many
 
@@ -238,7 +240,8 @@ def test_a_frozen_file_over_the_per_file_limit_stops_and_names_the_file(world: W
 
 def test_frozen_files_over_the_total_limit_stop_and_name_the_largest() -> None:
     blob = bytes(FROZEN_FILE_LIMIT)
-    frozen = {f"f{index}.bin": blob for index in range(FROZEN_TOTAL_LIMIT // FROZEN_FILE_LIMIT)}
+    frozen = {f"f{index}.bin": blob for index in range(2)}
+    frozen["remainder.bin"] = bytes(FROZEN_TOTAL_LIMIT - 2 * FROZEN_FILE_LIMIT)
     assert Candidate({"SKILL.md": "x"}, ("SKILL.md",), frozen=frozen)
     with pytest.raises(CodedError) as caught:
         _ = Candidate({"SKILL.md": "x"}, ("SKILL.md",), frozen=frozen | {"extra.bin": b"1"})
@@ -424,12 +427,44 @@ def test_a_broken_build_rejects_the_candidate_with_build_failed(
     def broken(*_args: object, **_kwargs: object) -> None:
         raise OSError("archive writer failed")
 
-    monkeypatch.setattr(wedge_build, "write_archive", broken)
+    monkeypatch.setattr(wedge_archive, "write_archive", broken)
     recorder = Recorder()
     score, feedback = evaluate(out, recorder, lambda components: components.update({BETA: BETA_SOURCE + "\n# edit\n"}))
     assert score == 0.0 and recorder.seen == []
     assert feedback["reason"] == "build-failed" and str(feedback["rejected"]).startswith("target beta: ")
     assert "archive writer failed" in str(feedback["rejected"])
+
+
+def test_malformed_candidate_source_rejects_with_build_failed(
+        world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
+    _ = world.contract("scripts/beta.pyz")
+    out = prepared(world, tmp_path, write_draft, approvals)
+    recorder = Recorder()
+    score, feedback = evaluate(out, recorder, lambda components: components.update({BETA: BETA_SOURCE + "\ndef broken(:\n"}))
+    assert score == 0.0 and recorder.seen == []
+    assert feedback["reason"] == "build-failed"
+    assert str(feedback["rejected"]).startswith("target beta: ")
+    assert "invalid source while selecting bytecode" in str(feedback["rejected"])
+
+
+def test_missing_compiler_resolver_rejects_candidate_with_build_failed(
+        world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]],
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    _ = world.contract("scripts/beta.pyz")
+    out = prepared(world, tmp_path, write_draft, approvals)
+    which = cast(Callable[[str], str | None], shutil.which)
+
+    def without_uv(name: str) -> str | None:
+        return None if name == "uv" else which(name)
+
+    monkeypatch.setattr("wedge._bytecode.shutil.which", without_uv)
+    monkeypatch.setattr(sys, "executable", "/usr/bin/python3")
+    monkeypatch.delenv("UV_PYTHON_INSTALL_DIR", raising=False)
+    recorder = Recorder()
+    score, feedback = evaluate(out, recorder, lambda components: components.update({BETA: BETA_SOURCE + "\n# edit\n"}))
+    assert score == 0.0 and recorder.seen == []
+    assert feedback["reason"] == "build-failed"
+    assert "uv is required to resolve managed CPython" in str(feedback["rejected"])
 
 
 def test_candidate_source_never_runs_on_the_host_during_the_build(
@@ -766,7 +801,7 @@ def test_a_winner_that_no_longer_builds_stops_the_gate_with_build_failed(
     def broken(*_args: object, **_kwargs: object) -> None:
         raise OSError("archive writer failed")
 
-    monkeypatch.setattr(wedge_build, "write_archive", broken)
+    monkeypatch.setattr(wedge_archive, "write_archive", broken)
     try:
         with pytest.raises(Stop) as stopped:
             session.gate()

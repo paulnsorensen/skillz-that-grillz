@@ -20,8 +20,16 @@ from typing import cast
 
 _SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-_ALLOWED_KEYS = {"name", "entry", "source", "source_paths", "project", "repo", "include", "groups"}
-_TARGET_KEYS = {"name", "entry", "source", "source_paths", "include", "groups"}
+BYTECODE_PYTHONS = (
+    ("3.11", "3.11.18"),
+    ("3.12", "3.12.16"),
+    ("3.13", "3.13.18"),
+    ("3.14", "3.14.10"),
+    ("3.15", "3.15.2"),
+)
+_DEFAULT_BYTECODE = tuple(minor for minor, _patch in BYTECODE_PYTHONS)
+_ALLOWED_KEYS = {"name", "entry", "source", "source_paths", "project", "repo", "include", "groups", "bytecode"}
+_TARGET_KEYS = {"name", "entry", "source", "source_paths", "include", "groups", "bytecode"}
 # The keys of one ``[[target]]`` table; a single-target file holds them at the top level beside the shared keys.
 TARGET_KEYS = frozenset(_TARGET_KEYS)
 
@@ -49,10 +57,14 @@ class WedgeConfig:
     project: str = "."
     include: tuple[str, ...] = ()
     groups: tuple[str, ...] = ()
+    bytecode: tuple[str, ...] = _DEFAULT_BYTECODE
     multi: bool = False
 
     def __post_init__(self) -> None:
         validate_name(self.name)
+        invalid = sorted(set(self.bytecode) - set(_DEFAULT_BYTECODE))
+        if invalid or len(set(self.bytecode)) != len(self.bytecode):
+            raise ConfigError(f"unsupported 'bytecode' Python version: {invalid or self.bytecode!r}")
         if not _REPO.fullmatch(self.repo):
             raise ConfigError(f"'repo' must be 'owner/name', got {self.repo!r}")
 
@@ -231,6 +243,7 @@ def _make_config(
             project=project,
             include=list_key("include"),
             groups=groups,
+            bytecode=list_key("bytecode") if "bytecode" in values else _DEFAULT_BYTECODE,
             multi=multi,
         )
     except ConfigError as exc:

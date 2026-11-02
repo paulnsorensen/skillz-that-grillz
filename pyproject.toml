@@ -93,7 +93,7 @@ disable_warnings = ["no-data-collected", "module-not-imported", "module-not-meas
 
 [tool.coverage.report]
 # The measured total at adoption, rounded down. Raise it when the gate says so; never lower it to pass.
-fail_under = 96
+fail_under = 97
 exclude_also = ["if TYPE_CHECKING:", "@overload", "@abstractmethod", "raise NotImplementedError"]
 
 [tool.skillz.coverage]
@@ -148,4 +148,4 @@ max_lines = 300
 "packages/skillz/src/skillz_experiments/run/_wedge_targets.py" = { max_lines = 820, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/search/_history.py" = { max_lines = 334, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/wrapper/_gemini.py" = { max_lines = 492, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
-"packages/wedge/src/wedge/_build.py" = { max_lines = 693, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/wedge/src/wedge/_build.py" = { max_lines = 641, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }

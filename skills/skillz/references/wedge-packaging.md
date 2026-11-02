@@ -11,13 +11,38 @@ The non-dev dependencies in that lock form the archive's closure.
 A dependency group named in `groups` joins that closure.
 A local package that is not on an index, such as fromargs, enters through `include`.
 
-Run the builder from `scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory; it carries wedge and its shiv dependency.
+Run the builder from `scripts/wedge.pyz` under the loaded `/skillz` `SKILL.md` directory.
+It carries Wedge without Shiv.
 The builder also invokes `uv`, so `uv` must be on `PATH`.
 Every dependency must be a pure-Python `py3-none-any` wheel without a platform marker.
 A compressed universal tag such as `py2.py3-none-any` also passes.
 The builder rejects platform wheels and path or URL requirements.
 The runtime requires Python 3.11 or later.
+On POSIX, an older Python re-executes the newest pinned minor available on `PATH`.
+Without that interpreter, it exits 3 with a JSON version error on stderr.
+Other platforms return that error without a PATH search.
 An installed launcher does not require uv or a project environment.
+
+### ZIP execution and bytecode
+
+Wedge archives run directly from their ZIP files without extraction or cache writes.
+Only the requested command output needs write access.
+The default build adds bytecode trees for Python 3.11 through 3.15.
+Exact compiler pins are 3.11.18, 3.12.16, 3.13.18, 3.14.10, and 3.15.2.
+Cold builds can use the network to download these compilers through uv.
+Warm builds can use an installed compiler from a read-only installation root.
+
+Set `bytecode = ["3.11", "3.15"]` to select those two trees.
+Set `bytecode = []` to build a source-only archive.
+An unsupported minor is a configuration error.
+The pins and selected subset enter the content key.
+
+Each tree retains complete first-party source and bytecode, including files read through `importlib.resources`.
+Third-party trees contain the static import set, reached literal dynamic imports, and package data, but no source files.
+A separate source tree retains the full dependency closure.
+Unknown interpreter tags and missing tree submodules fall back to source through stock import loaders.
+Tracebacks read source lines from the ZIP.
+Lazy command imports stay lazy.
 
 Do not add unrelated dependencies to a shared project to make packaging pass.
 Do not change the `packages/fromargs` closure of the skillz-that-grillz repository.
@@ -40,7 +65,7 @@ packaged-skill/
     records.wedge.json
 ```
 
-The manifest accepts eight keys: `name`, `entry`, `source`, `source_paths`, `project`, `repo`, `include`, and `groups`.
+The manifest accepts nine keys: `name`, `entry`, `source`, `source_paths`, `project`, `repo`, `include`, `groups`, and `bytecode`.
 It also accepts `[[target]]` tables, described below.
 The template sets `name`, `entry`, `source`, `project`, and `repo`.
 `entry = "records:main"` names the callable in `records.py`.
@@ -72,7 +97,7 @@ A nested CLI reads no shared defaults.
 A direct-mode manifest can instead hold several CLIs through `[[target]]` tables.
 Use either one directory per CLI or `[[target]]` tables; both layouts work.
 The root `skills/skillz/wedge.toml` in this repository shows the `[[target]]` layout.
-Each table sets `name`, `entry`, `source` or `source_paths`, `include`, and `groups`.
+Each table sets `name`, `entry`, `source` or `source_paths`, `include`, `groups`, and optionally `bytecode`.
 Keys outside the tables, such as `project` and `repo`, act as defaults for every table.
 A table value replaces the default.
 Do not set top-level `name` or `entry` beside a `[[target]]` table; wedge rejects that mix.
@@ -82,11 +107,12 @@ Target names must differ.
 `lock`, `publish` (release mode), and `check` reject `[[target]]` tables.
 `publish` skips each target that is a direct bundle.
 
-Code can also reuse one third-party install across builds through the site layer in `wedge._build`.
+Code can also reuse one third-party install across builds through the public `wedge` facade.
 `populate_site_layer` installs the locked closure once and may use the network.
 `open_site_layer` reopens that layer later and refuses changed inputs.
 `resolve_target` and `stage_sources` stage the first-party files of one target, with an optional overlay of edited files.
-`build_from_layer` copies the layer and the staged files into a fresh tree and runs shiv with no network.
+`build_from_layer` creates an isolated site view, compiles selected trees, and writes a canonical ZIP.
+Compiler discovery can use the network on a cold build.
 The layer key covers the wedge format version, the `uv.lock` digest, the groups, and the target Python.
 First-party source never enters the layer, and a build leaves the layer unchanged.
 The output matches a fresh `build` byte for byte.
@@ -152,6 +178,8 @@ Without `WEDGE_PYZ`, the launcher fetches its content-addressed asset from the r
 First use needs network access and a published asset.
 Later runs use a verified cache under `WEDGE_CACHE`, or `XDG_CACHE_HOME/wedge`, or `~/.cache/wedge`.
 The launcher rejects mismatched archive hashes before execution.
+This download cache belongs to the legacy distribution launcher.
+Archive execution itself does not extract files or create a runtime cache.
 
 Publication changes remote release state.
 Only run it when authorized, using the actual release repository and the merged commit:

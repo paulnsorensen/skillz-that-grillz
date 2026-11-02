@@ -268,28 +268,36 @@ def test_capture_freezes_a_utf8_file_with_a_nul_and_keeps_the_exact_limit_file_a
 
 
 def test_capture_accepts_a_frozen_file_of_exactly_the_per_file_limit(world: World) -> None:
+    assert FROZEN_FILE_LIMIT == 24 * 1024 * 1024
     (world.skill / "data").mkdir()
-    _ = (world.skill / "data/exact.bin").write_bytes(bytes(FROZEN_FILE_LIMIT))
+    file = world.skill / "data/exact.bin"
+    _ = file.write_bytes(bytes(FROZEN_FILE_LIMIT))
     skeleton = Candidate.capture(world.skill, [], world.contract())
     assert len(skeleton.frozen["data/exact.bin"]) == FROZEN_FILE_LIMIT
+    _ = file.write_bytes(bytes(FROZEN_FILE_LIMIT + 1))
+    with pytest.raises(CodedError) as caught:
+        _ = Candidate.capture(world.skill, [], world.contract())
+    assert caught.value.code == "frozen-file-too-large" and "data/exact.bin" in str(caught.value)
 
 
 def test_capture_total_of_exactly_64_mib_passes_and_one_more_byte_names_the_largest(world: World) -> None:
     (world.skill / "data").mkdir()
     base = sum(len(data) for data in Candidate.capture(world.skill, [], world.contract()).frozen.values())
-    for index in range(3):
+    for index in range(2):
         _ = (world.skill / f"data/f{index}.bin").write_bytes(bytes(FROZEN_FILE_LIMIT))
     last = world.skill / "data/last.bin"
-    _ = last.write_bytes(bytes(FROZEN_TOTAL_LIMIT - 3 * FROZEN_FILE_LIMIT - base))
+    remainder = FROZEN_TOTAL_LIMIT - 2 * FROZEN_FILE_LIMIT - base
+    _ = last.write_bytes(bytes(remainder))
     exact = Candidate.capture(world.skill, [], world.contract())
     assert sum(len(data) for data in exact.frozen.values()) == FROZEN_TOTAL_LIMIT
-    _ = last.write_bytes(bytes(FROZEN_TOTAL_LIMIT - 3 * FROZEN_FILE_LIMIT - base + 1))
+    _ = last.write_bytes(bytes(remainder + 1))
     with pytest.raises(CodedError) as caught:
         _ = Candidate.capture(world.skill, [], world.contract())
     assert caught.value.code == "frozen-file-too-large" and "f0.bin" in str(caught.value)
 
 
 def test_candidate_per_file_limit_is_exact() -> None:
+    assert FROZEN_FILE_LIMIT == 24 * 1024 * 1024
     assert Candidate({"SKILL.md": "x"}, ("SKILL.md",), frozen={"a.bin": bytes(FROZEN_FILE_LIMIT)})
     with pytest.raises(CodedError) as caught:
         _ = Candidate({"SKILL.md": "x"}, ("SKILL.md",), frozen={"a.bin": bytes(FROZEN_FILE_LIMIT + 1)})
@@ -865,6 +873,7 @@ def test_export_wedge_patch_survives_line_separators_that_splitlines_splits_on(
         approvals: Callable[..., tuple[str, int]]) -> None:
     """The patch splits lines on line feed only, so `git apply` reproduces the winner byte for byte."""
     world.put("beta/__init__.py", BETA_SOURCE + f"# part one{separator}part two\n" + "tail = 1\n")
+    _ = (world.skill / "wedge.toml").write_text("bytecode = []\n" + WEDGE_TOML)
     world.build()
     _ = world.contract("scripts/beta.pyz")
     out = prepared(world, tmp_path, write_draft, approvals)

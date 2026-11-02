@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
+from wedge._config import BYTECODE_PYTHONS
 from wedge._key import FORMAT_VERSION
 from wedge._main import MAIN_SOURCE
 
@@ -15,25 +16,29 @@ _SHEBANG = b"#!/usr/bin/env python3\n"
 _DATE_TIME = (1980, 1, 1, 0, 0, 0)
 
 
-def write_archive(site_dir: Path, entry: str, out_path: Path) -> None:
+def write_archive(site_dir: Path, entry: str, out_path: Path, trees: dict[str, Path] | None = None) -> None:
     environment = json.dumps(
-        {"entry": entry, "format": FORMAT_VERSION}, sort_keys=True, separators=(",", ":")
+        {"entry": entry, "format": FORMAT_VERSION, "python_minors": [minor for minor, _patch in BYTECODE_PYTHONS]},
+        sort_keys=True,
+        separators=(",", ":"),
     ).encode() + b"\n"
     members: dict[str, bytes | Path | None] = {
         "__main__.py": MAIN_SOURCE.encode(),
         "environment.json": environment,
         "site-packages/": None,
     }
-    for directory, dirs, files in os.walk(site_dir, followlinks=True):
-        dirs.sort()
-        relative = Path(directory).relative_to(site_dir)
-        if relative != Path("."):
-            members["site-packages/" + relative.as_posix() + "/"] = None
-        for name in files:
-            path = Path(directory) / name
-            if path.suffix.lower() in {".so", ".pyd"}:
-                raise ValueError(f"native extension modules are not supported in ZIP archives: {path.relative_to(site_dir)}")
-            members["site-packages/" + path.relative_to(site_dir).as_posix()] = path
+    for prefix, root in (("site-packages", site_dir), *((trees or {}).items())):
+        members[prefix + "/"] = None
+        for directory, dirs, files in os.walk(root, followlinks=True):
+            dirs.sort()
+            relative = Path(directory).relative_to(root)
+            if relative != Path("."):
+                members[prefix + "/" + relative.as_posix() + "/"] = None
+            for name in files:
+                path = Path(directory) / name
+                if path.suffix.lower() in {".so", ".pyd"}:
+                    raise ValueError(f"native extension modules are not supported in ZIP archives: {path.relative_to(site_dir)}")
+                members[prefix + "/" + path.relative_to(root).as_posix()] = path
     with out_path.open("wb") as output:
         _ = output.write(_SHEBANG)
         with ZipFile(output, "w") as archive:

@@ -1,12 +1,34 @@
 # Wedge
 
-Wedge packages a `fromargs` CLI as a compressed shiv `.pyz` for a skill.
+Wedge packages a `fromargs` CLI as a compressed, directly runnable ZIP `.pyz` for a skill.
 It is the CLI in the `skillz-that-grillz` distribution. The `fromargs`
 library remains a separate distribution at `packages/fromargs/`.
 
 A skill may commit a direct executable bundle at `scripts/<name>.pyz`. Wedge
 also supports the legacy content-keyed lock, launcher, and release workflow.
 The archive digest covers normalized uncompressed contents.
+
+## Runtime and bytecode
+
+Archives run from the ZIP without extraction or runtime cache writes.
+The command can still write its requested output.
+The runtime requires Python 3.11 or later.
+On POSIX, older Python re-executes the newest pinned minor on `PATH`, preserving arguments and isolated mode.
+Without a candidate, or on another platform, it exits 3 with a JSON version error.
+
+Default builds contain bytecode for Python 3.11 through 3.15.
+Exact compiler patches are 3.11.18, 3.12.16, 3.13.18, 3.14.10, and 3.15.2.
+Set `bytecode = ["3.11", "3.15"]` for a subset, or `bytecode = []` for source only.
+Unsupported minors fail configuration validation.
+Pins and subsets enter the content key.
+Cold builds can download pinned compilers through uv; warm builds can use read-only installed compilers.
+
+Each tree holds complete first-party source and bytecode.
+Third-party trees hold the static import set, reached literal dynamic imports, and package data.
+The full source closure supports unknown cache tags and missing tree submodules.
+Stock loaders retain package-resource support, and tracebacks read source lines from the ZIP.
+Lazy command imports stay lazy.
+The legacy download launcher still caches hash-verified release assets before archive execution.
 
 Every command takes skill directories as arguments or finds `*/wedge.toml`
 under `--root` (default `skills`). A `wedge.toml` in the root itself holds
