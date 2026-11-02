@@ -243,7 +243,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `brief-missing` | A journey case has no nonempty `brief`. | Add the brief to the case, then run again. |
 | `contract-surface` | The contract `surface` block is malformed, or `editable` names the MCP config, an agent, or a companion file. An agent file also needs a frontmatter `name` equal to its file stem. A candidate also stops when it changes the MCP config text or an agent name. | Fix the surface or `editable` in the contract, or fix the agent name. Then run again. |
 | `contract-surface-missing` | A file that the `surface` block names is missing from the skill, or the MCP config is not a JSON object with an `mcpServers` object. | Restore the file or fix the contract, then run again. |
-| `contract-surface-unsupported` | The contract declares a `surface`, and the task role is not the Claude harness. | Run with `--harness claude`, or remove the `surface` block. |
+| `contract-surface-unsupported` | The contract `surface` declares a part that the task role cannot run. Codex runs only the `Write`, `Edit`, and `MultiEdit` tools. The command harness runs no part. The message names each part. | Run with `--harness claude`, or remove the named parts from the `surface` block. |
 | `journey-unsupported` | A scored or also-evaluated kind uses the journey grader, and the task transport cannot hold a conversation. The run stops at prepare time, before the case approval. | Run with `--harness claude`, or pass `--kind task`. |
 | `journey-expected-invalid` | A journey `expected` is not an object, holds a key other than `must`, `must_not`, `questions`, `final_stop`, and `criteria`, holds a wrong type, an empty or repeated entry, or has neither a nonempty `must` nor a nonempty `must_not`. A frozen case of an older run can trigger it on resume. | Fix the case. For an older run, start a new run directory. |
 | `expected-missing` | A journey case has no `expected`. | Add the `expected` object. |
@@ -1086,7 +1086,9 @@ A contract declares the tool surface in a `surface` block. Every field is option
 Search never edits an agent file or the MCP config either. The contract cannot list them in `editable`.
 
 Paths are relative to the skill root.
-Only the Claude task role supports a surface. Other roles stop with `contract-surface-unsupported`.
+The Claude task role runs every surface part.
+The Codex task role runs only the `Write`, `Edit`, and `MultiEdit` tools, because its native file edit grants them.
+Any other surface part on Codex, and any surface part on the command harness, stops with `contract-surface-unsupported`.
 The live preflight accepts only the declared names. It stops with `preflight-leak` on any other name.
 The surface joins the environment reuse key.
 MCP stdio servers run as children of Claude Code, outside the Bash sandbox.

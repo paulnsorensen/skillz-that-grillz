@@ -287,6 +287,8 @@ The first turn must read `SKILL.md` and `EXPERIMENT_MARKER` successfully and sho
 The trace gate receives raw App Server notifications. Scoring receives normalized command and usage events.
 The command transport still raises `journey-unsupported`.
 A declared surface raises `contract-surface-unsupported` first.
+Codex runs a surface that declares only the `Write`, `Edit`, and `MultiEdit` tools, because its native file edit grants them.
+A Codex surface with another tool, an MCP config, an agent, or a companion raises `contract-surface-unsupported`.
 
 ## Credential kind
 

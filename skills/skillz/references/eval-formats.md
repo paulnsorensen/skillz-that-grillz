@@ -108,7 +108,7 @@ The contract tells the runner how to grade the cases. These top-level fields exi
 | `kinds` | A map of case kind to a kind object. |
 | `helper` | Optional. A bundled helper script and its fixtures. |
 | `editable` | Optional. Relative paths that search can change. |
-| `surface` | Optional. The extra tool surface of the task role. |
+| `surface` | Optional. The extra tool surface of the task role. The Claude harness runs every part. The Codex harness runs only the `Write`, `Edit`, and `MultiEdit` tools. |
 | `statistics` | Optional. Promotion thresholds for the holdout gate. |
 | `harness_phrases` | Optional. Sandbox-only phrases of the requests, each of at least two words. Search rejects a proposal that adds one. |
 
@@ -136,10 +136,10 @@ The `surface` object has these fields. Each path is relative to the skill and na
 
 | Field | Meaning |
 | --- | --- |
-| `tools` | Extra tool names for the task role. |
-| `mcp_config` | A JSON file of MCP servers. The run never edits it. |
-| `agents` | Markdown files of agents. The run never edits them. |
-| `companions` | Skill directories that stay read-only. |
+| `tools` | Extra tool names for the task role. Codex grants `Write`, `Edit`, and `MultiEdit` through its native file edit. Codex refuses any other name. |
+| `mcp_config` | A JSON file of MCP servers. The run never edits it. Only the Claude harness runs it. |
+| `agents` | Markdown files of agents. The run never edits them. Only the Claude harness runs them. |
+| `companions` | Skill directories that stay read-only. Only the Claude harness runs them. |
 
 The `statistics` object takes these fields. Every number is finite and at least 0:
 

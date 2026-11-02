@@ -15,7 +15,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments.harness._claude import (NOTICE_CODES, TERMINAL_CODES, ClaudeLogin, ClaudeOptions,
                                               resolve_read_roots)
 from skillz_experiments.harness._roles import (BUILTIN_ADAPTERS, ROLES, Role, adapter_class, command_paths, has_claude_sandbox,
-                                               parse_role)
+                                               parse_role, unsupported_surface)
 from skillz_experiments.harness._transport import Transport
 
 
@@ -136,10 +136,11 @@ def _severity(error: Exception) -> int:
 class Harness:
     def __init__(self, configuration: Configuration, budget: Budget, checkpoint: Callable[[], None],
                  out: Path | None = None, surface: Surface | None = None, files: Mapping[str, str] | None = None) -> None:
-        """`surface` and `files` (the seed candidate files) reach the task role only; only a Claude task role can take them."""
-        if surface is not None and not has_claude_sandbox(configuration.roles["task"].adapter):
-            raise CodedError("contract-surface-unsupported", "the contract declares a surface, and only the claude "
-                             + "harness can run it; run with --harness claude")
+        """`surface` and `files` (the seed candidate files) reach the task role only. The task adapter must run each surface part."""
+        task = configuration.roles["task"].adapter
+        if surface is not None and (parts := unsupported_surface(task, surface)):
+            raise CodedError("contract-surface-unsupported", f"the {task} task role cannot run the contract surface "
+                             + f"part(s) {', '.join(parts)}, and only the claude harness can run them; run with --harness claude")
         self.configuration = configuration
         self.identity = configuration.identity()
         self.transports: dict[str, Transport] = {}

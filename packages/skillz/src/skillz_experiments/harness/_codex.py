@@ -27,9 +27,8 @@ from skillz_experiments.evaluation import CheckMemo, CheckResult, Reply, Transcr
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._runtime import (SANDBOX_SECONDS, halve_call_slots, model_call, process, reset_call_slots,
                                          sandboxed)
-from skillz_experiments.harness._check import Check, credential_row, failed
+from skillz_experiments.harness._check import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, Check, credential_row, failed
 from skillz_experiments.harness._isolation import listening, probe
-from skillz_experiments.harness._check import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN
 
 _events = parse_events
 MINIMUM_VERSION = (0, 154, 0)
@@ -176,6 +175,7 @@ def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> li
 @final
 class Codex:
     claude_sandbox: ClassVar[bool] = False
+    surface_tools: ClassVar[frozenset[str] | None] = frozenset({"Write", "Edit", "MultiEdit"})  # Its apply_patch edit grants them.
     refuses_claude_options: ClassVar[bool] = True
     role: str = "task"
 
