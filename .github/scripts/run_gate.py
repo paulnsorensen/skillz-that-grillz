@@ -167,6 +167,34 @@ def run_step(name: str, command: list[str]) -> bool:
     return _finish(process)
 
 
+def _pin_compiler_root() -> bool:
+    """Keep compiler storage independent of the private homes that tests assign."""
+    os.environ["UV_PYTHON_INSTALL_BIN"] = "0"
+    root = os.environ.get("UV_PYTHON_INSTALL_DIR")
+    if not root:
+        _ = os.environ.pop("UV_PYTHON_INSTALL_DIR", None)
+        if not _start("python-root", ["uv", "python", "dir"]):
+            return False
+        process = next(iter(_ACTIVE))
+        while process.poll() is None:
+            _check_cancelled()
+            time.sleep(0.02)
+        _check_cancelled()
+        output = _ACTIVE[process][1]
+        _ = output.seek(0)
+        root = output.read().decode(errors="replace").strip()
+        if not _finish(process):
+            return False
+        if not root:
+            print("uv python dir returned an empty compiler root", file=sys.stderr)
+            return False
+        if len(root.splitlines()) != 1 or not Path(root).is_absolute():
+            print("uv python dir must return one absolute compiler root", file=sys.stderr)
+            return False
+    os.environ["UV_PYTHON_INSTALL_DIR"] = str((ROOT / root).resolve())
+    return True
+
+
 def run_jobs(jobs: list[Job], workers: int) -> bool:
     pending = iter(jobs)
     passed = True
@@ -404,6 +432,8 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.TemporaryDirectory(prefix="sg-", dir="/tmp") as directory:
             temp_root = Path(directory)
             try:
+                if not _pin_compiler_root():
+                    return 1
                 if args[0] in PACKAGE_MODES:
                     package = args[0]
                     command = ["uv", "run", "--locked"]
