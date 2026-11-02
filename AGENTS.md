@@ -108,6 +108,7 @@ of truth for repo-local skills (tooling for work on this repository only).
     `[tool.skillz.test-size.files]` and `[tool.skillz.test-size.functions]` in `pyproject.toml` list the measured waivers.
     When a waived count falls, run `check_test_counts.py tighten` in the same change. Cut or split a table that grows; only a human raises a ceiling.
   - pytest-timeout fails one test after 120 s in each pytest lane and after 600 s in `skillz-e2e-pytest`.
+    `run_gate.py` kills a step that runs longer than `GATE_STEP_SECONDS` (default 3600 s; `0` turns it off).
   - The `coverage` lane fails below `[tool.coverage.report].fail_under`, on a function with zero coverage hits,
     and when the lines a change adds are below `[tool.skillz.coverage].diff_fail_under`.
     Add tests; never lower a floor. Raise `fail_under` when the gate asks for it.
