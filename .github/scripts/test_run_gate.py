@@ -405,8 +405,8 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = self._fake_env(root)
             # The report exits 1 here; the gate still passes, because only the CI coverage job enforces the ceilings.
-            failing = "\n".join(["if 'check_test_durations.py' in args:", "    print('breach: tests/test_slow.py')",
-                                 "    sys.exit(1)", ""])
+            failing = "\n".join(["if any(arg.endswith('/check_test_durations.py') for arg in args):",
+                                 "    print('breach: tests/test_slow.py')", "    sys.exit(1)", ""])
             _ = (root / "uv").write_text(FAKE_TOOL + failing)
             result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
                                     capture_output=True, text=True, check=False, timeout=10)

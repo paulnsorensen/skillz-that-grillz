@@ -163,7 +163,9 @@ class TestTimeTest(unittest.TestCase):
 
     def test_tighten_needs_the_durations_and_one_line_exceptions(self) -> None:
         with _root() as root:
-            path = _tree(root, _file(30, 2), f'"{SLOW}" = {{ max_seconds = 73,\n {REASON} }}\n')
+            # A sub-table parses under TOML 1.0 and 1.1; a multi-line inline table parses only under TOML 1.1.
+            table = f'[tool.skillz.test-time.exceptions."{SLOW}"]\nmax_seconds = 73\n{REASON}\n'
+            path = _tree(root, _file(30, 2), table)
             self.assertEqual(_run(root, "tighten", path)[0], 2)
             path.unlink()
             self.assertEqual(_run(root, "tighten", path)[0], 1)
