@@ -108,6 +108,7 @@ def test_families_with_fewer_than_two_cases_are_skipped_in_name_order_and_never_
 def test_a_holdout_of_one_case_skips_its_family() -> None:
     result = verdict({"only": -3.0}, thresholds=Statistics(family_budget=0.0), families={"only": "f"})
     assert (result.verdict, result.skipped_families) == ("inconclusive", ("f",))
+    assert verdict({"k": 1.0}, families={"k": "solo"}).skipped_families == ("solo",)
 
 
 def test_a_case_without_a_family_is_ignored() -> None:
@@ -128,8 +129,9 @@ def test_a_per_family_budget_overrides_the_global_budget_in_both_directions() ->
 
 
 def test_a_zero_budget_override_is_not_mistaken_for_no_budget() -> None:
-    zero = Statistics(family_budget=5.0, family_budgets={"a": 0.0})
-    assert verdict(CASES, thresholds=zero, families=FAMILIES).reasons == ("family-regression:a",)
+    for budget in (5.0, None):
+        zero = Statistics(family_budget=budget, family_budgets={"a": 0.0})
+        assert verdict(CASES, thresholds=zero, families=FAMILIES).reasons == ("family-regression:a",), budget
 
 
 def test_defaults_keep_every_verdict_and_the_pinned_simulation() -> None:
@@ -188,6 +190,8 @@ def test_a_flag_beats_the_contract_budget_but_keeps_the_map() -> None:
     contract = parse(_document(statistics={"family_budget": 0.1, "family_budgets": {"a": 0.3}}), "skill")
     resolved = resolve_statistics(contract, {"family_budget": 0.0})
     assert (resolved.family_budget, dict(resolved.family_budgets)) == (0.0, {"a": 0.3})
+    mapped = resolve_statistics(parse(_document(statistics={"family_budgets": {"a": 0.5}}), "skill"), {"family_budget": 9.0})
+    assert verdict(CASES, thresholds=mapped, families=FAMILIES).reasons == ("family-regression:a",)
 
 
 @pytest.mark.parametrize("block", [
@@ -195,7 +199,8 @@ def test_a_flag_beats_the_contract_budget_but_keeps_the_map() -> None:
     {"family_budget": math.nan}, {"family_budget": 10**400},
     {"family_budgets": ["a"]}, {"family_budgets": "a"}, {"family_budgets": None}, {"family_budgets": {"": 1.0}},
     {"family_budgets": {"a": -1.0}}, {"family_budgets": {"a": True}}, {"family_budgets": {"a": math.inf}},
-    {"family_budgets": {"a": "1"}}, {"family_budgets": {"a": None}}])
+    {"family_budgets": {"a": "1"}}, {"family_budgets": {"a": None}}, {"family_budgets": {"a": 10**400}},
+    {"family_budgets": {"a": 0.0, "b": math.nan}}])
 def test_an_invalid_family_value_in_a_contract_is_refused_by_code(block: dict[str, object]) -> None:
     with pytest.raises(CodedError) as caught:
         _ = parse(_document(statistics=block), "skill")
@@ -373,9 +378,10 @@ def test_a_malformed_frozen_family_value_stops_as_tampered(
 
 def test_a_bad_family_budget_flag_is_refused_by_name(tmp_path: Path, make_target: Callable[..., Path]) -> None:
     target = make_target(tmp_path)
-    for bad in (-1.0, math.nan, math.inf, True):
+    for bad in (-1.0, math.nan, math.inf, True, 10**400):
         with pytest.raises(ValueError, match="--family-budget"):
             _ = run(target, tmp_path / "run", MODEL, statistics={"family_budget": bad})
+        assert not (tmp_path / "run/run.json").exists()
 
 
 @final

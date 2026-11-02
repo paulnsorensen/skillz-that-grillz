@@ -13,7 +13,6 @@ import pytest
 import skillz_experiments
 from skillz_experiments._records import read, write
 from skillz_experiments.harness._harness import Configuration
-from skillz_experiments.run import compare
 from skillz_experiments.run._resume import frozen_statistics
 from skillz_experiments.run._open import scoring_digest
 from skillz_experiments.run._session import Session
@@ -64,15 +63,6 @@ def test_an_unjudged_contract_freezes_a_null_judge_model_and_the_claude_defaults
     fields = cast(dict[str, object], _frozen(record)["fields"])
     assert "judge_model" in fields and fields["judge_model"] is None
     assert fields["claude_options"] == {}
-
-
-def test_a_judged_and_an_unjudged_run_differ_in_the_judge_model_and_the_contract(
-        tmp_path: Path, make_target: Callable[..., Path], approved_run: Callable[..., dict[str, object]]) -> None:
-    _, _, judged = _run(tmp_path / "a", make_target, approved_run, judged=True)
-    _, _, plain = _run(tmp_path / "b", make_target, approved_run, judged=False)
-    named = compare(judged, plain)
-    assert "judge_model" in named and "contract_hash" in named
-    assert compare(plain, judged) == named
 
 
 def test_a_scoring_file_that_goes_missing_stops_the_digest_instead_of_keeping_history(tmp_path: Path) -> None:

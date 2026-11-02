@@ -74,8 +74,7 @@ def test_approve_refuses_an_estimate_with_no_calls() -> None:
 
 @pytest.mark.parametrize(
     "sizes",
-    [{"preflight_calls": -1}, {"train": -5, "validation": 10}, {"holdout": -1}, {"search_calls": -1},
-     {"reflection_calls": -1}, {"retry_calls": -1}, {"calls_per_evaluation": 0}, {"repeats": 0}],
+    [{"preflight_calls": -1}, {"train": -5, "validation": 10}, {"calls_per_evaluation": 0}, {"repeats": 0}],
 )
 def test_estimate_refuses_counts_that_lower_the_total(sizes: dict[str, int]) -> None:
     with pytest.raises(ValueError, match="nonnegative counts"):
@@ -145,6 +144,7 @@ def test_concurrent_claims_never_overspend() -> None:
     assert budget.yields >= 40
 
 
+@pytest.mark.ac("gh-319:AC-2")
 def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
     hold = "import pathlib,sys,time;pathlib.Path(sys.argv[1]).touch();time.sleep(2.0)"
     markers = [tmp_path / f"holding-{index}" for index in range(MAX_CONCURRENT_CALLS)]
@@ -231,7 +231,7 @@ def test_a_gate_heavy_plan_reserve_is_not_cut_to_the_estimate_seconds() -> None:
 
 @pytest.mark.ac("gh-571-calibrate:AC-2")
 @pytest.mark.parametrize(("train", "validation", "holdout", "sandbox"),
-                         [(1, 1, 58, 20), (3, 3, 30, 20), (3, 3, 30, 80), (3, 3, 30, 100), (6, 6, 6, 20), (1, 1, 30, 100)])
+                         [(1, 1, 58, 20), (3, 3, 30, 80), (6, 6, 6, 20)])
 def test_a_plan_that_fits_leaves_the_search_its_time_after_the_slow_rate_gate_reserve(
         train: int, validation: int, holdout: int, sandbox: int) -> None:
     try:

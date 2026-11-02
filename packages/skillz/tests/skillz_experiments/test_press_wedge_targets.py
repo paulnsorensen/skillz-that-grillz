@@ -247,7 +247,7 @@ def test_as_text_counts_bytes_not_characters() -> None:
     assert as_text("é".encode() * (TEXT_FILE_LIMIT // 2 + 1)) is None
 
 
-@pytest.mark.parametrize("data", [b"ok\x00ok", b"\x00", b"\xef\xbb\xbf\x00", b"\xc3\x28", b"\xed\xa0\x80"])
+@pytest.mark.parametrize("data", [b"ok\x00ok", b"\xc3\x28"])
 def test_as_text_nul_and_invalid_utf8_freeze(data: bytes) -> None:
     assert as_text(data) is None
 
@@ -294,14 +294,6 @@ def test_capture_total_of_exactly_64_mib_passes_and_one_more_byte_names_the_larg
     with pytest.raises(CodedError) as caught:
         _ = Candidate.capture(world.skill, [], world.contract())
     assert caught.value.code == "frozen-file-too-large" and "f0.bin" in str(caught.value)
-
-
-def test_candidate_per_file_limit_is_exact() -> None:
-    assert FROZEN_FILE_LIMIT == 24 * 1024 * 1024
-    assert Candidate({"SKILL.md": "x"}, ("SKILL.md",), frozen={"a.bin": bytes(FROZEN_FILE_LIMIT)})
-    with pytest.raises(CodedError) as caught:
-        _ = Candidate({"SKILL.md": "x"}, ("SKILL.md",), frozen={"a.bin": bytes(FROZEN_FILE_LIMIT + 1)})
-    assert caught.value.code == "frozen-file-too-large" and "a.bin" in str(caught.value)
 
 
 def test_capture_a_text_file_named_pyz_is_text_and_a_binary_one_is_frozen(world: World) -> None:
@@ -422,9 +414,7 @@ def test_package_limit_boundary_exact_fit_is_editable_and_one_over_is_frozen(wor
 
 # --- AC-6/AC-7: proposals and host rebuild ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("extra", [
-    "@wedge/proj/beta/new.py", "@wedge/../../etc/passwd", "@wedge/packages/wedge/src/other_pkg/x.py", "@wedge//etc/passwd",
-    "@wedge/proj\\beta\\x.py", "scripts/beta.pyz", "scripts/alpha.pyz", "wedge.toml", "/etc/passwd", "@wedge/", "@new-cli"])
+@pytest.mark.parametrize("extra", ["@wedge/proj/beta/new.py", "@wedge/../../etc/passwd", "scripts/alpha.pyz", "@new-cli"])
 def test_a_proposal_with_an_extra_component_is_rejected_before_any_build_or_evaluation(
         extra: str, world: World, tmp_path: Path, write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:

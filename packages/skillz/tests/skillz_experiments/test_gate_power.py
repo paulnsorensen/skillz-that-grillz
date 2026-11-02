@@ -68,17 +68,12 @@ def test_the_cli_reports_a_count_and_a_rate_for_each_effect() -> None:
         assert type(printed[f"true_promotions_effect_{label}"]) is int
 
 
-@pytest.fixture(scope="module")
-def _full_report() -> dict[str, object]:
-    return cast(dict[str, object], _cli.self_test(simulate=True))
-
-
-@pytest.mark.parametrize("metric", get_args(_cli.Metric))
-def test_a_selected_figure_equals_the_same_key_of_the_full_report(
-        _full_report: dict[str, object], metric: _cli.Metric) -> None:
-    selected = _cli.self_test(simulate=True, metric=metric)
-    assert selected == _full_report[metric]
-    assert type(selected) is type(_full_report[metric])
+def test_a_selected_figure_equals_the_same_key_of_the_full_report() -> None:
+    full = cast(dict[str, object], _cli.self_test(simulate=True))
+    for metric in cast(tuple[_cli.Metric, ...], get_args(_cli.Metric)):
+        selected = _cli.self_test(simulate=True, metric=metric)
+        assert selected == full[metric], metric
+        assert type(selected) is type(full[metric]), metric
 
 
 def test_a_power_selector_runs_one_power_simulation_and_no_null_simulation(monkeypatch: pytest.MonkeyPatch) -> None:

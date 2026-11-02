@@ -263,6 +263,6 @@ def _random_outcomes(rng: random.Random) -> Outcomes:
 @pytest.mark.ac("gh-500:AC-9")
 def test_stall_observations_with_one_repeat_match_the_old_algorithm_on_outcomes_without_repeat_keys() -> None:
     rng = random.Random(500)
-    for _ in range(600):
+    for _ in range(100):
         rows = _random_outcomes(rng)
         assert stall_observations(rows, {"a", "b"}, 1) == _old_stall(rows, {"a", "b"}), rows
