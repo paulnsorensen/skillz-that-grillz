@@ -256,8 +256,9 @@ class GateRunnerTest(unittest.TestCase):
             ])
             # Main tracks no archive (ADR-012), so the archives build before any test reads them.
             self.assertEqual(events[3], "uv run --locked --no-sync --project packages/wedge wedge bundle skills/skillz")
-            self.assertTrue(events[4].startswith("uv lock --project "), events[4])
-            readers = events[5:]
+            # The offline e2e locks come from the workspace lock, so no step warms the uv index cache.
+            self.assertFalse(any(event.startswith("uv lock") for event in events), events)
+            readers = events[4:]
             self.assertFalse(any(event.startswith("uv sync") for event in readers))
             self.assertTrue(any("packages/wedge/tests" in event for event in readers))
             self.assertTrue(any("packages/skillz/tests" in event for event in readers))
@@ -357,11 +358,10 @@ class GateRunnerTest(unittest.TestCase):
             self.assertEqual(events[0], "uv sync --locked --all-packages --all-groups --all-extras")
             # Each CI shard builds the archives that its tests run (ADR-012).
             self.assertEqual(events[1], "uv run --locked --no-sync --project packages/wedge wedge bundle skills/skillz")
-            self.assertTrue(events[2].startswith("uv lock --project "), events[2])
             e2e = "packages/skillz/tests/skillz_experiments/e2e"
-            self.assertEqual(len(events), 5)
-            self.assertTrue(any(f"pytest {e2e} " in event for event in events[3:]))
-            self.assertTrue(any(f"pytest packages/skillz/tests --ignore {e2e} " in event for event in events[3:]))
+            self.assertEqual(len(events), 4)
+            self.assertTrue(any(f"pytest {e2e} " in event for event in events[2:]))
+            self.assertTrue(any(f"pytest packages/skillz/tests --ignore {e2e} " in event for event in events[2:]))
 
     def test_skillz_shard_loads_the_plugin_into_both_skillz_lanes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
