@@ -51,3 +51,5 @@ fromargs = { workspace = true }
 testpaths = ["tests/wedge"]
 markers = ["ac(id): ties a test to an acceptance-criterion ID"]
 addopts = "--strict-markers"
+# Remove the tmp_path of a passed test at its teardown, so one gate run does not fill the disk.
+tmp_path_retention_policy = "failed"

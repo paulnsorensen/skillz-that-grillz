@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -66,6 +67,30 @@ def real_nested_userns_probe(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callab
     cache_clear()
     yield _REAL_NESTED_USERNS_BLOCKED
     cache_clear()
+
+
+@pytest.fixture(scope="session")
+def managed_python_root() -> Path | None:
+    """Return the uv managed-Python root of the host, or `None` without `uv`.
+
+    The session reads it once, before a test moves `HOME`.
+    """
+    uv = shutil.which("uv")
+    if uv is None:
+        return None
+    return Path(subprocess.run([uv, "python", "dir"], check=True, capture_output=True, text=True).stdout.strip())
+
+
+@pytest.fixture(autouse=True)
+def shared_managed_python(managed_python_root: Path | None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point `UV_PYTHON_INSTALL_DIR` at the managed-Python root of the host.
+
+    A wedge build finds or installs its pinned CPython builds below this root.
+    Without it, a test that moves `HOME` installs about 400 MB of CPython builds below its `tmp_path`.
+    A test of a missing or cold root sets or deletes the variable itself.
+    """
+    if managed_python_root is not None:
+        monkeypatch.setenv("UV_PYTHON_INSTALL_DIR", str(managed_python_root))
 
 
 @pytest.fixture(autouse=True)
