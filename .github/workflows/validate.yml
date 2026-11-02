@@ -165,10 +165,13 @@ jobs:
 
       - name: Upload shard durations
         # pytest-split stores the durations of the tests that this shard ran, one file per skillz lane.
+        # The JUnit report of each lane gives the count of tests that the shard selected (quality-ratchets ADR-006).
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: durations-shard-${{ matrix.shard }}
-          path: ${{ runner.temp }}/coverage/durations/*.json
+          path: |
+            ${{ runner.temp }}/coverage/durations/*.json
+            ${{ runner.temp }}/coverage/durations/*.xml
           if-no-files-found: error
           retention-days: 5
           overwrite: true
@@ -225,6 +228,12 @@ jobs:
           include-hidden-files: true
           overwrite: true
 
+      - name: Check test times
+        # The time ratchet fails on a file above its ceiling, and on a merged file that is missing, is empty,
+        # or holds fewer test ids than the shards' JUnit reports count (quality-ratchets ADR-006).
+        run: >-
+          python .github/scripts/check_test_durations.py check "$RUNNER_TEMP/test-durations/.test_durations"
+          --collected "$RUNNER_TEMP/durations"
       - name: Check coverage
         run: uv run --locked python .github/scripts/check_coverage.py "$RUNNER_TEMP/coverage"
 

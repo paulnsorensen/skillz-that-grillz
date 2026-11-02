@@ -381,7 +381,8 @@ class GateRunnerTest(unittest.TestCase):
             durations = data.resolve() / "durations"
             for lane in ("skillz-e2e-pytest", "skillz-pytest"):
                 stored = durations / f"{lane}.2of4.json"
-                split = ("--splits 4 --group 2 --splitting-algorithm least_duration "
+                split = (f"--junitxml {durations / f'{lane}.2of4.xml'} "
+                         "--splits 4 --group 2 --splitting-algorithm least_duration "
                          f"--durations-path {stored} --store-durations --clean-durations")
                 self.assertEqual(sum(event.endswith(" " + split) for event in pytest_events), 1, pytest_events)
                 # The split reads a copy of the committed file; pytest-split then replaces it with this shard's data.
@@ -389,13 +390,34 @@ class GateRunnerTest(unittest.TestCase):
             self.assertEqual(sorted(path.name for path in durations.iterdir()),
                              ["skillz-e2e-pytest.2of4.json", "skillz-pytest.2of4.json"])
             self.assertFalse(any("--splits" in event for event in events if " pytest " not in event))
-            # A retry in the same directory that skips a lane removes the earlier run's copy for that lane,
-            # so the merge sees only this run's files.
+            # A retry in the same directory that skips a lane removes the earlier run's copy and JUnit report for
+            # that lane, so the merge and the time ratchet see only this run's files.
+            for stale in ("skillz-e2e-pytest.2of4.xml", "skillz-pytest.2of4.xml"):
+                _ = (durations / stale).write_text("<testsuites />")
             env = {**env, "GATE_SKIP": "skillz-e2e-pytest"}
             result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual([path.name for path in durations.iterdir()], ["skillz-pytest.2of4.json"])
+
+    def test_the_gate_prints_the_time_report_and_never_fails_on_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = self._fake_env(root)
+            # The report exits 1 here; the gate still passes, because only the CI coverage job enforces the ceilings.
+            failing = "\n".join(["if 'check_test_durations.py' in args:", "    print('breach: tests/test_slow.py')",
+                                 "    sys.exit(1)", ""])
+            _ = (root / "uv").write_text(FAKE_TOOL + failing)
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("• test-time-report (report only)\nbreach: tests/test_slow.py\n", result.stdout)
+            events = (root / "events").read_text().splitlines()
+            script = ".github/scripts/check_test_durations.py"
+            # The report runs after the lanes and before the coverage lane.
+            report = f"uv run --locked --no-sync --all-groups python {script} report {run_gate.DURATIONS_FILE}"
+            self.assertEqual(events[-2], report)
+            self.assertIn(" .github/scripts/check_coverage.py ", events[-1])
 
     def test_every_pytest_lane_writes_its_own_coverage_then_the_coverage_lane_runs_last(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -452,6 +474,8 @@ class GateRunnerTest(unittest.TestCase):
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertNotIn("coverage", result.stdout.replace("coverage-tests", ""))
+            # A failed lane still prints the report-only time step.
+            self.assertIn("• test-time-report (report only)", result.stdout)
 
     def test_a_shard_tags_its_coverage_files_and_skips_the_coverage_lane(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

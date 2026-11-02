@@ -149,3 +149,70 @@ max_lines = 300
 "packages/skillz/src/skillz_experiments/search/_history.py" = { max_lines = 334, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/wrapper/_gemini.py" = { max_lines = 492, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/wedge/src/wedge/_build.py" = { max_lines = 641, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+
+# Test-time ratchet (.github/scripts/check_test_durations.py, quality-ratchets ADR-006): the summed CI wall time of
+# each test file, in seconds. A ceiling is 1.5 x the measured seconds, rounded up; run `tighten` after a file speeds up.
+[tool.skillz.test-time]
+max_seconds = 20
+
+# Keys are the node-id file prefixes of packages/skillz/.test_durations.
+[tool.skillz.test-time.exceptions]
+"tests/skillz_experiments/e2e/test_auth_env.py" = { max_seconds = 72, reason = "Measured 47.7 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/e2e/test_gate_scenarios.py" = { max_seconds = 447, reason = "Measured 297.7 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/e2e/test_gemini_wrapper.py" = { max_seconds = 388, reason = "Measured 258.3 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/e2e/test_generated_target.py" = { max_seconds = 314, reason = "Measured 209.0 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/e2e/test_journeys.py" = { max_seconds = 300, reason = "Measured 199.4 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/e2e/test_lifecycle.py" = { max_seconds = 43, reason = "Measured 28.5 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/e2e/test_rrsi.py" = { max_seconds = 221, reason = "Measured 147.2 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/e2e/test_verdicts.py" = { max_seconds = 676, reason = "Measured 450.4 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/e2e/test_wedge.py" = { max_seconds = 244, reason = "Measured 162.2 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_analytics_packs.py" = { max_seconds = 22, reason = "Measured 14.2 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_autoimprove_claims.py" = { max_seconds = 279, reason = "Measured 185.7 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_bundle.py" = { max_seconds = 22, reason = "Measured 14.2 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_call_timeout.py" = { max_seconds = 44, reason = "Measured 28.9 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_check_timeouts.py" = { max_seconds = 30, reason = "Measured 20.0 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_claude.py" = { max_seconds = 79, reason = "Measured 52.1 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_cli_self_test.py" = { max_seconds = 70, reason = "Measured 46.4 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_codex_model.py" = { max_seconds = 22, reason = "Measured 14.2 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_command.py" = { max_seconds = 83, reason = "Measured 55.0 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_compatibility.py" = { max_seconds = 50, reason = "Measured 32.8 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_document_parser_properties.py" = { max_seconds = 26, reason = "Measured 17.0 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_family_budgets.py" = { max_seconds = 21, reason = "Measured 13.7 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_frontmatter_properties.py" = { max_seconds = 23, reason = "Measured 14.8 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_gate_power.py" = { max_seconds = 472, reason = "Measured 314.2 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_gate_ratchet.py" = { max_seconds = 77, reason = "Measured 50.8 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_gate_ratchet_attack.py" = { max_seconds = 52, reason = "Measured 34.0 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_gemini.py" = { max_seconds = 50, reason = "Measured 33.1 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_graders.py" = { max_seconds = 43, reason = "Measured 28.1 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_harness_parser_properties.py" = { max_seconds = 111, reason = "Measured 73.9 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_headroom.py" = { max_seconds = 45, reason = "Measured 29.6 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_helper_witness.py" = { max_seconds = 35, reason = "Measured 22.9 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_intake.py" = { max_seconds = 21, reason = "Measured 13.7 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_journey_fixtures.py" = { max_seconds = 33, reason = "Measured 21.7 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_journey_press.py" = { max_seconds = 34, reason = "Measured 22.3 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_judge_rationale.py" = { max_seconds = 59, reason = "Measured 38.7 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_mode_fixtures.py" = { max_seconds = 93, reason = "Measured 61.9 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_module_interface.py" = { max_seconds = 32, reason = "Measured 20.9 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_new_cli.py" = { max_seconds = 91, reason = "Measured 60.6 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_press_attempt_history.py" = { max_seconds = 40, reason = "Measured 26.4 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_press_autoimprove.py" = { max_seconds = 90, reason = "Measured 59.5 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_press_claude.py" = { max_seconds = 76, reason = "Measured 50.2 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_press_compatibility.py" = { max_seconds = 31, reason = "Measured 20.5 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_press_harness_sandbox.py" = { max_seconds = 91, reason = "Measured 60.2 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_press_inspect_v4.py" = { max_seconds = 180, reason = "Measured 119.7 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_press_new_cli.py" = { max_seconds = 126, reason = "Measured 83.4 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_press_wedge_targets.py" = { max_seconds = 177, reason = "Measured 118.0 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_redact.py" = { max_seconds = 224, reason = "Measured 149.3 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_reflections.py" = { max_seconds = 26, reason = "Measured 17.0 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_retained_seed_holdout.py" = { max_seconds = 21, reason = "Measured 13.7 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_run_harness_options.py" = { max_seconds = 40, reason = "Measured 26.2 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_run_restore.py" = { max_seconds = 48, reason = "Measured 31.9 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_run_search.py" = { max_seconds = 480, reason = "Measured 319.4 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_runtime.py" = { max_seconds = 26, reason = "Measured 17.3 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_experiments/test_search_faults.py" = { max_seconds = 34, reason = "Measured 22.4 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_skillz_autoimprove_journeys.py" = { max_seconds = 72, reason = "Measured 47.8 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_token_cost.py" = { max_seconds = 46, reason = "Measured 30.3 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_experiments/test_wedge_targets.py" = { max_seconds = 108, reason = "Measured 71.9 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_inspect/test_inspect_parity.py" = { max_seconds = 90, reason = "Measured 59.8 s in CI run 41417007579 before the prune PR." }
+"tests/skillz_inspect/test_press_inspect.py" = { max_seconds = 23, reason = "Measured 15.0 s in CI run 41417007579 before the prune PR; under the default, without 1.5 x headroom." }
+"tests/skillz_live/test_live_smoke.py" = { max_seconds = 41, reason = "Measured 27.3 s in CI run 41417007579 before the prune PR." }
