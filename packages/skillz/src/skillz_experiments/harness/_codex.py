@@ -175,7 +175,7 @@ def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> li
 @final
 class Codex:
     claude_sandbox: ClassVar[bool] = False
-    surface_tools: ClassVar[frozenset[str] | None] = frozenset({"Write", "Edit", "MultiEdit"})  # Its apply_patch edit grants them.
+    surface_tools: ClassVar[frozenset[str] | None] = frozenset({"Write", "Edit", "MultiEdit"})  # Its native file edit grants them.
     refuses_claude_options: ClassVar[bool] = True
     role: str = "task"
 

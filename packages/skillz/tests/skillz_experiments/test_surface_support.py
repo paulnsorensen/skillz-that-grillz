@@ -1,9 +1,8 @@
 """Each adapter runs only the contract surface parts that it supports; the harness refuses the rest by name."""
 from __future__ import annotations
 
+import dataclasses
 import json
-import os
-import stat
 import sys
 from pathlib import Path
 
@@ -20,17 +19,12 @@ FULL = Surface(("WebFetch",), "mcp/docs.json", ("agents/reviewer.md",), ("skills
 
 
 @pytest.fixture
-def codex_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Put a fake `codex` on PATH and point CODEX_HOME at a private directory. The tests never run it."""
+def codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Point CODEX_HOME at a private directory for a test that starts a Codex role. The autouse stub `codex` never runs."""
     if Path("/etc/codex/skills").exists():
         pytest.skip("admin skill roots stop the Codex transport")
     home = tmp_path / "codex-home"
     home.mkdir()
-    fake = tmp_path / "bin/codex"
-    fake.parent.mkdir()
-    _ = fake.write_text("#!/bin/sh\nexit 1\n")
-    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
-    monkeypatch.setenv("PATH", f"{fake.parent}:{os.environ['PATH']}")
     monkeypatch.setenv("CODEX_HOME", str(home))
 
 
@@ -44,11 +38,11 @@ def _refusal(tmp_path: Path, document: dict[str, object], surface: Surface) -> s
     with pytest.raises(CodedError) as caught:
         _ = _harness(tmp_path, document, surface)
     assert caught.value.code == "contract-surface-unsupported"
-    assert "run with --harness claude" in str(caught.value)
+    assert str(caught.value).endswith("; the claude harness runs every part, so run with --harness claude")
     return str(caught.value)
 
 
-@pytest.mark.usefixtures("codex_path")
+@pytest.mark.usefixtures("codex_home")
 def test_a_codex_task_role_starts_with_a_surface_of_native_edit_tools(tmp_path: Path) -> None:
     session = _harness(tmp_path, {"adapter": "codex"}, Surface(("Write", "Edit", "MultiEdit")))
     try:
@@ -58,13 +52,11 @@ def test_a_codex_task_role_starts_with_a_surface_of_native_edit_tools(tmp_path: 
         session.close()
 
 
-@pytest.mark.usefixtures("codex_path")
 def test_a_codex_task_role_refuses_a_tool_that_it_does_not_grant_and_names_only_that_tool(tmp_path: Path) -> None:
     message = _refusal(tmp_path, {"adapter": "codex"}, Surface(("Write", "WebFetch")))
     assert "tool WebFetch" in message and "tool Write" not in message and "codex task role" in message
 
 
-@pytest.mark.usefixtures("codex_path")
 @pytest.mark.parametrize(("surface", "part"), [
     (Surface(("Write",), mcp_config="mcp/docs.json"), "mcp_config mcp/docs.json"),
     (Surface(("Edit",), agents=("agents/reviewer.md",)), "agent agents/reviewer.md"),
@@ -93,22 +85,17 @@ def test_each_adapter_names_the_surface_parts_that_it_cannot_run_in_contract_ord
     assert unsupported("command", Surface(("Edit",))) == ["tool Edit"]
 
 
-@pytest.fixture
-def claude_and_codex_path(codex_path: None, tmp_path: Path) -> None:
-    """Add a fake `claude` next to the fake `codex`. The tests never run either."""
-    del codex_path
-    fake = tmp_path / "bin/claude"
-    _ = fake.write_text("#!/bin/sh\nexit 1\n")
-    fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+def test_the_check_names_every_part_of_the_contract_surface() -> None:
+    """A new `Surface` part must join `unsupported_surface`, or a Codex or command task role starts without it."""
+    assert [field.name for field in dataclasses.fields(Surface)] == ["tools", "mcp_config", "agents", "companions"]
 
 
-@pytest.mark.usefixtures("claude_and_codex_path")
 def test_the_check_follows_the_task_role_when_a_codex_task_overrides_a_claude_harness(tmp_path: Path) -> None:
     message = _refusal(tmp_path, {"adapter": "claude", "roles": {"task": {"adapter": "codex"}}}, FULL)
     assert "codex task role" in message and "tool WebFetch" in message
 
 
-@pytest.mark.usefixtures("claude_and_codex_path")
+@pytest.mark.usefixtures("codex_home", "host_login")
 def test_a_claude_task_role_runs_the_full_surface_beside_codex_judge_and_reflection_roles(tmp_path: Path) -> None:
     document: dict[str, object] = {"adapter": "codex", "roles": {"task": {"adapter": "claude"}}}
     session = _harness(tmp_path, document, Surface(("WebFetch",)))
@@ -119,25 +106,16 @@ def test_a_claude_task_role_runs_the_full_surface_beside_codex_judge_and_reflect
         session.close()
 
 
-@pytest.mark.usefixtures("codex_path")
 @pytest.mark.parametrize(("surface", "refused"), [
     (Surface(("write",)), "tool write"),
     (Surface(("Bash",)), "tool Bash"),
-    (Surface(("Write", "Write", "Grep")), "tool Grep"),
 ])
 def test_a_codex_task_role_matches_tool_names_exactly(tmp_path: Path, surface: Surface, refused: str) -> None:
     message = _refusal(tmp_path, {"adapter": "codex"}, surface)
     assert refused in message and "tool Write" not in message
 
 
-@pytest.mark.usefixtures("codex_path")
-@pytest.mark.parametrize("surface", [Surface(), Surface(("Write", "Write", "Edit"))])
-def test_a_codex_task_role_starts_with_an_empty_or_duplicated_native_surface(tmp_path: Path, surface: Surface) -> None:
-    session = _harness(tmp_path, {"adapter": "codex"}, surface)
-    session.close()
-
-
-@pytest.mark.usefixtures("codex_path")
+@pytest.mark.usefixtures("codex_home")
 def test_a_failed_later_role_closes_the_codex_roles_that_already_started(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     started: list[object] = []

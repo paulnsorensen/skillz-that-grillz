@@ -285,10 +285,10 @@ Codex runs each journey in one ephemeral App Server thread and one isolated work
 It sends each simulator reply as a new turn and applies the strict Codex permission profile throughout.
 The first turn must read `SKILL.md` and `EXPERIMENT_MARKER` successfully and show the marker output.
 The trace gate receives raw App Server notifications. Scoring receives normalized command and usage events.
-The command transport still raises `journey-unsupported`.
-A declared surface raises `contract-surface-unsupported` first.
+The command transport still raises `journey-unsupported` at prepare time, before the surface check.
 Codex runs a surface that declares only the `Write`, `Edit`, and `MultiEdit` tools, because its native file edit grants them.
-A Codex surface with another tool, an MCP config, an agent, or a companion raises `contract-surface-unsupported`.
+The runner refuses a Codex task role whose surface has another tool, an MCP config, an agent, or a companion.
+It raises `contract-surface-unsupported` when the session opens.
 
 ## Credential kind
 

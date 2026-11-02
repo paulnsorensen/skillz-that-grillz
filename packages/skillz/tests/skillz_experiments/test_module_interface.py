@@ -29,7 +29,7 @@ ADAPTER_NAMES = {"claude", "codex"}
 ADAPTER_NAME_ALLOWED: dict[str, str] = {}
 CAPABILITY_PROBES = {
     "check_name", "check_candidate", "rejection", "credential_kind", "claude_sandbox", "refuses_claude_options",
-    "host_checks", "reuse_key", "resume", "run_facts", "adopt_login"}
+    "host_checks", "reuse_key", "resume", "run_facts", "adopt_login", "surface_tools"}
 CREDENTIAL_NAMES = {"SUBSCRIPTION_LOGIN", "API_KEY", "UNVERIFIED_CREDENTIAL", "MISSING_CREDENTIAL"}
 
 
@@ -156,7 +156,7 @@ def test_no_adapter_branching_outside_the_harness_slice() -> None:
 @pytest.mark.parametrize("source", [
     'adapter in ("claude", "codex")', 'adapter in {"codex"}', 'adapter in ["claude"]', '"claude" == adapter',
     'match adapter:\n    case "claude":\n        pass', 'hasattr(p, "check_name")', 'isinstance(p, Transport)',
-    'type(p) is ClaudeCode', 'getattr(p, "refuses_claude_options")'])
+    'type(p) is ClaudeCode', 'getattr(p, "refuses_claude_options")', 'getattr(p, "surface_tools")'])
 def test_the_branching_guard_catches_each_evasion(source: str) -> None:
     tree = ast.parse(source)
     assert any(_describe(node) for node in ast.walk(tree)) or list(_adapter_name_branches(tree))

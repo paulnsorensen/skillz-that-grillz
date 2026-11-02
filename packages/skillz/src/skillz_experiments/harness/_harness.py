@@ -140,7 +140,7 @@ class Harness:
         task = configuration.roles["task"].adapter
         if surface is not None and (parts := unsupported_surface(task, surface)):
             raise CodedError("contract-surface-unsupported", f"the {task} task role cannot run the contract surface "
-                             + f"part(s) {', '.join(parts)}, and only the claude harness can run them; run with --harness claude")
+                             + f"part(s) {', '.join(parts)}; the claude harness runs every part, so run with --harness claude")
         self.configuration = configuration
         self.identity = configuration.identity()
         self.transports: dict[str, Transport] = {}
