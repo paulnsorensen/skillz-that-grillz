@@ -25,8 +25,6 @@ SKIP_VARIABLE = "GATE_SKIP"
 SHARD_VARIABLE = "GATE_SHARD"
 # CI runs these lanes in their own job (`just test-skillz`) and skips them in the gate job.
 SKILLZ_LANES = ("skillz-e2e-pytest", "skillz-pytest")
-# The requirement that `test_generated_target.py` locks offline.
-OFFLINE_LOCK_DEPENDENCY = "cyclopts==5.2.0"
 # `0` keeps fsync in the pytest lanes; otherwise they run under `eatmydata` when it is on PATH.
 EATMYDATA_VARIABLE = "GATE_EATMYDATA"
 # The count of gates on one host that run their lanes at the same time; `0` removes the limit.
@@ -334,24 +332,14 @@ def _without(jobs: list[Job], skip: frozenset[str]) -> list[Job]:
 
 
 def _prepare() -> bool:
-    """Sync the workspace, build the skill archives, then warm the uv index cache for the offline e2e locks.
+    """Sync the workspace, then build the skill archives.
 
     Main tracks no archive (ADR-012), and the skillz tests run the built archives, so the build runs before any reader.
-    `uv sync` stores wheels but not registry index metadata. The e2e tests run `uv lock --offline`
-    on a scratch project that pins `OFFLINE_LOCK_DEPENDENCY`. Without this metadata, that lock fails on a cold cache.
-    One online lock of the same requirement stores it. Keep the pin equal to the pin in the e2e `_world` helpers.
     """
     if not run_step("workspace-env", ["uv", "sync", "--locked", "--all-packages", "--all-groups", "--all-extras"]):
         return False
-    if not run_step("wedge-bundle", ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge",
-                                     "wedge", "bundle", "skills/skillz"]):
-        return False
-    with tempfile.TemporaryDirectory() as scratch:
-        project = Path(scratch)
-        _ = (project / "pyproject.toml").write_text(
-            f'[project]\nname = "warm-index"\nversion = "0"\ndependencies = ["{OFFLINE_LOCK_DEPENDENCY}"]\n'
-        )
-        return run_step("index-cache", ["uv", "lock", "--project", str(project)])
+    return run_step("wedge-bundle", ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge",
+                                     "wedge", "bundle", "skills/skillz"])
 
 
 def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: frozenset[str], slots: int) -> int:

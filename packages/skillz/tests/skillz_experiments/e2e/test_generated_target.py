@@ -4,22 +4,60 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from support import (HARNESS_RUNS, Scenario, archive_witnesses, assert_promoted, assert_replayed, build_wedge, call_cli,
-                     make_scenario, run_scenario, snapshot, uv_bin_dir)
+from support import (HARNESS_RUNS, ROOT, Scenario, archive_witnesses, assert_promoted, assert_replayed, build_wedge,
+                     call_cli, make_scenario, run_scenario, snapshot, uv_bin_dir)
 from fixtures.targets import NEW_MODULE
+
+
+def _lock_cyclopts(project: Path) -> None:
+    """Pin `project` to the cyclopts version of the workspace lock, and copy its lock entries from that lock.
+
+    `uv sync` stores wheels but no index data, so `uv lock --offline` cannot resolve cyclopts on a cold cache.
+    The workspace lock holds cyclopts and its dependencies, so uv checks this lock without the index.
+    `uv lock --offline --locked` also fails when this lock differs from the lock that uv writes for `project`.
+    """
+    text = (ROOT / "uv.lock").read_text()
+    head, *blocks = text.split("\n[[package]]\n")
+    lock = cast(dict[str, object], tomllib.loads(text))
+    tables = cast(list[dict[str, object]], lock["package"])
+    locked = {cast(str, table["name"]): (table, block.rstrip("\n"))
+              for table, block in zip(tables, blocks, strict=True)}
+    version = cast(str, locked["cyclopts"][0]["version"])
+    _ = (project / "pyproject.toml").write_text(
+        f'[project]\nname = "offline-proj"\nversion = "0"\nrequires-python = {json.dumps(lock["requires-python"])}\n'
+        + f'dependencies = ["cyclopts=={version}"]\n'
+    )
+    closure: set[str] = set()
+    pending = ["cyclopts"]
+    while pending:
+        name = pending.pop()
+        if name not in closure:
+            closure.add(name)
+            dependencies = cast(list[dict[str, object]], locked[name][0].get("dependencies", []))
+            pending += [cast(str, dependency["name"]) for dependency in dependencies]
+    root = ('name = "offline-proj"\nversion = "0"\nsource = { virtual = "." }\n'
+            + 'dependencies = [\n    { name = "cyclopts" },\n]\n\n[package.metadata]\n'
+            + f'requires-dist = [{{ name = "cyclopts", specifier = "=={version}" }}]')
+    packages = sorted([("offline-proj", root), *((name, locked[name][1]) for name in closure)])
+    # Keep the top-level keys of the workspace lock; drop its `[manifest]` table of workspace members.
+    header = head.split("\n[", 1)[0].rstrip("\n")
+    _ = (project / "uv.lock").write_text(header + "".join(f"\n\n[[package]]\n{block}" for _, block in packages) + "\n")
+    checked = subprocess.run(["uv", "lock", "--offline", "--locked", "--project", str(project)],
+                             capture_output=True, text=True, check=False)
+    assert checked.returncode == 0, checked.stderr
 
 
 def _world(base: Path) -> tuple[Scenario, str]:
     _ = subprocess.run(["git", "init", "-q", str(base)], check=True)
     scenario = make_scenario(base)
     skill = scenario.target
-    _ = (skill / "pyproject.toml").write_text('[project]\nname = "offline-proj"\nversion = "0"\ndependencies = ["cyclopts==5.2.0"]\n')
-    _ = subprocess.run(["uv", "lock", "--offline", "--project", str(skill)], check=True,
-                       capture_output=True, text=True)
+    _lock_cyclopts(skill)
     source = skill / "src/alpha/__init__.py"
     source.parent.mkdir(parents=True)
     _ = source.write_text('def main() -> None:\n    print("alpha")\n')
