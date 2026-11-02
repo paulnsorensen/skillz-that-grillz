@@ -566,10 +566,10 @@ STEPS: list[tuple[str, Path, str | None, str]] = [
 ]
 
 
-@pytest.mark.parametrize(("mode", "path", "heading", "phrase"), STEPS, ids=[f"{m}:{p[:48]}" for m, _, _, p in STEPS])
-def test_mode_steps_keep_the_invariant_that_the_fixture_depends_on(mode: str, path: Path, heading: str | None,
-                                                                 phrase: str) -> None:
-    assert phrase in _part(path, heading), f"{mode} step changed: {phrase}"
+def test_mode_steps_keep_the_invariant_that_the_fixture_depends_on() -> None:
+    missing = [f"{mode}: {phrase}" for mode, path, heading, phrase in STEPS if phrase not in _part(path, heading)]
+    assert len(STEPS) > 1
+    assert missing == [], "mode steps changed:\n" + "\n".join(missing)
 
 
 MUTATIONS = [

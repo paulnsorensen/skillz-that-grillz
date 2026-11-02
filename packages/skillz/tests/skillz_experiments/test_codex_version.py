@@ -40,11 +40,12 @@ def adapter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, banner: str,
     return Codex("m", Budget(10, 120, 0), lambda: None)
 
 
+# `test_press_harness_sandbox.py` holds the malformed-banner table; these rows add numeric order and line-end trimming.
 @pytest.mark.parametrize("banner, ok", [
-    ("codex-cli 0.154.0", True), ("codex-cli 0.160.2", True), ("codex-cli 1.0.0", True),
-    ("codex-cli 0.155.0-alpha.1", True), ("codex-cli 0.154.0\n", True),
-    ("codex-cli 0.153.9", False), ("codex-cli 0.154.0-alpha.1", False), ("codex-cli 0.9.0", False),
-    ("codex 0.200.0", False), ("", False), ("codex-cli latest", False), ("codex-cli 0.154", False),
+    ("codex-cli 0.154.0", True), ("codex-cli 0.160.2", True), ("codex-cli 1.0.0", True), ("codex-cli 0.154.1", True),
+    ("codex-cli 0.154.0\n", True), ("codex-cli 0.154.0\r\n", True), ("codex-cli 0.1000.0", True),
+    ("codex-cli 0.153.9", False), ("codex-cli 0.99.0", False), ("codex-cli 0.9.0", False), ("codex 0.200.0", False),
+    ("codex-cli latest", False),
 ])
 def test_minimum_version_parsing(banner: str, ok: bool) -> None:
     assert supported(banner) is ok
@@ -148,11 +149,9 @@ def test_another_version_changes_the_environment_hash_and_the_harness_reports_it
     assert session.run_facts["codex_version"] == "codex-cli 0.161.0"
 
 
+# `test_codex_auth.py` covers the plain token, key, and absent logins; these rows cover the `auth_mode` and empty-token branches.
 @pytest.mark.parametrize("login, kind", [
-    ({"tokens": {"id_token": "t", "access_token": "a"}, "OPENAI_API_KEY": None}, SUBSCRIPTION_LOGIN),
-    ({"OPENAI_API_KEY": "sk-secret"}, API_KEY),
     ({"OPENAI_API_KEY": None, "tokens": {}}, MISSING_CREDENTIAL),
-    ({}, MISSING_CREDENTIAL),
     ({"auth_mode": "apikey", "OPENAI_API_KEY": "sk-secret", "tokens": {"id_token": "t"}}, API_KEY),
     ({"auth_mode": "chatgpt", "OPENAI_API_KEY": "sk-secret", "tokens": {"id_token": "t"}}, SUBSCRIPTION_LOGIN),
     ({"auth_mode": "apikey", "OPENAI_API_KEY": None, "tokens": {"id_token": "t"}}, MISSING_CREDENTIAL),

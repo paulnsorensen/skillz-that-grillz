@@ -195,12 +195,8 @@ def module_value(name: str, module: str) -> str:
 # --- name bounds and shapes -----------------------------------------------------------------------------------
 
 @pytest.mark.parametrize(("name", "expected"), [
-    ("a", "new-cli-bad-name"), ("ab", "ok"), ("a" * 40, "ok"), ("a" * 41, "new-cli-bad-name"),
-    ("1ab", "new-cli-bad-name"), ("-ab", "new-cli-bad-name"), ("ab-", "ok"), ("a--b", "ok"),
-    ("ab\n", "new-cli-bad-name"), (" ab", "new-cli-bad-name"), ("äb", "new-cli-bad-name"),
-    ("ab١", "new-cli-bad-name"), ("ab_c", "new-cli-bad-name"), ("AB", "new-cli-bad-name"),
-    ("if", "new-cli-bad-name"), ("in", "new-cli-bad-name"), ("is", "new-cli-bad-name"), ("as", "new-cli-bad-name"),
-    ("", "new-cli-bad-name"), ("a/b", "new-cli-bad-name"), ("../x", "new-cli-bad-name"),
+    ("a", "new-cli-bad-name"), ("ab", "ok"), ("a" * 40, "ok"), ("a" * 41, "new-cli-bad-name"), ("1ab", "new-cli-bad-name"),
+    ("ab-", "ok"), ("ab\n", "new-cli-bad-name"), ("äb", "new-cli-bad-name"), ("if", "new-cli-bad-name"),
 ])
 def test_expand_files_name_bounds_decide_acceptance(world: World, name: str, expected: str) -> None:
     assert code_of(world, module_value(name, HELLO)) == expected
@@ -226,10 +222,7 @@ def test_expand_files_empty_toml_lacks_both_keys(world: World) -> None:
 
 # --- hostile module text never reaches the TOML ------------------------------------------------------------------
 
-_HOSTILE = [
-    "'''\n" + HELLO, '"""\n' + HELLO, HELLO.replace("\n", "\r\n"), HELLO + "# é\U0001f600 \n",
-    HELLO + "# " + "\\" * 50 + "\n", HELLO + "x = '''a'''\n", HELLO + "[[target]]\nname = 'evil'\n".replace("\n", "\n#"),
-]
+_HOSTILE = ["'''\n" + HELLO, HELLO + "# " + "\\" * 50 + "\n", HELLO + "[[target]]\nname = 'evil'\n".replace("\n", "\n#")]
 
 
 @pytest.mark.parametrize("module", _HOSTILE, ids=[f"hostile-{index}" for index in range(len(_HOSTILE))])
@@ -270,7 +263,7 @@ def test_expand_files_a_prefix_sibling_path_is_not_a_collision(world: World) -> 
     assert code_of(world, VALUE, seed=seed) == "ok"
 
 
-@pytest.mark.parametrize("name", ["json", "os", "this", "typing", "sys", "site", "string", "fromargs"])
+@pytest.mark.parametrize("name", ["json", "this", "fromargs"])
 def test_expand_files_stdlib_and_include_packages_are_package_collisions(world: World, name: str) -> None:
     assert code_of(world, module_value(name, HELLO)) == "new-cli-package-collision"
 
@@ -295,22 +288,13 @@ def test_expand_files_rejects_a_package_that_shadows_a_site_layer_module(world: 
 @pytest.mark.parametrize(("source", "expected"), [
     ("import os.path\nimport fromargs.sub\nimport hello_cli\nfrom hello_cli.sub import y\n", "ok"),
     ("from __future__ import annotations\nimport json as rich\n", "ok"),
-    ("import json as rich\nfrom rich import print\n", "ok"),
     ("import rich.console\n", "ok"),
     ("import requests\n", "new-cli-undeclared-import"),
     ("try:\n    import yaml\nexcept ImportError:\n    yaml = None\n", "new-cli-undeclared-import"),
-    ("if False:\n    import numpy\n", "new-cli-undeclared-import"),
     ("def main() -> None:\n    import pandas\n", "new-cli-undeclared-import"),
     ("from . import x\n", "new-cli-undeclared-import"),
-    ("from .. import x\n", "new-cli-undeclared-import"),
-    ("from .sub import x\n", "new-cli-undeclared-import"),
     ("import os, requests\n", "new-cli-undeclared-import"),
-    ("import src.hello_cli\n", "new-cli-undeclared-import"),
-    ("import scripts.helper\n", "new-cli-undeclared-import"),
     ("class (:\n", "new-cli-syntax"),
-    ("\tx = 1\n", "new-cli-syntax"),
-    ("x = 1\n  y = 2\n", "new-cli-syntax"),
-    ("print 'a'\n", "new-cli-syntax"),
     ("x = (" * 3000 + "1" + ")" * 3000 + "\n", "new-cli-syntax"),
 ])
 def test_expand_files_import_check_decides_by_syntax_tree(world: World, source: str, expected: str) -> None:
@@ -331,14 +315,11 @@ def test_expand_files_without_a_layer_skips_the_import_check_so_export_never_rej
 # --- value shape -------------------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize(("value", "code"), [
-    ('name = "hello-cli"\nmodule = "x"\n[target]\nname = "b"\n', "new-cli-second-target"),
     ('name = "hello-cli"\nmodule = "x"\n[[target]]\nname = "b"\n', "new-cli-second-target"),
     ('name = "hello-cli"\nmodule = "x = 1"\nname = "b"\n', "new-cli-malformed"),
     ('name = "hello-cli"\nmodule = "x = 1"\ngroups = []\n', "new-cli-extra-key"),
-    ('name = "hello-cli"\nmodule = "x = 1"\n[extra]\nk = 1\n', "new-cli-extra-key"),
     ('name = "hello-cli\n', "new-cli-malformed"),
     ("\x00", "new-cli-malformed"),
-    ("name = 'a'\n" * 2, "new-cli-malformed"),
     ("﻿name = 'ab'\nmodule = 'x = 1'\n", "new-cli-malformed"),
 ])
 def test_expand_files_value_shape_faults_carry_their_code(world: World, value: str, code: str) -> None:

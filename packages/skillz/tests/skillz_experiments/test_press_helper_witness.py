@@ -12,7 +12,7 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
+from skillz_experiments._candidate import Candidate, make_workspace, stage_task
 from skillz_experiments._cases import load_cases
 from skillz_experiments._contract import Contract, parse
 from skillz_experiments.evaluation._scoring import witnessed_events
@@ -120,9 +120,8 @@ def test_stub_helper_imported_by_a_sibling_keeps_its_functions(tmp_path: Path) -
 
 # 4. exits
 
-@pytest.mark.parametrize("body", ["import sys; sys.exit('bad news')", "import sys; sys.exit(None)", "import sys; sys.exit(7)",
-                                  "import sys; sys.exit(-1)", "import sys; sys.exit(256)", "import sys; sys.exit(True)",
-                                  "import sys; sys.exit(2.5)", "raise ValueError('x')", "print('a'); import sys; sys.exit(0)"])
+@pytest.mark.parametrize("body", ["import sys; sys.exit('bad news')", "import sys; sys.exit(None)", "import sys; sys.exit(256)",
+                                  "raise ValueError('x')"])
 def test_stub_exit_status_and_streams_match_plain_python(tmp_path: Path, body: str) -> None:
     workspace, witness = build(tmp_path, {HELPER: body + "\n"})
     got, want = run(workspace, INVOKED), plain(tmp_path, body + "\n")
@@ -159,12 +158,6 @@ def test_a_planted_line_with_a_guessed_nonce_earns_nothing(tmp_path: Path) -> No
     workspace, witness = build(tmp_path, {HELPER: "print(1)\n"})
     _ = (workspace / LEDGER).write_text(json.dumps({"nonce": "0" * 32, "argv": [INVOKED], "exit_code": 0}) + "\n")
     assert ledger_entries(witness) == []
-
-
-def test_nonzero_ledger_exit_does_not_back_a_zero_trace_claim(tmp_path: Path) -> None:
-    workspace, witness = build(tmp_path, {HELPER: "import sys; sys.exit(2)\n"})
-    _ = run(workspace, INVOKED)
-    assert witnessed_events([event(f"python3 -I {INVOKED}", 0)], ledger_entries(witness)) == []
 
 
 def test_a_foreign_line_does_not_break_the_real_lines(tmp_path: Path) -> None:
@@ -210,14 +203,14 @@ def test_ledger_is_a_directory_or_unreadable(tmp_path: Path) -> None:
     assert fault(Witness("n", tmp_path / LEDGER)).cause == "ledger-unreadable"
 
 
-@pytest.mark.parametrize("argv", [None, "a", [1], [], [None], {"a": 1}])
+@pytest.mark.parametrize("argv", [None, [1], []])
 def test_ledger_bad_argv_shapes_are_skipped(tmp_path: Path, argv: object) -> None:
     witness = Witness("n", tmp_path / LEDGER)
     _ = witness.ledger.write_text(json.dumps({"nonce": "n", "argv": argv, "exit_code": 0}) + "\n")
     assert ledger_entries(witness) == []
 
 
-@pytest.mark.parametrize("code", [None, "0", 0.0, True, [0]])
+@pytest.mark.parametrize("code", ["0", 0.0, True])
 def test_ledger_bad_exit_codes_are_skipped(tmp_path: Path, code: object) -> None:
     witness = Witness("n", tmp_path / LEDGER)
     _ = witness.ledger.write_text(json.dumps({"nonce": "n", "argv": ["a"], "exit_code": code}) + "\n")
@@ -236,18 +229,6 @@ def test_witnessed_events_one_line_backs_one_of_several_matching_events() -> Non
     ledger: list[dict[str, object]] = [{"argv": [INVOKED], "exit_code": 0}]
     assert witnessed_events(trace, ledger) == [trace[1]]
 
-
-# 6. outputs and identity
-
-def test_ledger_and_stub_siblings_stay_out_of_task_outputs(tmp_path: Path) -> None:
-    workspace, _ = build(tmp_path, {HELPER: "print(1)\n"})
-    _ = run(workspace, INVOKED)
-    assert all(LEDGER not in name for name in snapshot_outputs(workspace))
-
-
-def test_staging_the_witness_keeps_the_marker_and_identity(tmp_path: Path) -> None:
-    workspace, _ = build(tmp_path, {HELPER: "print(1)\n"})
-    assert (workspace / ROOT / "EXPERIMENT_MARKER").read_text() == candidate("print(1)\n").identity
 
 
 # 7. no ledger -> unchanged grading

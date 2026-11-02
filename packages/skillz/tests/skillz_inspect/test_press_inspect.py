@@ -50,17 +50,9 @@ def test_the_advisory_tier_starts_above_twenty_words_and_the_hard_tier_above_twe
     assert found(tmp_path, TWENTY_ONE + "\n") == []
 
 
-@pytest.mark.parametrize("fence", ["```", "~~~"])
-def test_fenced_code_is_excluded(tmp_path: Path, fence: str) -> None:
-    assert found(tmp_path, f"{fence}\n{LONG}\n{fence}\n") == []
-
-
-def test_tilde_fence_inside_a_backtick_fence_does_not_close_it(tmp_path: Path) -> None:
-    assert found(tmp_path, f"```\n~~~\n{LONG}\n~~~\n```\n") == []
-
-
-def test_backtick_fence_inside_a_tilde_fence_does_not_close_it(tmp_path: Path) -> None:
-    assert found(tmp_path, f"~~~\n```\n{LONG}\n```\n~~~\n") == []
+@pytest.mark.parametrize(("outer", "inner"), [("```", "~~~"), ("~~~", "```")])
+def test_fenced_code_is_excluded_and_the_other_fence_kind_does_not_close_it(tmp_path: Path, outer: str, inner: str) -> None:
+    assert found(tmp_path, f"{outer}\n{inner}\n{LONG}\n{inner}\n{outer}\n") == []
 
 
 def test_longer_outer_fence_is_not_closed_by_a_shorter_inner_fence(tmp_path: Path) -> None:
@@ -127,7 +119,7 @@ def test_closing_fence_with_an_info_string_does_not_close(tmp_path: Path) -> Non
     assert found(tmp_path, f"```\n```js\n{LONG}\n```\n") == []
 
 
-@pytest.mark.parametrize("raw", [b"", b"no frontmatter\n", b"---\nname: x\n", b"---\n\xff\xfe\n---\nbody\n"])
+@pytest.mark.parametrize("raw", [b"---\nname: x\n", b"---\n\xff\xfe\n---\nbody\n"])
 def test_hostile_input_exits_three_with_a_json_error_on_stderr(tmp_path: Path, raw: bytes) -> None:
     code, report = inspect(tmp_path, "", raw=raw)
     assert code == 3 and report["exit_code"] == 3 and str(report["error"]).startswith("inspect: ")

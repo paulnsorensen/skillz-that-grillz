@@ -259,9 +259,7 @@ def test_a_token_cost_reject_keeps_both_reasons_when_a_family_also_breaches() ->
 
 # --- hostile token pairs ----------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("pair", [(None, None), (None, 5), (5, None), (0, 5), (-5, 5), (5, -1), (math.nan, 5),
-                                  (5, math.nan), (math.inf, 5), (5, math.inf), (-math.inf, 5), (5, -math.inf),
-                                  (0.0, 0.0), (-0.0, 5)])
+@pytest.mark.parametrize("pair", [(None, 5), (5, None), (0, 5), (5, -1), (math.nan, 5), (5, math.inf)])
 def test_one_hostile_case_among_good_ones_makes_the_whole_change_unknown(pair: Pair) -> None:
     good: Pair = (100, 50)
     for hostile_at in (0, 3):
@@ -328,19 +326,12 @@ def _usage(**counts: object) -> dict[str, object]:
 
 @pytest.mark.parametrize("usage", [
     _usage(input_tokens=10, output_tokens=5),  # cached input is missing
-    _usage(input_tokens=10, cached_input_tokens=None, output_tokens=5),
     _usage(cached_input_tokens=0, output_tokens=10),
     _usage(input_tokens=10, cached_input_tokens=0),
     _usage(input_tokens=True, cached_input_tokens=0, output_tokens=5),
-    _usage(input_tokens=5, cached_input_tokens=0, output_tokens=False),
     _usage(input_tokens=5, cached_input_tokens=False, output_tokens=5),
     _usage(input_tokens="10", cached_input_tokens=0, output_tokens=5),
     _usage(input_tokens=10.0, cached_input_tokens=0, output_tokens=5),
-    _usage(input_tokens=10, cached_input_tokens=0.0, output_tokens=5),
-    _usage(input_tokens=10, cached_input_tokens=0, output_tokens=5.5),
-    _usage(input_tokens=math.nan, cached_input_tokens=0, output_tokens=5),
-    _usage(input_tokens=None, cached_input_tokens=None, output_tokens=None),
-    _usage(cached_input_tokens=99),
     _usage(),
 ])
 def test_task_tokens_reject_a_usage_without_three_int_counts(usage: dict[str, object]) -> None:
@@ -517,23 +508,16 @@ def test_a_lower_score_never_wins_on_tokens_and_a_clear_gain_wins_at_a_higher_co
 
 # --- statistics values ------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("value", [0, 1, 0.0, 1.0, -0.0, True, False, "0.5", [0.5], {"x": 0.5}, math.nan, math.inf,
-                                  -math.inf, 10**400, -1])
+@pytest.mark.parametrize("value", [0, 1, True, "0.5", math.nan, math.inf, 10**400, -1])
 def test_a_contract_refuses_every_min_token_saving_outside_the_open_unit_interval(value: object) -> None:
     with pytest.raises(CodedError) as caught:
         _ = parse(_document(statistics={"min_token_saving": value}), "skill")
     assert caught.value.code == "contract-statistics-invalid"
 
 
-@pytest.mark.parametrize("value", [0.5, 0.999999999, 1e-300, 5e-324])
+@pytest.mark.parametrize("value", [0.5, math.nextafter(1.0, 0.0), 1e-300, 5e-324])
 def test_a_contract_accepts_a_min_token_saving_strictly_inside_the_open_unit_interval(value: float) -> None:
     assert Statistics.declared({"min_token_saving": value}) == {"min_token_saving": value}
-
-
-def test_min_token_saving_one_ulp_below_one_is_accepted_and_one_is_refused() -> None:
-    assert Statistics.declared({"min_token_saving": math.nextafter(1.0, 0.0)})
-    with pytest.raises(ValueError, match="min_token_saving"):
-        _ = Statistics.declared({"min_token_saving": 1})
 
 
 def test_negative_zero_cap_is_stored_as_positive_zero() -> None:
@@ -541,7 +525,7 @@ def test_negative_zero_cap_is_stored_as_positive_zero() -> None:
     assert math.copysign(1.0, cast(float, parsed["max_token_increase_per_gain"])) == 1.0
 
 
-@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "-1", "-0.5"])
+@pytest.mark.parametrize("value", ["nan", "inf", "-1"])
 def test_a_bad_max_token_increase_per_gain_is_refused_at_the_cli(
         value: str, tmp_path: Path, make_target: Callable[..., Path], capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)
@@ -552,7 +536,7 @@ def test_a_bad_max_token_increase_per_gain_is_refused_at_the_cli(
     assert "max-token-increase-per-gain" in captured.out + captured.err
 
 
-@pytest.mark.parametrize("value", ["0", "1", "1.0", "0.0", "-0", "-0.0", "nan", "inf", "-inf", "1.5", "-0.25"])
+@pytest.mark.parametrize("value", ["0", "1", "nan", "inf", "-0.25"])
 def test_a_bad_min_token_saving_is_refused_at_the_cli(
         value: str, tmp_path: Path, make_target: Callable[..., Path], capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)

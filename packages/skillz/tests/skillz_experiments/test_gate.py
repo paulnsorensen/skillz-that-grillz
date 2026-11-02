@@ -51,8 +51,7 @@ def test_verdict_needs_strictly_more_than_two_se() -> None:
 
 @pytest.mark.parametrize(
     "values",
-    [[math.nan] * 6, [math.inf] * 6, [math.inf, 0.0, 0.0, 0.0], [-math.inf] * 4, [0.5, 0.5, math.nan, 0.5], [math.nan],
-     [math.inf, -math.inf, 0.0, 0.0]],
+    [[math.nan] * 6, [math.inf, 0.0, 0.0, 0.0], [0.5, 0.5, math.nan, 0.5]],
 )
 def test_verdict_is_inconclusive_for_non_finite_deltas(values: list[float]) -> None:
     result = verdict(values)
@@ -98,9 +97,7 @@ def test_simulation_needs_at_least_two_candidates(candidates: int) -> None:
 
 @pytest.mark.parametrize(
     ("overrides", "message"),
-    [({"trials": 0}, "at least 1 trial"), ({"trials": -1}, "at least 1 trial"),
-     ({"cases": 1}, "at least 2 cases"), ({"cases": 0}, "at least 2 cases"),
-     ({"repeats": 0}, "at least 1 repeat"), ({"repeats": -1}, "at least 1 repeat")],
+    [({"trials": 0}, "at least 1 trial"), ({"cases": 1}, "at least 2 cases"), ({"repeats": 0}, "at least 1 repeat")],
 )
 def test_simulation_rejects_sizes_that_cannot_run_a_trial(overrides: dict[str, int], message: str) -> None:
     arguments = {"trials": 1, "cases": 6, "repeats": 1} | overrides

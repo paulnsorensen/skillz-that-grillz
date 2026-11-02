@@ -75,26 +75,33 @@ def test_ac1_the_judge_is_asked_for_one_level_per_criterion_id(grader: Grader) -
     assert score == pytest.approx((1 + 2 / 3 + 1) / 3)
 
 
+INVALID_REPLIES = {
+    "omitted-id": levels(answer=4, short=3),
+    "added-id": levels(answer=4, short=3, safe=4, extra=4),
+    "level-0": levels(answer=4, short=3, safe=0),
+    "level-5": levels(answer=4, short=3, safe=5),
+    "level-text": {"criteria": {"answer": {"level": "4", "reason": "r"}, "short": {"level": 3, "reason": "r"},
+                                "safe": {"level": 4, "reason": "r"}}},
+    "level-bool": {"criteria": {"answer": {"level": True, "reason": "r"}, "short": {"level": 3, "reason": "r"},
+                                "safe": {"level": 4, "reason": "r"}}},
+    "no-reason": {"criteria": {"answer": {"level": 4}, "short": {"level": 3, "reason": "r"}, "safe": {"level": 4, "reason": "r"}}},
+    "old-shape": {"score_percent": 80},
+    "extra-key": levels(answer=4, short=3, safe=4) | {"score_percent": 80},
+    "extra-key-in-entry": {"criteria": {"answer": {"level": 4, "reason": "r", "extra": 1}, "short": {"level": 3, "reason": "r"},
+                                        "safe": {"level": 4, "reason": "r"}}},
+    "criteria-not-a-dict": {"criteria": [{"level": 4, "reason": "r"}]},
+    "reason-not-text": {"criteria": {"answer": {"level": 4, "reason": 5}, "short": {"level": 3, "reason": "r"},
+                                     "safe": {"level": 4, "reason": "r"}}},
+}
+# Every reply runs through the first grader; each other grader shares the parser, so one reply checks its wiring.
+INVALID_CASES = [(GRADERS[0], name) for name in INVALID_REPLIES] + [(grader, "omitted-id") for grader in GRADERS[1:]]
+
+
 @pytest.mark.ac("judge-criteria-verdicts:AC-1")
-@pytest.mark.parametrize("grader", GRADERS, ids=[grader.type for grader in GRADERS])
-@pytest.mark.parametrize("reply", [
-    levels(answer=4, short=3),
-    levels(answer=4, short=3, safe=4, extra=4),
-    levels(answer=4, short=3, safe=0),
-    levels(answer=4, short=3, safe=5),
-    {"criteria": {"answer": {"level": "4", "reason": "r"}, "short": {"level": 3, "reason": "r"}, "safe": {"level": 4, "reason": "r"}}},
-    {"criteria": {"answer": {"level": True, "reason": "r"}, "short": {"level": 3, "reason": "r"}, "safe": {"level": 4, "reason": "r"}}},
-    {"criteria": {"answer": {"level": 4}, "short": {"level": 3, "reason": "r"}, "safe": {"level": 4, "reason": "r"}}},
-    {"score_percent": 80},
-    levels(answer=4, short=3, safe=4) | {"score_percent": 80},
-    {"criteria": {"answer": {"level": 4, "reason": "r", "extra": 1}, "short": {"level": 3, "reason": "r"}, "safe": {"level": 4, "reason": "r"}}},
-    {"criteria": [{"level": 4, "reason": "r"}]},
-    {"criteria": {"answer": {"level": 4, "reason": 5}, "short": {"level": 3, "reason": "r"}, "safe": {"level": 4, "reason": "r"}}},
-], ids=["omitted-id", "added-id", "level-0", "level-5", "level-text", "level-bool", "no-reason", "old-shape", "extra-key",
-         "extra-key-in-entry", "criteria-not-a-dict", "reason-not-text"])
-def test_ac1_a_reply_that_omits_adds_or_misranges_a_level_is_an_invalid_judge_response(grader: Grader, reply: object) -> None:
+@pytest.mark.parametrize(("grader", "name"), INVALID_CASES, ids=[f"{grader.type}-{name}" for grader, name in INVALID_CASES])
+def test_ac1_a_reply_that_omits_adds_or_misranges_a_level_is_an_invalid_judge_response(grader: Grader, name: str) -> None:
     with pytest.raises(ValueError, match="^invalid judge response$"):
-        _ = grade(reply, grader)
+        _ = grade(INVALID_REPLIES[name], grader)
 
 
 @pytest.mark.ac("judge-criteria-verdicts:AC-2")
