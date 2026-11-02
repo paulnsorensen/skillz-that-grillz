@@ -21,9 +21,11 @@ class Transport(Protocol):
     adapter name before any instance exists, so the caller never compares the name.
     """
 
-    # The adapter runs the Claude Code sandbox: it can run a contract that declares an extra tool surface,
-    # and, as judge, it can show capture files to the judge.
+    # The adapter runs the Claude Code sandbox: as judge, it can show capture files to the judge.
     claude_sandbox: ClassVar[bool]
+    # The contract surface tools that the adapter runs, or None when it runs every surface part. An adapter with a set
+    # runs no MCP config, agent, or companion.
+    surface_tools: ClassVar[frozenset[str] | None]
     # A run-level `--effort`, `--sandbox-read`, or `--sandbox-seconds` flag is an error for this adapter.
     refuses_claude_options: ClassVar[bool]
 

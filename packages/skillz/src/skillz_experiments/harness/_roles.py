@@ -46,8 +46,18 @@ def check_selection(adapter: str, configured: bool) -> None:
 
 
 def has_claude_sandbox(adapter: str) -> bool:
-    """Return whether `adapter` runs the Claude Code sandbox, so it can run a surface and show captures to a judge."""
+    """Return whether `adapter` runs the Claude Code sandbox, so it can show captures to a judge."""
     return adapter_class(adapter).claude_sandbox
+
+
+def unsupported_surface(adapter: str, surface: Surface) -> list[str]:
+    """Return each part of `surface` that `adapter` cannot run, in contract order: `tool X`, `mcp_config X`, `agent X`, `companion X`."""
+    tools = adapter_class(adapter).surface_tools
+    if tools is None:
+        return []
+    return [*(f"tool {tool}" for tool in surface.tools if tool not in tools),
+            *([f"mcp_config {surface.mcp_config}"] if surface.mcp_config is not None else []),
+            *(f"agent {agent}" for agent in surface.agents), *(f"companion {root}" for root in surface.companions)]
 
 
 def refuses_claude_options(adapter: str) -> bool:
