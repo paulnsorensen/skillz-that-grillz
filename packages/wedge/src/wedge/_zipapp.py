@@ -36,9 +36,10 @@ def write_archive(site_dir: Path, entry: str, out_path: Path, trees: dict[str, P
                 members[prefix + "/" + relative.as_posix() + "/"] = None
             for name in files:
                 path = Path(directory) / name
+                member = prefix + "/" + path.relative_to(root).as_posix()
                 if path.suffix.lower() in {".so", ".pyd"}:
-                    raise ValueError(f"native extension modules are not supported in ZIP archives: {path.relative_to(site_dir)}")
-                members[prefix + "/" + path.relative_to(root).as_posix()] = path
+                    raise ValueError(f"native extension modules are not supported in ZIP archives: {member}")
+                members[member] = path
     with out_path.open("wb") as output:
         _ = output.write(_SHEBANG)
         with ZipFile(output, "w") as archive:

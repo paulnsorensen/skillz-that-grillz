@@ -14,7 +14,9 @@ from wedge._build import build
 from wedge._zipapp import write_archive
 
 
-@pytest.mark.parametrize("filename", ["native.so", "native.cpython-312-x86_64-linux-gnu.so", "native.pyd"])
+@pytest.mark.parametrize(
+    "filename", ["native.so", "native.cpython-312-x86_64-linux-gnu.so", "native.pyd", "native.PYD", "native.So"]
+)
 @pytest.mark.parametrize("existing", [False, True])
 def test_archive_rejects_native_modules_before_opening_output(tmp_path: Path, filename: str, existing: bool) -> None:
     site = tmp_path / "site" / "app"
@@ -31,6 +33,20 @@ def test_archive_rejects_native_modules_before_opening_output(tmp_path: Path, fi
         assert output.read_bytes() == b"keep this archive"
     else:
         assert not output.exists()
+
+
+def test_archive_names_native_modules_in_trees_outside_site(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    site.mkdir()
+    tree = tmp_path / "scratch" / "cpython-312" / "app"
+    tree.mkdir(parents=True)
+    _ = (tree / "native.so").write_bytes(b"native module")
+    output = tmp_path / "app.pyz"
+
+    with pytest.raises(ValueError, match="not supported in ZIP archives: cpython-312/app/native.so$"):
+        write_archive(site, "app:main", output, {"cpython-312": tree.parent})
+
+    assert not output.exists()
 
 
 @pytest.fixture(scope="module")
