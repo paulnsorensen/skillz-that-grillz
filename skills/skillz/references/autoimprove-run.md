@@ -3,7 +3,7 @@
 The `autoimprove` mode uses these steps after the experiments reference.
 
 The agent drafts the cases. The user needs no contract and no case manifest.
-Run `scripts/skillz-experiment.pyz run` and answer each coded stop. Run `export` only after the run reports phase `complete`.
+Run `scripts/skillz-experiment.pyz run`. Answer each coded stop. Run `export` only after the run reports phase `complete`.
 Ask at most three questions: harness and model, case approval, and budget approval.
 Report the `runner`, `export`, and `improvement` claims, each with its status and evidence. Apply a winner only when `claims.apply` is true.
 When the run stops with `cases-too-easy`, no search, holdout gate, or export runs. Do not call `export`.

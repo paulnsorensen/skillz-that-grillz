@@ -10,12 +10,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
-from skillz_experiments._cases import MET_LEVEL, mapping
-from skillz_experiments._records import read
+from skillz_experiments._cases import MET_LEVEL, digest, load_manifest, mapping
 from skillz_experiments._redact import redact
 from skillz_experiments.gate import close
-from skillz_experiments.run._outcomes import is_failed
-from skillz_experiments.run._record_fields import record_outcomes
+from skillz_experiments.run._outcomes import FIELD_LIMIT, TRUNCATED, is_failed
+from skillz_experiments.run._record_fields import criterion_levels, record_outcomes
 from skillz_experiments.run._stop import Stop
 
 # The phases that never ran when the headroom pass stops the run. Export needs the phase `complete`.
@@ -40,35 +39,55 @@ def too_easy_message(headroom: Mapping[str, object]) -> str:
             + "then call run again")
 
 
-def _unmet(item: Mapping[str, object]) -> dict[str, dict[str, object]]:
-    """Return the level and the redacted reason of each criterion that the judged outcome `item` does not meet."""
-    criteria = item.get("criteria")
-    verdicts = cast(dict[str, object], criteria) if isinstance(criteria, dict) else {}
-    unmet: dict[str, dict[str, object]] = {}
-    for name, verdict in verdicts.items():
-        given = mapping(cast(object, verdict)) if isinstance(verdict, dict) else {}
-        level, met = given.get("level"), given.get("met")
-        if met is False or (not isinstance(met, bool) and type(level) is int and level < MET_LEVEL):
-            unmet[name] = {"level": level, "reason": redact(str(given.get("reason", "")))}
-    return unmet
+def _cut(text: str) -> str:
+    """Redact `text`, then cut it to `FIELD_LIMIT` characters with the `[truncated]` marker, as the proposer feedback does."""
+    clean = redact(text)
+    return clean if len(clean) <= FIELD_LIMIT else clean[:FIELD_LIMIT - len(TRUNCATED)] + TRUNCATED
 
 
-def _frozen_cases(out: Path) -> tuple[dict[str, str], Counter[str], int] | None:
+def _unmet(item: dict[str, object]) -> dict[str, dict[str, object]]:
+    """Return the level and the cut reason of each criterion below `MET_LEVEL`, by the rule that export uses."""
+    levels = criterion_levels(item)
+    criteria = cast(dict[str, dict[str, object]], item.get("criteria"))
+    return {name: {"level": level, "reason": _cut(str(criteria[name].get("reason", "")))}
+            for name, level in levels.items() if level < MET_LEVEL}
+
+
+def _seed_outcomes(outcomes: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Return one seed outcome per (split, case, repeat): the newest scored one, else the newest failed one.
+
+    Before the search, each train and validation search outcome is a seed outcome. A resume of the headroom pass scores
+    a run again when its earlier outcome failed, so a later score replaces that stale failure.
+    """
+    chosen: dict[tuple[object, object, object], dict[str, object]] = {}
+    for item in outcomes:
+        if item.get("arm") != "search" or item.get("split") not in ("train", "validation"):
+            continue
+        key = (item.get("split"), item.get("case_id"), item.get("repeat"))
+        if key not in chosen or is_failed(chosen[key]) or not is_failed(item):
+            chosen[key] = item
+    return list(chosen.values())
+
+
+def _frozen_cases(record: dict[str, object], out: Path) -> tuple[dict[str, str | None], Counter[str], int] | None:
     """Return the family of each scored case, the scored case count per split, and the pending case count.
 
-    A `cases.json` that does not load returns None, so the report shows unknown coverage instead of a guess.
+    A `cases.json` that does not load, or that differs from the frozen `dataset_hash`, returns None. The report then
+    shows unknown coverage instead of a guess.
     """
     try:
-        document = read(out / "cases.json")
+        document = load_manifest(out / "cases.json")
+        if digest(document) != record.get("dataset_hash"):
+            return None
         cases = [mapping(item) for item in cast(list[object], document["cases"])]
         pending = len(cast(list[object], document.get("pending", [])))
-        return ({str(case["id"]): str(case.get("family")) for case in cases},
+        return ({str(case["id"]): None if case.get("family") is None else str(case["family"]) for case in cases},
                 Counter(str(case["split"]) for case in cases), pending)
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
 
-def _failing(seed: list[dict[str, object]], families: Mapping[str, str]) -> list[dict[str, object]]:
+def _failing(seed: list[dict[str, object]], families: Mapping[str, str | None]) -> list[dict[str, object]]:
     """Return each seed outcome that scores below 1 or fails, with its unmet criteria, in record order."""
     failing: list[dict[str, object]] = []
     for item in seed:
@@ -83,21 +102,27 @@ def _failing(seed: list[dict[str, object]], families: Mapping[str, str]) -> list
 def baseline_report(record: dict[str, object], out: Path) -> dict[str, object]:
     """Return the baseline of a run that the headroom pass stopped.
 
-    Before the search, every train and validation outcome is a seed outcome. `failing` lists each one that scores
-    below 1 or fails, so a failing family shows while another family saturates. `spent` holds the recorded counts.
-    `approved_calls` and `estimate` are the approved ceiling and the plan, not spending.
+    `failing` lists each seed outcome that scores below 1 or fails, so a failing family shows while another family
+    saturates. `scored.cases` counts the cases with a scored outcome. A record whose `outcomes` do not load gives
+    `failing` and `scored` as None. `spent` holds the recorded counts, preflight calls included. `approved_calls` and
+    `estimate` are the approved ceiling and the plan, not spending.
     """
-    seed = [item for item in record_outcomes(record) if item.get("split") in ("train", "validation")]
-    frozen = _frozen_cases(out)
+    try:
+        seed: list[dict[str, object]] | None = _seed_outcomes(record_outcomes(record))
+    except ValueError:
+        seed = None
+    frozen = _frozen_cases(record, out)
     estimate = mapping(record["estimate"]) if isinstance(record.get("estimate"), dict) else {}
     budget = mapping(record["budget"]) if isinstance(record.get("budget"), dict) else {}
     unscored: dict[str, object] = ({"holdout_cases": frozen[1]["holdout"], "pending_cases": frozen[2]}
                                    if frozen is not None else {"holdout_cases": None, "pending_cases": None})
+    scored = None if seed is None else {
+        "outcomes": len(seed), "failed": sum(is_failed(item) for item in seed),
+        "cases": len({str(item.get("case_id")) for item in seed if not is_failed(item)})}
     return NOT_RUN | {
-        "headroom": record.get("headroom"), "failing": _failing(seed, frozen[0] if frozen is not None else {}),
-        "scored": {"outcomes": len(seed), "failed": sum(is_failed(item) for item in seed),
-                   "cases": len({str(item.get("case_id")) for item in seed})},
-        "unscored": unscored,
+        "headroom": record.get("headroom"),
+        "failing": None if seed is None else _failing(seed, frozen[0] if frozen is not None else {}),
+        "scored": scored, "unscored": unscored,
         "spent": {key: record.get(key) for key in ("calls", "retries", "calls_by_role", "seconds_by_role")},
         "approved_calls": budget.get("maximum"), "estimate": {key: estimate.get(key) for key in ("calls", "seconds")}}
 
