@@ -36,8 +36,9 @@ def _quick(tmp_path: Path, budget: Budget) -> object:
 def test_a_wait_for_a_slot_does_not_use_up_the_per_call_timeout(tmp_path: Path) -> None:
     _ = _runtime.halve_call_slots()
     assert _runtime._CHILDREN.acquire(1)  # pyright: ignore[reportPrivateUsage]
-    threading.Timer(1.3, _runtime._CHILDREN.release).start()  # pyright: ignore[reportPrivateUsage]
-    budget = Budget(10, 1000, 0, call_seconds=0.25)
+    budget = Budget(10, 1000, 0, call_seconds=0.125)
+    # The slot frees after more than the whole per-call timeout of 0.5 s.
+    threading.Timer(budget.call_timeout() + 0.2, _runtime._CHILDREN.release).start()  # pyright: ignore[reportPrivateUsage]
     started = time.monotonic()
     _ = _quick(tmp_path, budget)
     assert time.monotonic() - started > budget.call_timeout()

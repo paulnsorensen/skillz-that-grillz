@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -368,7 +369,8 @@ def test_a_termination_signal_kills_the_named_container(tmp_path: Path) -> None:
 
 
 @SUBPROCESS_WRAPPER
-def test_the_runner_deadline_runs_the_wrapper_stopper_before_it_kills_the_group(tmp_path: Path) -> None:
+def test_the_runner_deadline_runs_the_wrapper_stopper_before_it_kills_the_group(
+        tmp_path: Path, clock_at_marker: Callable[[Path], list[float]]) -> None:
     from skillz_experiments._budget import BudgetExhausted
     from skillz_experiments._runtime import process
 
@@ -376,8 +378,10 @@ def test_the_runner_deadline_runs_the_wrapper_stopper_before_it_kills_the_group(
     _ = (directory / "docker.mode").write_text("hang")
     root = workspace(tmp_path)
     command = [sys.executable, "-c", MAIN, "harness-wrapper", "gemini", "--bin-dir", str(directory)]
+    # The limit starts when the fake docker logs its run, so the wrapper has its SIGTERM handler at the deadline.
+    _ = clock_at_marker(directory / "docker.log")
     with pytest.raises(BudgetExhausted):
-        _ = process(command, cwd=root.parent, timeout=6, environment={"PATH": "/usr/bin:/bin"},
+        _ = process(command, cwd=root.parent, timeout=0.5, environment={"PATH": "/usr/bin:/bin"},
                     input_text=request("sandbox", root, argv=["true"]))
     run, kill = docker_calls(directory)
     assert kill == ["kill", run[run.index("--name") + 1]]
@@ -682,24 +686,28 @@ ESCAPEE = ("import subprocess, sys, time\n"
 
 
 @pytest.mark.ac("gh-418:AC-1")
-def test_a_timeout_stops_the_container_and_bounds_the_drain_when_a_descendant_left_the_group(tmp_path: Path) -> None:
+def test_a_timeout_stops_the_container_and_bounds_the_drain_when_a_descendant_left_the_group(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clock_at_marker: Callable[[Path], list[float]]) -> None:
     pid_file = tmp_path / "escapee.pid"
     stopped: list[float] = []
 
     def stop() -> str:
         stopped.append(time.monotonic())
         return ""
-    started = time.monotonic()
+    # The escapee holds the pipes for 60 s, so only the drain bound ends the call early. A shorter bound keeps it quick.
+    monkeypatch.setattr(_gemini, "DRAIN_GRACE", 1)
+    # The limit starts when the escapee has left the group and written its pid.
+    ready = clock_at_marker(pid_file)
     try:
-        with pytest.raises(RuntimeError, match="timed out after 1 s"):
+        with pytest.raises(RuntimeError, match=r"timed out after 0\.5 s"):
             _ = _gemini._run([sys.executable, "-c", ESCAPEE, str(pid_file)], tmp_path, {"PATH": "/usr/bin:/bin"},  # pyright: ignore[reportPrivateUsage]
-                             timeout=1, stop=stop)
-        elapsed = time.monotonic() - started
+                             timeout=0.5, stop=stop)
+        elapsed = time.monotonic() - ready[0]
     finally:
         if pid_file.exists():
             with contextlib.suppress(ProcessLookupError):
                 os.kill(int(pid_file.read_text()), signal.SIGKILL)
-    assert elapsed < 10 and stopped and stopped[0] - started < 1 + _gemini.DRAIN_GRACE / 2
+    assert elapsed < 10 and stopped and stopped[0] - ready[0] < 0.5 + _gemini.DRAIN_GRACE / 2
 
 
 WRAPPER = ("import sys\n"
