@@ -162,9 +162,14 @@ def test_the_gate_requires_a_completed_codex_agent_message(tmp_path: Path) -> No
         ('{"type": "assistant"}', True),
         ('{"method": "item/completed", "params": {"item": {"type": "agentMessage"}}}', True),
         ("not json", False),
+        ("[1]", False),
+        ('{"method": "item/started", "params": {"item": {"type": "agentMessage"}}}', False),
+        ('{"method": "item/completed", "params": []}', False),
+        ('{"method": "item/completed", "params": {"item": []}}', False),
         ('{"method": "item/completed", "params": {"item": {"type": "commandExecution"}}}', False),
     ],
-    ids=["claude-assistant", "completed-codex-message", "invalid-json", "completed-command"],
+    ids=["claude-assistant", "completed-codex-message", "invalid-json", "non-object", "incomplete-item",
+         "wrong-params-shape", "wrong-item-shape", "completed-command"],
 )
 def test_agent_turn_accepts_only_assistant_or_completed_agent_message(line: str, accepted: bool) -> None:
     assert agent_turn(line) is accepted

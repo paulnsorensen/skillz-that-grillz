@@ -366,8 +366,10 @@ def test_preflight_budget_exhaustion_stops_before_the_live_call(tmp_path: Path, 
     ([INIT_OK, DONE], 1, "fails"),
     ([INIT_OK], 0, "execution failed"),
     ([INIT_OK, "not json"], 0, "invalid Claude Code JSON"),
+    ([INIT_OK, [1, 2]], 0, "invalid Claude Code JSON"),
     ([DONE], 0, "isolation fails"),
     ([{"type": "system", "subtype": "init", "skills": ["skillz", "intruder"]}, DONE], 0, "isolation fails"),
+    ([{"type": "system", "subtype": "init", "skills": ["skillz", {"name": "intruder"}]}, DONE], 0, "isolation fails"),
     ([{"type": "system", "subtype": "init", "skills": ["skillz", "skillz-evil"]}, DONE], 0, "isolation fails"),
 ])
 def test_invoke_fails_closed_on_a_hostile_event_stream_and_counts_the_call(
@@ -477,14 +479,19 @@ def test_reuse_makes_no_live_call_charges_no_budget_and_still_runs_the_free_sand
     assert again["environment_hash"] == recorded["environment_hash"]
 
 
-@pytest.mark.parametrize("change", ["settings", "platform", "environment"])
+@pytest.mark.parametrize("change", ["tools", "probe-skill", "settings", "platform", "environment"])
 def test_reuse_fails_before_any_live_call_when_the_runtime_environment_changed(
         tmp_path: Path, probes: list[list[str]], monkeypatch: pytest.MonkeyPatch, change: str) -> None:
     del probes
     executable = fake_claude(tmp_path)
     recorded = recorded_pass(tmp_path, executable)
     logged = len(calls(executable))
-    if change == "platform":
+    if change == "tools":
+        monkeypatch.setattr(_transport, "TOOLS", "Bash,Read,Skill,Write")
+    elif change == "probe-skill":
+        monkeypatch.setattr(_events, "PROBE_PREFIX", "other-")
+        monkeypatch.setattr(_transport, "PROBE_PREFIX", "other-")
+    elif change == "platform":
         monkeypatch.setattr(sys, "platform", "linux" if sys.platform == "darwin" else "darwin")
     elif change == "settings":
         original = _settings.settings
@@ -554,7 +561,7 @@ def test_a_mutated_executable_stops_preflight_evaluate_and_invoke_within_one_run
     assert calls(executable) == []
 
 
-@pytest.mark.parametrize("tamper", ["isolation-failed", "no-keys", "kept-not-object"])
+@pytest.mark.parametrize("tamper", ["isolation-failed", "isolation-missing", "no-keys", "role-missing", "kept-not-object"])
 def test_a_tampered_record_never_grants_a_reuse_pass_and_runs_the_live_probe_again(
         tmp_path: Path, probes: list[list[str]], tamper: str) -> None:
     del probes
@@ -564,8 +571,13 @@ def test_a_tampered_record_never_grants_a_reuse_pass_and_runs_the_live_probe_aga
     if tamper == "isolation-failed":
         for role in roles.values():
             cast(dict[str, object], role)["isolation"] = "failed"
+    elif tamper == "isolation-missing":
+        for role in roles.values():
+            _ = cast(dict[str, object], role).pop("isolation")
     elif tamper == "no-keys":
         recorded["reuse_keys"] = {}
+    elif tamper == "role-missing":
+        roles.clear()
     else:
         for name in roles:
             roles[name] = "passed"

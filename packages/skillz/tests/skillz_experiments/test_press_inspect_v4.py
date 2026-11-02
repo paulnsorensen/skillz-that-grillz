@@ -113,7 +113,7 @@ def test_fixture_result_takes_the_last_nonempty_stderr_line_as_the_error() -> No
     ERROR + "\nnote: extra\n",
     '{"error": "inspect: link escapes package", "exit_code": 3, "extra": 1}',
     '{"error": "inspect: link escapes package", "exit_code": 3.0}',
-    '{"error": "Inspect: link escapes package", "exit_code": 3}', "", "{",
+    '{"error": "Inspect: link escapes package", "exit_code": 3}', "", "{", "[]",
 ])
 def test_fixture_result_rejects_an_error_line_that_is_not_exactly_the_declared_error(stderr: str) -> None:
     assert not fixture_result(BAD, 3, "", stderr)

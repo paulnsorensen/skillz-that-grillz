@@ -466,7 +466,8 @@ def shell_events(output: object, status: str = "success") -> list[dict[str, obje
 
 
 @pytest.mark.parametrize(("output", "status", "code"), [
-    ("done", "success", 0), ("Output: boom\nExit Code: 2", "success", 2), ("Exit Code: 1\nmore\nExit Code: 3", "success", 3),
+    ("done", "success", 0), (None, "success", 0), ("Output: boom\nExit Code: 2", "success", 2),
+    ("Exit Code: 1\nmore\nExit Code: 3", "success", 3),
     ("Exit Code: soon", "success", 1), ("Exit Code: 0", "error", 1), ("Exit Code: 7", "error", 7),
 ])
 def test_trace_exit_code_comes_from_the_shell_output_line(output: object, status: str, code: int) -> None:

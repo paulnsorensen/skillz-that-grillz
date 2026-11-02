@@ -367,18 +367,23 @@ def test_runUsageErrors_exitNonzeroAsJsonAndCreateNothingUnderOut(
     assert not out.exists()
 
 
-@pytest.mark.parametrize('kind', ['missing', 'directory', 'binary', 'array', 'bad-version', 'nono-key'])
+@pytest.mark.parametrize('kind', ['missing', 'directory', 'empty', 'binary', 'array', 'bad-version', 'unknown-role',
+                                  'nono-key'])
 def test_harnessConfig_thatCannotLoad_exitsNonzeroAsJsonAndCreatesNothingUnderOut(
         tmp_path: Path, target: Path, capsys: pytest.CaptureFixture[str], kind: str) -> None:
     config = tmp_path / 'cfg.json'
     if kind == 'directory':
         config.mkdir()
+    elif kind == 'empty':
+        _ = config.write_text('')
     elif kind == 'binary':
         _ = config.write_bytes(bytes([255, 254, 0, 1]))
     elif kind == 'array':
         _ = config.write_text('[]')
     elif kind == 'bad-version':
         _ = config.write_text(json.dumps({'schema_version': 2}))
+    elif kind == 'unknown-role':
+        _ = config.write_text(json.dumps({'schema_version': 1, 'roles': {'extra': {}}}))
     elif kind == 'nono-key':
         _ = config.write_text(json.dumps({'schema_version': 1, 'adapter': 'codex', 'isolation': 'nono'}))
     out = tmp_path / 'run'
@@ -439,10 +444,13 @@ class _Driver:
 PROBE_FAILURES = {
     'exit-3': 'sys.exit(3)',
     'garbage-stdout': "print('not json')",
+    'bad-envelope': "print(json.dumps({'schema_version': 1, 'operation': 'sandbox'}))",
     'probe-not-ok': "print(json.dumps({'schema_version': 1, 'operation': 'sandbox', 'returncode': 0, 'stdout': 'nope', 'stderr': ''}))",
     'probe-nonzero': "print(json.dumps({'schema_version': 1, 'operation': 'sandbox', 'returncode': 1, 'stdout': 'isolation-ok', 'stderr': ''}))",
     'wrong-op': "print(json.dumps({'schema_version': 1, 'operation': 'infer'}))",
+    'string-version': "print(json.dumps({'schema_version': '1', 'operation': 'sandbox', 'returncode': 0, 'stdout': 'isolation-ok', 'stderr': ''}))",
     'bool-returncode': "print(json.dumps({'schema_version': 1, 'operation': 'sandbox', 'returncode': False, 'stdout': 'isolation-ok', 'stderr': ''}))",
+    'extra-field': "print(json.dumps({'schema_version': 1, 'operation': 'sandbox', 'returncode': 0, 'stdout': 'isolation-ok', 'stderr': '', 'x': 1}))",
 }
 
 

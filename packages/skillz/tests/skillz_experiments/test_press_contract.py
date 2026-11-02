@@ -78,6 +78,8 @@ HOSTILE: dict[str, object] = {
     "helper-text": broken(helper="scripts/x.py"),
     "helper-traversal": broken(helper={"path": "../../etc/passwd"}),
     "helper-fixtures-text": broken(helper={"path": "scripts/x.py", "fixtures": "x"}),
+    "helper-fixture-bool-code": broken(helper={"path": "scripts/x.py", "fixtures": [
+        {"input": "a", "returncode": True, "output": cast(dict[str, object], {})}]}),
     "helper-fixture-missing-key": broken(helper={"path": "scripts/x.py", "fixtures": [{"input": "a"}]}),
     "helper-extra": broken(helper={"path": "scripts/x.py", "shell": True}),
     "editable-text": broken(editable="SKILL.md"),

@@ -342,8 +342,8 @@ def test_converse_second_init_event_inside_turn_one_is_compared(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("bad", [
-    {"reply": "x"}, {"reply": "x", "done": "true"}, {"reply": "x", "done": False, "extra": 1},
-], ids=["no-done", "string-done", "extra-field"])
+    {"reply": "x"}, {"reply": "x", "done": "true"}, {"reply": None, "done": False}, {"reply": "x", "done": False, "extra": 1},
+], ids=["no-done", "string-done", "null-reply", "extra-field"])
 def test_malformed_simulator_reply_is_rejected_without_a_hang_and_the_process_group_is_reaped(tmp_path: Path, bad: object) -> None:
     class Simulator:
         def __init__(self) -> None:

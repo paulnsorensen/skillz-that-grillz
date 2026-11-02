@@ -254,7 +254,8 @@ def test_command_grader_scores_zero_on_any_nonzero_exit_even_with_a_perfect_scor
 
 
 @pytest.mark.parametrize("output", [
-    {"../escape.txt": "x"}, {"/abs.txt": "x"}, {"a//b": "x"}, {".hidden": "x"}, {"a\\b": "x"}, {"result.txt": 5}])
+    {"../escape.txt": "x"}, {"/abs.txt": "x"}, {"a//b": "x"}, {".hidden": "x"}, {"a\\b": "x"}, {"a\u0000b": "x"},
+    {"": "x"}, {"result.txt": 5}])
 def test_command_grader_rejects_hostile_output_file_maps_before_running_the_grader(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, output: dict[str, object]) -> None:
     rules = contract()

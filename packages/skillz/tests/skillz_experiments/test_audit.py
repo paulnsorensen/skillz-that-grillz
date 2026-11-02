@@ -106,6 +106,8 @@ def test_valid_audit_uses_isolated_judge_and_combined_usage(tmp_path: Path, monk
 
 @pytest.mark.parametrize("citation", [
     {"path": "../secret", "start": 1, "end": 1, "quote": "Delete everything."},
+    {"path": "fixture.md", "start": True, "end": 1, "quote": "Delete everything."},
+    {"path": "fixture.md", "start": 1, "end": 2, "quote": "Delete everything."},
     {"path": "fixture.md", "start": 1, "end": 1, "quote": "fabricated"},
 ])
 def test_invalid_report_never_calls_judge(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -140,7 +142,9 @@ def test_duplicate_findings_are_false_positives(tmp_path: Path, monkeypatch: pyt
 
 
 @pytest.mark.parametrize("matches", [
+    [{"finding": 0, "label": "missing", "actionable": True}],
     [{"finding": True, "label": "unsafe", "actionable": True}],
+    [{"finding": 0, "label": "unsafe", "actionable": "yes"}],
     [{"finding": 0, "label": "unsafe", "actionable": True}] * 2,
 ])
 def test_invalid_judge_is_infrastructure_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
