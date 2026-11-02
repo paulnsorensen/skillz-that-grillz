@@ -252,4 +252,8 @@ def converse(request: str, candidate: Candidate, case: Case, holdout: bool,
                     os.killpg(child.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+                except PermissionError:
+                    # macOS refuses `killpg` for the group of an exited leader. That group is gone (gh-568).
+                    if child.poll() is None:
+                        raise
                 _ = child.wait()

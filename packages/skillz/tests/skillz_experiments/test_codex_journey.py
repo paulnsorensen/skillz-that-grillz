@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import errno
 import os
 import shlex
+import signal
 import subprocess
 import sys
 import shutil
@@ -237,6 +239,53 @@ def test_codex_journey_reports_redacted_startup_failure(tmp_path: Path, monkeypa
         assert "private-value" not in str(failure.value)
     finally:
         transport.close()
+
+
+@pytest.mark.usefixtures("host_login")
+@pytest.mark.skipif(not hasattr(os, "waitid"), reason="os.waitid exists on macOS only from Python 3.13")
+def test_codex_journey_treats_a_refused_kill_after_the_child_exited_as_a_gone_group(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_codex(tmp_path, monkeypatch, "startup_exit")
+    case, candidate = journey_case(tmp_path, contract(), 2)
+    transport = Codex("offline-test", Budget(2, 120, 0), lambda: None)
+
+    def refuse_after_exit(pid: int, _signal: int) -> None:
+        # Wait for the exit without a reap, then refuse as macOS does for the group of an exited leader.
+        _ = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT)
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "killpg", refuse_after_exit)
+            with pytest.raises(RuntimeError, match=r"startup failed: \[redacted\]"):
+                _ = transport.converse("first request", candidate, case, False, lambda _text: Reply("next", False))
+    finally:
+        transport.close()
+
+
+@pytest.mark.usefixtures("host_login")
+def test_codex_journey_does_not_hide_a_refused_kill_of_a_running_child(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_codex(tmp_path, monkeypatch, "ok")
+    case, candidate = journey_case(tmp_path, contract(), 1)
+    transport = Codex("offline-test", Budget(2, 120, 0), lambda: None)
+    refused: list[int] = []
+
+    def refuse(pid: int, _signal: int) -> None:
+        refused.append(pid)
+        raise PermissionError(errno.EPERM, "Operation not permitted")
+
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(os, "killpg", refuse)
+            with pytest.raises(PermissionError):
+                _ = transport.converse("first request", candidate, case, False, lambda _text: Reply("next", False))
+    finally:
+        transport.close()
+        for pid in refused:
+            os.killpg(pid, signal.SIGKILL)
+            _ = os.waitpid(pid, 0)
+    assert len(refused) == 1
 
 
 @pytest.mark.usefixtures("host_login")
