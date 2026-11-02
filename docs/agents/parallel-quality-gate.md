@@ -79,6 +79,15 @@ Local `just build` and `just ci` print the same per-file report from the committ
 (`docs/agents/decisions/quality-ratchets.md` ADR-006).
 The first committed file gives each test the same value, so that split balances by test count
 (`docs/agents/decisions/quality-ratchets.md` ADR-004).
+The `refresh test durations` workflow refreshes the committed file each Monday and on `workflow_dispatch`.
+It reads the `test-durations` artifacts of the last three green `validate` push runs on main.
+`refresh_durations.py` gives each test of the newest run its maximum seconds over these runs.
+It writes that map to the file when the map differs.
+It then lowers the improved time ceilings from the slowest of the runs for each test file.
+With fewer than three runs, it does not lower a ceiling.
+On no change, the run logs `no change` and opens no PR.
+On a change, the run force-pushes `chore/refresh-test-durations` and opens or updates one PR against main.
+The workflow uses `GITHUB_TOKEN`, so the checks do not start on that PR until a human closes and reopens it.
 One unsharded `skillz tests` job took 478 to 509 seconds on four runs.
 The 4-vCPU runner was CPU-bound: a tmpfs on `/tmp` saved about 3 percent.
 With four shards, the shards took 87 to 157 seconds and the full wait was 164 seconds.
