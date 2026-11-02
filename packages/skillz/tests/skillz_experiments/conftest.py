@@ -7,6 +7,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import weakref
 from pathlib import Path
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import NamedTuple, cast
@@ -18,7 +20,7 @@ from skillz_experiments.harness._command import Command
 from skillz_experiments.harness._roles import Role
 from skillz_experiments.harness._transport import Transport
 from skillz_experiments.run import _run
-from skillz_experiments.harness import Configuration
+from skillz_experiments.harness import Configuration, _codex
 from skillz_experiments.harness._claude import _options, _sandbox, _transport
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments.search import Edit
@@ -113,6 +115,62 @@ def host_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     def ready(selections: Sequence[tuple[str, str | None]]) -> dict[str, object]:
         return {"ok": True, "harness": "+".join(harness for harness, _ in selections), "checks": [], "live_calls": 0}
     monkeypatch.setattr(_run, "host_report", ready)
+
+
+def _no_sleep(seconds: float) -> None:
+    del seconds
+
+
+@pytest.fixture(autouse=True)
+def codex_backoff_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the Codex retry backoff return at once, so no test waits for a real backoff.
+
+    A test that checks the backoff values requests the `sleeps` fixture of `test_codex_retry.py`. That fixture runs
+    after this one and records each wait.
+    """
+    monkeypatch.setattr(_codex, "_sleep", _no_sleep)
+
+
+READY_SECONDS = 20
+"""The longest time that `clock_at_marker` waits for a child to write its readiness marker."""
+
+
+@pytest.fixture
+def clock_at_marker(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path], list[float]]:
+    """Start the time limit of a child when the child writes a readiness marker, not when the child starts.
+
+    Call the returned function with the marker path. From then on, the first timed `Popen.communicate` of each child
+    waits for the marker, then runs with the limit that the code under test passes. A slow interpreter start on a
+    loaded host then cannot use up a short limit. A child that ends before the marker exists returns at once.
+    The function returns a list. The gate appends the time at which it saw the marker, once for each gated call.
+    """
+    real = cast(Callable[[subprocess.Popen[str], str | None, float | None], tuple[str, str]],
+                subprocess.Popen[str].communicate)
+
+    def arm(marker: Path) -> list[float]:
+        seen: list[float] = []
+        gated: weakref.WeakSet[subprocess.Popen[str]] = weakref.WeakSet()
+
+        def communicate(self: subprocess.Popen[str], data: str | None = None,
+                        timeout: float | None = None) -> tuple[str, str]:
+            if timeout is None or self in gated:
+                return real(self, data, timeout)
+            gated.add(self)
+            give_up = time.monotonic() + READY_SECONDS
+            while not marker.exists():
+                if time.monotonic() > give_up:
+                    pytest.fail(f"the child wrote no readiness marker {marker.name} in {READY_SECONDS} s")
+                try:
+                    return real(self, data, 0.02)
+                except subprocess.TimeoutExpired:
+                    data = None  # the first call sent the input
+            seen.append(time.monotonic())
+            return real(self, data, timeout)
+
+        monkeypatch.setattr(subprocess.Popen, "communicate", communicate)
+        return seen
+    return arm
+
 
 @pytest.fixture
 def umask_022() -> Iterator[None]:

@@ -146,33 +146,40 @@ def test_concurrent_claims_never_overspend() -> None:
 
 @pytest.mark.ac("gh-319:AC-2")
 def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
-    hold = "import pathlib,sys,time;pathlib.Path(sys.argv[1]).touch();time.sleep(2.0)"
+    # Each holder child marks that it runs, then holds its call slot until the test writes `release`.
+    hold = ("import pathlib,sys,time\npathlib.Path(sys.argv[1]).touch()\n"
+            "while not pathlib.Path(sys.argv[2]).exists(): time.sleep(0.01)\n")
+    release = tmp_path / "release"
     markers = [tmp_path / f"holding-{index}" for index in range(MAX_CONCURRENT_CALLS)]
-    holders = [threading.Thread(target=process, args=([sys.executable, "-c", hold, str(marker)],),
+    holders = [threading.Thread(target=process, args=([sys.executable, "-c", hold, str(marker), str(release)],),
                                 kwargs={"cwd": tmp_path, "timeout": 30, "environment": {"PATH": os.defpath}})
                for marker in markers]
     for holder in holders:
         holder.start()
-    # A marker exists only after its child runs, so its holder occupies a slot.
-    deadline = time.monotonic() + 10
-    while not all(marker.exists() for marker in markers):
-        assert time.monotonic() < deadline, "holders did not occupy every call slot"
-        time.sleep(0.01)
-    began = time.monotonic()
-    with pytest.raises(BudgetExhausted, match="call slot"):
-        _ = process([sys.executable, "-c", "pass"], cwd=tmp_path, timeout=0.4,
-                    environment={"PATH": os.defpath})
-    assert time.monotonic() - began < 1.0
+    try:
+        # A marker exists only after its child runs, so its holder occupies a slot.
+        deadline = time.monotonic() + 10
+        while not all(marker.exists() for marker in markers):
+            assert time.monotonic() < deadline, "holders did not occupy every call slot"
+            time.sleep(0.01)
+        began = time.monotonic()
+        with pytest.raises(BudgetExhausted, match="call slot"):
+            _ = process([sys.executable, "-c", "pass"], cwd=tmp_path, timeout=0.4,
+                        environment={"PATH": os.defpath})
+        assert time.monotonic() - began < 1.0
 
-    late = time.monotonic()
-    with pytest.raises(BudgetExhausted, match="terminated"):
-        _ = process([sys.executable, "-c", "import time;time.sleep(30)"], cwd=tmp_path, timeout=2.5,
-                    environment={"PATH": os.defpath})
-    # Holders free the slots at most 1.6 s after `late`. Without the slot-wait
-    # subtraction, the call ends near 1.6 + 2.5 = 4.1 s.
-    assert time.monotonic() - late < 3.2
-    for holder in holders:
-        holder.join()
+        late = time.monotonic()
+        threading.Timer(0.5, release.touch).start()
+        with pytest.raises(BudgetExhausted, match="terminated"):
+            _ = process([sys.executable, "-c", "import time;time.sleep(30)"], cwd=tmp_path, timeout=1.0,
+                        environment={"PATH": os.defpath})
+        # The holders free the slots about 0.5 s after `late`. Without the slot-wait
+        # subtraction, the call ends near 0.5 + 1.0 = 1.5 s.
+        assert time.monotonic() - late < 1.3
+    finally:
+        release.touch()
+        for holder in holders:
+            holder.join()
 
 
 def test_the_time_reserve_holds_the_end_of_the_deadline_for_the_gate() -> None:

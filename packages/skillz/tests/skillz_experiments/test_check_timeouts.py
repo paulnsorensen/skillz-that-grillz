@@ -186,15 +186,16 @@ def _wait_until_dead(*pids: int, seconds: float = 5) -> None:
 @pytest.mark.ac("gh-287:AC-6")
 @pytest.mark.skipif(not sys.platform.startswith("linux"), reason="reads /proc")
 def test_the_command_harness_kills_the_wrapper_group_at_sandbox_seconds_and_sends_no_new_field(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clock_at_marker: Callable[[Path], list[float]]) -> None:
     wrapper, log, pids = tmp_path / "wrapper.py", tmp_path / "requests.log", tmp_path / "pids"
     _ = wrapper.write_text(WRAPPER)
-    # The cap must exceed the wrapper's own start-up time, which can pass 1 s on a loaded host.
-    monkeypatch.setattr(_command, "SANDBOX_SECONDS", 5)
+    # The limit starts when the wrapper writes its pids, so the wrapper's start-up time does not count.
+    ready = clock_at_marker(pids)
+    limit = 0.5
+    monkeypatch.setattr(_command, "SANDBOX_SECONDS", limit)
     adapter = Command((sys.executable, str(wrapper), str(log), str(pids)), "m", Budget(10, 120, 0), lambda: None)
-    started = time.monotonic()
     assert adapter.check_candidate(_helper_candidate()) == TIMEOUT
-    assert 5 <= time.monotonic() - started < 30
+    assert limit <= time.monotonic() - ready[0] < 30
     wrapper_pid, child_pid = (int(part) for part in pids.read_text().split())
     _wait_until_dead(wrapper_pid, child_pid)
     assert not _alive(wrapper_pid) and not _alive(child_pid)
@@ -203,29 +204,36 @@ def test_the_command_harness_kills_the_wrapper_group_at_sandbox_seconds_and_send
 
 
 SLOW_PROBE_WRAPPER = """
-import json, sys, time
+import json, pathlib, sys, time
 request = json.load(sys.stdin)
 if request['operation'] == 'discover':
     print(json.dumps(dict(schema_version=1, operation='discover',
                           skills=[dict(name=request['skill_name'], path=request['skill_path'])])))
 else:
-    time.sleep(2)
+    pathlib.Path(sys.argv[1]).touch()
+    time.sleep(0.5)
     print(json.dumps(dict(schema_version=1, operation='sandbox', returncode=0, stdout='isolation-ok\\n', stderr='')))
 """
 
 
 def test_the_command_preflight_probe_gets_a_longer_bounded_limit_than_a_helper_fixture(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """A container wrapper can start slowly once. The probe has its own limit, and a probe hang fails preflight."""
-    wrapper = tmp_path / "wrapper.py"
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, clock_at_marker: Callable[[Path], list[float]]) -> None:
+    """A container wrapper can start slowly once. The probe has its own limit, and a probe hang fails preflight.
+
+    The wrapper writes a marker, then works for 0.5 s. Each limit starts at the marker, so the start-up time does not count.
+    """
+    wrapper, marker = tmp_path / "wrapper.py", tmp_path / "working"
     _ = wrapper.write_text(SLOW_PROBE_WRAPPER)
-    monkeypatch.setattr(_command, "SANDBOX_SECONDS", 1)
-    monkeypatch.setattr(_command, "PROBE_SECONDS", 10)
-    adapter = Command((sys.executable, str(wrapper)), "m", Budget(10, 120, 0), lambda: None)
+    _ = clock_at_marker(marker)
+    monkeypatch.setattr(_command, "SANDBOX_SECONDS", 0.2)
+    monkeypatch.setattr(_command, "PROBE_SECONDS", 1)
+    adapter = Command((sys.executable, str(wrapper), str(marker)), "m", Budget(10, 120, 0), lambda: None)
     assert adapter.preflight()["isolation"] == "passed"
+    marker.unlink()
     with pytest.raises(_runtime.SandboxTimeout):
         _ = adapter.sandbox(make_workspace(tmp_path / "workspace"), ["/usr/bin/true"])
-    monkeypatch.setattr(_command, "PROBE_SECONDS", 1)
+    marker.unlink()
+    monkeypatch.setattr(_command, "PROBE_SECONDS", 0.2)
     with pytest.raises(RuntimeError, match="the sandbox probe timed out"):
         _ = adapter.preflight()
 
