@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -14,9 +16,11 @@ from typing import cast
 
 import pytest
 
+import wedge._archive as wedge_archive
 import wedge._build as wedge_build
 import wedge._layer_cache as layer_cache
 from wedge._build import SiteLayer, build, build_from_layer, site_layer_key
+from wedge._bytecode import build_bytecode_trees
 from wedge._config import WedgeConfig
 from wedge._layer_cache import cache_root, cached_layer, manifest
 
@@ -268,6 +272,42 @@ def test_a_layer_change_after_the_cache_check_fails_the_build_and_writes_nothing
     assert not list((tmp_path / "out-changed").iterdir())
 
 
+def test_bytecode_uses_verified_snapshot_when_layer_changes_during_compile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    _ = (project / "uv.lock").write_text("lock\n")
+    site = tmp_path / "layer"
+    package = site / "third"
+    package.mkdir(parents=True)
+    source = package / "__init__.py"
+    _ = source.write_text("VALUE = 1\n")
+    sources = tmp_path / "sources"
+    sources.mkdir()
+    _ = (sources / "app.py").write_text("import third\ndef main():\n    print(third.VALUE)\n")
+    layer = SiteLayer(site.resolve(), site_layer_key(project, ()), (), project)
+    minor = ".".join(str(part) for part in sys.version_info[:2])
+    target = WedgeConfig(name="snapshot", entry="app:main", source="app.py", repo="o/n", bytecode=(minor,))
+    expected = manifest(site)
+    compile_trees = build_bytecode_trees
+
+    def mutate_then_compile(
+        snapshot: Path, scratch: Path, entry: str, config: WedgeConfig, first_party: frozenset[str]
+    ) -> dict[str, Path]:
+        _ = source.write_text("VALUE = 2\n")
+        return compile_trees(snapshot, scratch, entry, config, first_party)
+
+    monkeypatch.setattr(wedge_build, "build_bytecode_trees", mutate_then_compile)
+    _, pyz = wedge_build._build_from_layer(  # pyright: ignore[reportPrivateUsage]
+        layer, sources, target, tmp_path / "out", expected,
+    )
+    result = subprocess.run([sys.executable, "-I", str(pyz)], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "1\n"
+    assert source.read_text() == "VALUE = 2\n"
+
+
 def test_the_layer_cache_key_covers_wedges_populate_rules(monkeypatch: pytest.MonkeyPatch) -> None:
     key = wedge_build._layer_cache_key  # pyright: ignore[reportPrivateUsage]
     base = key("pkg==1.0 \\\n    --hash=sha256:00\n")
@@ -308,7 +348,7 @@ def test_a_linked_layer_view_builds_the_same_bytes_as_a_copy_and_never_writes_th
     sources = tmp_path / "sources"
     sources.mkdir()
     _ = (sources / "app.py").write_text("def main() -> None: ...\n")
-    target = WedgeConfig(name="app", entry="app:main", source="app.py", repo="o/n")
+    target = WedgeConfig(name="app", entry="app:main", source="app.py", repo="o/n", bytecode=())
     before = manifest(layer_dir)
 
     linked = wedge_build._view_layer(layer_dir, tmp_path / "view")  # pyright: ignore[reportPrivateUsage]
@@ -320,10 +360,43 @@ def test_a_linked_layer_view_builds_the_same_bytes_as_a_copy_and_never_writes_th
     _ = shutil.copy2(sources / "app.py", reference / "app.py")
     out = tmp_path / "out"
     out.mkdir()
-    expected, _ = wedge_build._archive_into(reference, "app", "app:main", out)  # pyright: ignore[reportPrivateUsage]
+    expected, _ = wedge_archive.archive_into(reference, "app", "app:main", out)
 
     built = build_from_layer(layer, sources, target, tmp_path / "built")
 
     assert built.read_bytes() == (out / built.name).read_bytes()
     assert expected[:12] in built.name
     assert manifest(layer_dir) == before, "a build never writes to the layer"
+
+def test_archive_rejects_changed_member_without_output(tmp_path: Path) -> None:
+    site = tmp_path / "site"
+    package = site / "third"
+    package.mkdir(parents=True)
+    _ = (site / "app.py").write_text("def main(): pass\n")
+    _ = (package / "__init__.py").write_text("VALUE = 1\n")
+    expected = manifest(site)
+    _ = (package / "__init__.py").write_text("VALUE = 2\n")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    with pytest.raises(ValueError, match="cached site layer changed during the build"):
+        _ = wedge_archive.archive_into(site, "app", "app:main", out, (expected, frozenset({"app.py"})))
+
+    assert not list(out.iterdir())
+
+
+def test_archive_removes_temporary_file_when_replace_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    site = tmp_path / "site"
+    site.mkdir()
+    _ = (site / "app.py").write_text("def main(): pass\n")
+    out = tmp_path / "out"
+    out.mkdir()
+
+    def fail_replace(_source: str, _dest: str | Path) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr("wedge._archive.os.replace", fail_replace)
+    with pytest.raises(OSError, match="replace failed"):
+        _ = wedge_archive.archive_into(site, "app", "app:main", out)
+
+    assert not list(out.iterdir())

@@ -17,7 +17,7 @@ OUTPUT_BYTES_LIMIT = 262144
 PACKAGE_LIMIT = 1_000_000
 TEXT_FILE_LIMIT = 262144
 # Frozen bytes never count against PACKAGE_LIMIT. They have their own limits.
-FROZEN_FILE_LIMIT = 16 * 1024 * 1024
+FROZEN_FILE_LIMIT = 24 * 1024 * 1024
 FROZEN_TOTAL_LIMIT = 64 * 1024 * 1024
 # A candidate file under this prefix is wedge source from the repository, not a skill file.
 # The rest of the name is the path relative to the repository root. `materialize` never writes it.

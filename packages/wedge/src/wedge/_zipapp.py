@@ -15,7 +15,7 @@ _SHEBANG = b"#!/usr/bin/env python3\n"
 _DATE_TIME = (1980, 1, 1, 0, 0, 0)
 
 
-def write_archive(site_dir: Path, entry: str, out_path: Path) -> None:
+def write_archive(site_dir: Path, entry: str, out_path: Path, trees: dict[str, Path] | None = None) -> None:
     environment = json.dumps(
         {"entry": entry, "format": FORMAT_VERSION}, sort_keys=True, separators=(",", ":")
     ).encode() + b"\n"
@@ -24,14 +24,16 @@ def write_archive(site_dir: Path, entry: str, out_path: Path) -> None:
         "environment.json": environment,
         "site-packages/": None,
     }
-    for directory, dirs, files in os.walk(site_dir, followlinks=True):
-        dirs.sort()
-        relative = Path(directory).relative_to(site_dir)
-        if relative != Path("."):
-            members["site-packages/" + relative.as_posix() + "/"] = None
-        for name in files:
-            path = Path(directory) / name
-            members["site-packages/" + path.relative_to(site_dir).as_posix()] = path
+    for prefix, root in (("site-packages", site_dir), *((trees or {}).items())):
+        members[prefix + "/"] = None
+        for directory, dirs, files in os.walk(root, followlinks=True):
+            dirs.sort()
+            relative = Path(directory).relative_to(root)
+            if relative != Path("."):
+                members[prefix + "/" + relative.as_posix() + "/"] = None
+            for name in files:
+                path = Path(directory) / name
+                members[prefix + "/" + path.relative_to(root).as_posix()] = path
     with out_path.open("wb") as output:
         _ = output.write(_SHEBANG)
         with ZipFile(output, "w") as archive:

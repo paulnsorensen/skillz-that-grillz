@@ -19,6 +19,7 @@ from zipfile import ZipFile
 
 import pytest
 
+import wedge._archive as wedge_archive
 import wedge._build as wedge_build
 from wedge._build import SiteLayer, build_many
 from wedge._config import load_targets, parse_targets
@@ -241,6 +242,16 @@ def test_a_single_target_file_becomes_the_multi_target_form_and_still_loads(worl
     assert expand_files(world.skill, seed, VALUE) == added
 
 
+@pytest.mark.parametrize("selection", [(), ("3.11", "3.13")])
+def test_single_target_conversion_preserves_bytecode_selection(world: World, selection: tuple[str, ...]) -> None:
+    original = world.toml() + "bytecode = [" + ", ".join(f'"{minor}"' for minor in selection) + "]\n"
+    _ = (world.skill / "wedge.toml").write_text(original)
+    before = load_targets(world.skill)[0]
+    generated = expand_files(world.skill, world.files(), VALUE)["wedge.toml"]
+    old, _new = parse_targets(world.skill, generated)
+    assert old.bytecode == before.bytecode == selection
+
+
 def test_the_generated_target_names_no_dependency_group_and_builds_from_the_no_group_layer(
         world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
     _ = (world.skill / "wedge.toml").write_text(world.toml() + 'groups = ["extra"]\n')
@@ -347,7 +358,7 @@ def test_a_failed_build_of_the_new_target_rejects_with_build_failed(
     def broken(*_args: object, **_kwargs: object) -> None:
         raise OSError("archive writer failed")
 
-    monkeypatch.setattr(wedge_build, "write_archive", broken)
+    monkeypatch.setattr(wedge_archive, "write_archive", broken)
     score, feedback = evaluate(out, Recorder(), VALUE)
     assert score == 0.0 and feedback["reason"] == "build-failed" and "hello-cli" in str(feedback["rejected"])
 
@@ -535,12 +546,12 @@ def test_candidates_that_differ_in_a_fixed_file_of_the_new_target_get_separate_b
     failing = [True]
     real = write_archive
 
-    def writer(site_dir: Path, entry: str, out_path: Path) -> None:
+    def writer(site_dir: Path, entry: str, out_path: Path, trees: dict[str, Path] | None) -> None:
         if failing[0]:
             raise OSError("archive writer failed")
-        real(site_dir, entry, out_path)
+        real(site_dir, entry, out_path, trees)
 
-    monkeypatch.setattr(wedge_build, "write_archive", writer)
+    monkeypatch.setattr(wedge_archive, "write_archive", writer)
     with pytest.raises(BuildFailed):
         _ = rebuilder.apply(base.with_frozen({fixed: b"VERSION = 2\n"}))
     failing[0] = False
@@ -566,12 +577,12 @@ def test_candidates_that_differ_in_an_editable_fromargs_source_build_their_own_t
     failing = [True]
     real = write_archive
 
-    def writer(site_dir: Path, entry: str, out_path: Path) -> None:
+    def writer(site_dir: Path, entry: str, out_path: Path, trees: dict[str, Path] | None) -> None:
         if failing[0]:
             raise OSError("archive writer failed")
-        real(site_dir, entry, out_path)
+        real(site_dir, entry, out_path, trees)
 
-    monkeypatch.setattr(wedge_build, "write_archive", writer)
+    monkeypatch.setattr(wedge_archive, "write_archive", writer)
     with pytest.raises(BuildFailed):
         _ = rebuilder.apply(session.seed.changed(components | {source: "VERSION = 2\n"}))
     failing[0] = False

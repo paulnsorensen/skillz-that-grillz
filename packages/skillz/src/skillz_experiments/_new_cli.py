@@ -170,7 +170,7 @@ def _text(value: object) -> str:
 
 
 def _table(name: str, entry: str, source: str, include: Sequence[str], source_paths: Sequence[str] = (),
-           *, no_groups: bool = False) -> str:
+           *, no_groups: bool = False, bytecode: Sequence[str] | None = None) -> str:
     lines = ["[[target]]", f"name = {_text(name)}", f"entry = {_text(entry)}", f"source = {_text(source)}"]
     if source_paths:
         lines.append(f"source_paths = {_text(list(source_paths))}")
@@ -178,6 +178,8 @@ def _table(name: str, entry: str, source: str, include: Sequence[str], source_pa
         lines.append(f"include = {_text(list(include))}")
     if no_groups:
         lines.append("groups = []")
+    if bytecode is not None:
+        lines.append(f"bytecode = {_text(list(bytecode))}")
     return "\n".join(lines) + "\n"
 
 
@@ -196,7 +198,7 @@ def generated_toml(text: str, configs: Sequence[WedgeConfig], include: str, cli:
     own = cast(Mapping[str, object], tomllib.loads(text))
     shared = "".join(f"{key} = {_text(value)}\n" for key, value in own.items() if key not in _PER_TARGET)
     old = configs[0]
-    return shared + "\n" + _table(old.name, old.entry, old.source, old.include, old.source_paths) + "\n" + new
+    return shared + "\n" + _table(old.name, old.entry, old.source, old.include, old.source_paths, bytecode=old.bytecode) + "\n" + new
 
 
 def _inherited_source_paths(skill_root: Path, text: str) -> tuple[str, ...]:
