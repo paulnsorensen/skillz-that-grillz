@@ -11,6 +11,7 @@ import pytest
 
 from support import (HARNESS_RUNS, Scenario, archive_witnesses, assert_promoted, assert_replayed, build_wedge, call_cli,
                      make_scenario, run_scenario, snapshot, uv_bin_dir)
+from fixtures.targets import ARCHIVE_PYTHON
 
 SOURCE = (
     "import json, sys\n"
@@ -92,7 +93,7 @@ def test_external_wedge_rebuilds_and_exports_real_behavior(
     assert rebuilt_digest != initial_digest
     assert archive_witnesses(scenario) == {rebuilt_digest}
     _ = (home / "fixture.md").write_text("held value\n")
-    execution = subprocess.run(["/usr/bin/python3", "-I", str(rebuilt), "fixture.md"],
+    execution = subprocess.run([str(ARCHIVE_PYTHON), "-I", str(rebuilt), "fixture.md"],
                                cwd=home, capture_output=True, text=True, check=False)
     assert execution.returncode == 0, execution.stderr
     assert json.loads(execution.stdout) == {"text": "HELD VALUE\n"}

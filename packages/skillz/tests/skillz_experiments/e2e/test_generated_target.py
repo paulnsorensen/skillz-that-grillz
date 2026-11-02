@@ -12,7 +12,7 @@ import pytest
 
 from support import (HARNESS_RUNS, ROOT, Scenario, archive_witnesses, assert_promoted, assert_replayed, build_wedge,
                      call_cli, make_scenario, run_scenario, snapshot, uv_bin_dir)
-from fixtures.targets import NEW_MODULE
+from fixtures.targets import ARCHIVE_PYTHON, NEW_MODULE
 
 
 def _lock_cyclopts(project: Path) -> None:
@@ -117,7 +117,7 @@ def test_new_cli_rebuilds_executes_and_exports_from_real_cli(
     assert built["alpha"]["content_sha256"] == initial_digest
     assert archive_witnesses(scenario) == {generated_digest}
     _ = (home / "fixture.md").write_text("held value\n")
-    executed = subprocess.run(["/usr/bin/python3", "-I", str(generated), "fixture.md"], cwd=home,
+    executed = subprocess.run([str(ARCHIVE_PYTHON), "-I", str(generated), "fixture.md"], cwd=home,
                               capture_output=True, text=True, check=False)
     assert executed.returncode == 0, executed.stderr
     assert json.loads(executed.stdout) == {"text": "HELD VALUE\n"}
