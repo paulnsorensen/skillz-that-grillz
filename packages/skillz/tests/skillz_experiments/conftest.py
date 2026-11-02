@@ -15,6 +15,8 @@ from typing import NamedTuple, cast
 
 import pytest
 
+from in_process_claude import Spawn, route
+from skillz_experiments import _runtime
 from skillz_experiments._budget import Budget
 from skillz_experiments.harness._command import Command
 from skillz_experiments.harness._roles import Role
@@ -170,6 +172,12 @@ def clock_at_marker(monkeypatch: pytest.MonkeyPatch) -> Callable[[Path], list[fl
         monkeypatch.setattr(subprocess.Popen, "communicate", communicate)
         return seen
     return arm
+
+
+@pytest.fixture
+def claude_in_process(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Answer each child whose argv[0] is an `in_process_claude` stub in this process. Every other child still starts."""
+    monkeypatch.setattr(_runtime, "_spawn", route(cast(Spawn, getattr(_runtime, "_spawn"))))
 
 
 @pytest.fixture
