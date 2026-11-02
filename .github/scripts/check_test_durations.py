@@ -4,13 +4,15 @@
 A file's seconds are the sum of the stored durations (setup + call + teardown) of its tests. The file is the
 node-id prefix before `::`, as `packages/skillz/.test_durations` names it. `[tool.skillz.test-time]` in
 `pyproject.toml` sets `max_seconds`, the default ceiling of each file. A file above it needs an entry in
-`[tool.skillz.test-time.exceptions]` with a `max_seconds` ceiling and a `reason`. A ceiling is 1.5 x the measured
-seconds, rounded up. It only goes down: `tighten` lowers each improved ceiling and removes the entries that the
-default covers. Wall time varies from run to run, so `check` reports an improved ceiling but does not fail on it.
+`[tool.skillz.test-time.exceptions]` with a `max_seconds` ceiling and a `reason`. A ceiling is 2.5 x the measured
+seconds, rounded up; wall time under xdist varies up to about 2.5x from run to run. It only goes down: `tighten`
+lowers each improved ceiling and removes the entries that the default covers. `tighten` takes one or more runs and
+measures each file by its slowest run, so one fast run does not set a ceiling. `check` reports an improved ceiling
+but does not fail on it.
 
     check_test_durations.py check <durations> [--collected <dir>]   exit 1 on a breach or on missing data
     check_test_durations.py report <durations>                       print the per-file table; always exit 0
-    check_test_durations.py tighten <durations>                      rewrite the ceilings in pyproject.toml
+    check_test_durations.py tighten <durations> [<durations> ...]    rewrite the ceilings in pyproject.toml
 
 `--collected` names a directory of JUnit XML files, one for each sharded lane. The sum of their `tests` counts is
 the count of tests that the shards selected; `check` fails when the durations hold fewer test ids.
@@ -32,10 +34,12 @@ from xml.etree import ElementTree
 
 ROOT = Path(__file__).resolve().parents[2]
 PYPROJECT = "pyproject.toml"
-HEADROOM = 1.5
+# Two CI runs gave per-file ratios of 0.51 to 2.52 between runs (quality-ratchets ADR-006).
+HEADROOM = 2.5
 # The report table shows this many of the slowest files.
 TOP = 10
-USAGE = "usage: check_test_durations.py check|report|tighten <durations> [--collected <dir>]"
+USAGE = ("usage: check_test_durations.py check <durations> [--collected <dir>] | report <durations> | "
+         "tighten <durations> [<durations> ...]")
 
 
 class ConfigError(Exception):
@@ -151,6 +155,16 @@ def per_file(durations: dict[str, float]) -> dict[str, FileTime]:
     return {path: FileTime(seconds[path], tests[path]) for path in sorted(seconds)}
 
 
+def slowest(runs: list[dict[str, FileTime]]) -> dict[str, FileTime]:
+    """Return each file's slowest measure over several runs, so one fast run never sets a ceiling."""
+    merged: dict[str, FileTime] = {}
+    for files in runs:
+        for path, time in files.items():
+            if path not in merged or time.seconds > merged[path].seconds:
+                merged[path] = time
+    return dict(sorted(merged.items()))
+
+
 def ceiling_for(seconds: float) -> int:
     """Return the waiver ceiling of a measured file: `HEADROOM` x seconds, rounded up to a whole second."""
     # Round first, so that float noise in a sum of durations does not add a second.
@@ -225,11 +239,11 @@ def tighten(text: str, budget: Budget, files: dict[str, FileTime]) -> str:
     return text
 
 
-def _parse(args: list[str]) -> tuple[str, Path, Path | None] | None:
+def _parse(args: list[str]) -> tuple[str, list[Path], Path | None] | None:
     if len(args) == 4 and args[0] == "check" and args[2] == "--collected":
-        return args[0], Path(args[1]), Path(args[3])
-    if len(args) == 2 and args[0] in {"check", "report", "tighten"}:
-        return args[0], Path(args[1]), None
+        return args[0], [Path(args[1])], Path(args[3])
+    if (len(args) == 2 and args[0] in {"check", "report"}) or (len(args) >= 2 and args[0] == "tighten"):
+        return args[0], [Path(arg) for arg in args[1:]], None
     return None
 
 
@@ -238,7 +252,8 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
     if parsed is None:
         print(USAGE, file=sys.stderr)
         return 2
-    command, source, collected = parsed
+    command, sources, collected = parsed
+    source = sources[0]
     # `report` informs the local gate: it prints each problem and exits 0 (ADR-006).
     try:
         budget = load_budget(root)
@@ -246,14 +261,14 @@ def main(argv: list[str] | None = None, root: Path = ROOT) -> int:
         print(error, file=sys.stderr)
         return 0 if command == "report" else 2
     try:
-        durations = load_durations(source)
-        if collected is not None and len(durations) < (expected := collected_count(collected)):
-            short = f"{len(durations)} test ids, fewer than the {expected} tests that the shards selected"
+        runs = [load_durations(path) for path in sources]
+        if collected is not None and len(runs[0]) < (expected := collected_count(collected)):
+            short = f"{len(runs[0])} test ids, fewer than the {expected} tests that the shards selected"
             raise DataError("TIME-SHORT", f"{source} holds {short}")
     except DataError as error:
         print(error)
         return 0 if command == "report" else 1
-    files = per_file(durations)
+    files = slowest([per_file(durations) for durations in runs])
     if command == "report":
         print("\n".join(report(budget, files, source)))
         return 0

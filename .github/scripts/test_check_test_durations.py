@@ -80,10 +80,10 @@ class TestTimeTest(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertIn(f"{SLOW}: 73.50 s (ceiling 73 s)", output)
 
-    def test_a_ceiling_is_one_and_a_half_times_the_measured_seconds_rounded_up(self) -> None:
-        self.assertEqual(durations.ceiling_for(sum([0.1] * 484)), 73)
-        self.assertEqual(durations.ceiling_for(20.0), 30)
-        self.assertEqual(durations.ceiling_for(20.01), 31)
+    def test_a_ceiling_is_two_and_a_half_times_the_measured_seconds_rounded_up(self) -> None:
+        self.assertEqual(durations.ceiling_for(sum([0.1] * 484)), 121)
+        self.assertEqual(durations.ceiling_for(20.0), 50)
+        self.assertEqual(durations.ceiling_for(20.01), 51)
 
     def test_missing_empty_and_malformed_durations_fail_check_with_a_code(self) -> None:
         cases = {"TIME-MISSING": None, "TIME-EMPTY": "{}", "TIME-INVALID": "[1, 2]"}
@@ -135,31 +135,47 @@ class TestTimeTest(unittest.TestCase):
                     self.assertIn("[TIME-NO-COUNT]: lane.xml", output)
 
     def test_check_reports_improved_and_stale_exceptions_but_passes(self) -> None:
-        exceptions = (f'"{SLOW}" = {{ max_seconds = 73, {REASON} }}\n'
+        exceptions = (f'"{SLOW}" = {{ max_seconds = 100, {REASON} }}\n'
                       f'"{FAST}" = {{ max_seconds = 40, {REASON} }}\n'
                       f'"tests/test_gone.py" = {{ max_seconds = 30, {REASON} }}\n')
         with _root() as root:
             path = _tree(root, {**_file(30, 2), **_file(5, 1, FAST)}, exceptions)
             code, output = _run(root, "check", path)
             self.assertEqual(code, 0, output)
-            self.assertIn(f"{SLOW}: 30.00 s, ceiling 73 s can drop to 45 s; run `tighten`", output)
+            self.assertIn(f"{SLOW}: 30.00 s, ceiling 100 s can drop to 75 s; run `tighten`", output)
             self.assertIn(f"{FAST}: 5.00 s fits the 20 s budget; run `tighten`", output)
             self.assertIn("tests/test_gone.py: the exception names a file with no durations", output)
 
     def test_tighten_lowers_and_removes_but_never_raises(self) -> None:
         over = "tests/test_over.py"
-        exceptions = (f'"{SLOW}" = {{ max_seconds = 73, {REASON} }}  # seed\n'
+        exceptions = (f'"{SLOW}" = {{ max_seconds = 100, {REASON} }}  # seed\n'
                       f'\n"{FAST}" = {{ max_seconds = 40, {REASON} }}\n'
                       f'"{over}" = {{ {REASON}, max_seconds = 25 }}\n\n# trailer\n')
         with _root() as root:
-            path = _tree(root, {**_file(30, 2), **_file(13.3, 1, FAST), **_file(24, 2, over)}, exceptions)
+            path = _tree(root, {**_file(30, 2), **_file(8, 1, FAST), **_file(24, 2, over)}, exceptions)
             self.assertEqual(_run(root, "tighten", path)[0], 0)
             text = (root / "pyproject.toml").read_text()
-            self.assertIn((f'"{SLOW}" = {{ max_seconds = 45, {REASON} }}  # seed\n\n"{over}" = '
+            self.assertIn((f'"{SLOW}" = {{ max_seconds = 75, {REASON} }}  # seed\n\n"{over}" = '
                            f'{{ {REASON}, max_seconds = 25 }}\n\n# trailer\n'), text)
             self.assertNotIn(FAST, text)
             self.assertEqual(_run(root, "check", path),
                              (0, "test-time ratchet: 3 files within budget (2 measured exceptions)\n"))
+
+    def test_tighten_measures_each_file_by_its_slowest_run(self) -> None:
+        exceptions = (f'"{SLOW}" = {{ max_seconds = 100, {REASON} }}\n'
+                      f'"{FAST}" = {{ max_seconds = 40, {REASON} }}\n')
+        with _root() as root:
+            fast_run = _tree(root, {**_file(30, 2), **_file(4, 1, FAST)}, exceptions)
+            slow_run = root / "slow.json"
+            _ = slow_run.write_text(json.dumps(_file(36, 2)))
+            # The slow run sets SLOW (36 s -> 90 s); FAST is only in the fast run (4 s -> 10 s, so it goes).
+            self.assertEqual(_run(root, "tighten", fast_run, slow_run)[0], 0)
+            text = (root / "pyproject.toml").read_text()
+            self.assertIn(f'"{SLOW}" = {{ max_seconds = 90, {REASON} }}\n', text)
+            self.assertNotIn(FAST, text)
+            # One missing run fails the whole tighten, so no ceiling comes from partial data.
+            self.assertEqual(_run(root, "tighten", fast_run, root / "absent.json")[0], 1)
+            self.assertIn(f'"{SLOW}" = {{ max_seconds = 90, {REASON} }}\n', (root / "pyproject.toml").read_text())
 
     def test_tighten_needs_the_durations_and_one_line_exceptions(self) -> None:
         with _root() as root:
@@ -202,7 +218,8 @@ class TestTimeTest(unittest.TestCase):
     def test_a_bad_command_is_a_usage_error(self) -> None:
         with _root() as root:
             path = _tree(root, _file(3, 3))
-            for args in (("grow", path), ("check",), ("report", path, "--collected", root)):
+            for args in (("grow", path), ("check",), ("tighten",), ("check", path, path),
+                         ("report", path, "--collected", root)):
                 with self.subTest(args=args):
                     self.assertEqual(_run(root, *args)[0], 2)
 
