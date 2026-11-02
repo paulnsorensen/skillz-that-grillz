@@ -1,0 +1,113 @@
+name: refresh test durations
+
+# Each week, replace packages/skillz/.test_durations with the merged `test-durations` artifact of the newest
+# green `validate` push run on main, then lower the improved time ceilings in pyproject.toml
+# (docs/agents/decisions/quality-ratchets.md ADR-004 and ADR-006). `refresh_durations.py` decides whether
+# anything changed. On no change, the run logs `no change` and opens no PR. On a change, the run force-pushes
+# one fixed branch and opens or updates its PR against main, so at most one refresh PR is open.
+#
+# Token gap: the repository has no bot token and no GitHub App, so this job uses GITHUB_TOKEN.
+# - The repository setting "Allow GitHub Actions to create and approve pull requests" is off. Until the
+#   owner turns it on, `gh pr create` fails; the job then fails with REFRESH-NO-PR and the branch stays pushed.
+# - A pull request or a push made with GITHUB_TOKEN starts no workflow run, so the required checks do not
+#   report on the refresh PR. Close and reopen the PR to start them.
+# A bot token or a GitHub App token removes both gaps. The repository owner decides.
+on:
+  schedule:
+    - cron: "41 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: refresh-test-durations
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: refresh test durations
+    runs-on: ubuntu-latest
+    permissions:
+      # Read the validate runs and download their artifact.
+      actions: read
+      # Push the refresh branch.
+      contents: write
+      # Open or edit the refresh PR.
+      pull-requests: write
+    env:
+      BRANCH: chore/refresh-test-durations
+      TITLE: "chore(skillz): refresh test durations"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # A schedule or manual run starts on the default branch (`dist`); always refresh main.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Download the merged durations
+        id: source
+        run: |
+          set -euo pipefail
+          run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow validate.yml --branch main --event push \
+            --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$run" ]; then
+            echo "::error::REFRESH-NO-RUN: no green validate push run on main"
+            exit 1
+          fi
+          if ! gh run download "$run" --repo "$GITHUB_REPOSITORY" --name test-durations \
+            --dir "$RUNNER_TEMP/test-durations"; then
+            echo "::error::REFRESH-NO-ARTIFACT: validate run $run has no test-durations artifact"
+            exit 1
+          fi
+          echo "source: validate run $run"
+          echo "run=$run" >>"$GITHUB_OUTPUT"
+
+      - name: Refresh the durations and the ceilings
+        id: refresh
+        run: >-
+          python .github/scripts/refresh_durations.py "$RUNNER_TEMP/test-durations/.test_durations"
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Open or update the refresh PR
+        if: steps.refresh.outputs.changed == 'true'
+        env:
+          RUN: ${{ steps.source.outputs.run }}
+        run: |-
+          set -euo pipefail
+          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$RUN"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898828+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$BRANCH"
+          git commit -am "$TITLE" -m "Source: the test-durations artifact of validate run $url."
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+          body="$RUNNER_TEMP/body.md"
+          {
+            echo "Replaces \`packages/skillz/.test_durations\` with the merged durations of [validate run $RUN]($url)"
+            echo "and lowers the improved ceilings in \`[tool.skillz.test-time.exceptions]\` (quality-ratchets ADR-004, ADR-006)."
+            echo
+            echo "GITHUB_TOKEN made this PR, so no check runs on it yet. Close and reopen the PR to start the checks."
+            echo
+            echo '```text'
+            python .github/scripts/check_test_durations.py report packages/skillz/.test_durations
+            echo '```'
+          } >"$body"
+          pr=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --base main --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --repo "$GITHUB_REPOSITORY" --title "$TITLE" --body-file "$body"
+            echo "updated PR #$pr"
+          elif gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" --title "$TITLE" \
+            --body-file "$body"; then
+            echo "opened the refresh PR"
+          else
+            compare="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$BRANCH"
+            echo "::error::REFRESH-NO-PR: pushed $BRANCH, but GITHUB_TOKEN cannot open the PR; open it at $compare"
+            exit 1
+          fi

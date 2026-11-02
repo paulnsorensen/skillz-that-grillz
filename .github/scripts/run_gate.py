@@ -316,6 +316,7 @@ def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None
         ("dist-publisher-tests", root + ["python", ".github/scripts/test_publish_dist.py"]),
         ("durations-merge-tests", root + ["python", ".github/scripts/test_merge_durations.py"]),
         ("durations-check-tests", root + ["python", ".github/scripts/test_check_test_durations.py"]),
+        ("durations-refresh-tests", root + ["python", ".github/scripts/test_refresh_durations.py"]),
         pytest("agent-session-analytics-pytest", analytics, ["packages/agent-session-analytics/tests"], "a"),
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),
         ("wedge-check", wedge + ["wedge", "check", "--root", "packages/wedge/examples/skills",
