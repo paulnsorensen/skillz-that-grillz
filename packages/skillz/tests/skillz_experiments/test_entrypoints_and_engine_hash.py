@@ -1,9 +1,11 @@
 """The engine hash covers every module of the package, and the CLI entry points still start after the layout move."""
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -79,3 +81,68 @@ def test_the_bundled_pyz_help_exits_zero_with_usage(tmp_path: Path) -> None:
                             check=False, timeout=60)
     assert result.returncode == 0, result.stderr
     assert "usage" in (result.stdout + result.stderr).lower() and "Traceback" not in result.stderr
+
+
+@pytest.fixture
+def source_archive(tmp_path: Path) -> Path:
+    archive = tmp_path / "skillz-experiment.pyz"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for path in PACKAGE.rglob("*.py"):
+            bundle.write(path, f"skillz_experiments/{path.relative_to(PACKAGE).as_posix()}")
+        bundle.writestr("__main__.py", """
+import json
+import sys
+from pathlib import Path
+from skillz_experiments.run._open import engine_hash, leakage_digest, scoring_digest
+from skillz_experiments._scaffold import scaffold
+from importlib.resources import files
+package = files('skillz_experiments')
+result = {
+    'engine': engine_hash(),
+    'scoring': scoring_digest(package),
+    'leakage': leakage_digest(package),
+    'source': package.joinpath('_journey_gate.py').read_bytes().hex(),
+}
+scaffold(Path(sys.argv[1]))
+print(json.dumps(result))
+""")
+    return archive
+
+
+@pytest.mark.ac("gh-581:AC-8")
+@pytest.mark.ac("gh-581:AC-19")
+def test_archive_source_digests_and_scaffold_match_checkout(source_archive: Path, tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    from skillz_experiments._scaffold import scaffold
+    from skillz_experiments.run._open import engine_hash, leakage_digest, scoring_digest
+
+    checkout, archived = tmp_path / "checkout", tmp_path / "archived"
+    for target in (checkout, archived):
+        target.mkdir()
+        _ = (target / "SKILL.md").write_text("---\nname: sample\ndescription: test\n---\n")
+    _ = scaffold(checkout)
+    result = subprocess.run([sys.executable, "-I", str(source_archive), str(archived)],
+                            capture_output=True, text=True, check=False, timeout=60)
+    assert result.returncode == 0, result.stderr
+    package = files("skillz_experiments")
+    assert json.loads(result.stdout) == {
+        "engine": engine_hash(), "scoring": scoring_digest(PACKAGE), "leakage": leakage_digest(PACKAGE),
+        "source": package.joinpath("_journey_gate.py").read_bytes().hex(),
+    }
+    assert (archived / "evals/autoimprove.json").read_bytes() == (checkout / "evals/autoimprove.json").read_bytes()
+    assert (archived / "evals/gates/journey.py").read_bytes() == (checkout / "evals/gates/journey.py").read_bytes()
+
+
+@pytest.mark.ac("gh-581:AC-9")
+def test_archive_probe_denies_a_real_archive_file(source_archive: Path, tmp_path: Path) -> None:
+    from skillz_experiments.harness._isolation import probe
+
+    virtual_engine = source_archive / "skillz_experiments/harness/_isolation.py"
+    script = probe(tmp_path, tmp_path / "absent-sealed", virtual_engine, 0)
+    assert source_archive.is_file()
+    assert str(source_archive) in script
+    result = subprocess.run([sys.executable, "-c", script], cwd=tmp_path,
+                            capture_output=True, text=True, check=False, timeout=10)
+    assert result.returncode != 0
+    assert "read isolation failed" in result.stderr
