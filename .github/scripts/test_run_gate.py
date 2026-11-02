@@ -395,6 +395,7 @@ class GateRunnerTest(unittest.TestCase):
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual([path.name for path in (root / "skip" / "durations").iterdir()], ["skillz-pytest.2of4.json"])
+
     def test_every_pytest_lane_writes_its_own_coverage_then_the_coverage_lane_runs_last(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
