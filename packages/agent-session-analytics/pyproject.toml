@@ -52,6 +52,8 @@ fromargs = { workspace = true }
 testpaths = ["tests"]
 markers = ["ac(id): ties a test to an acceptance-criterion ID"]
 addopts = "--strict-markers"
+# Remove the tmp_path of a passed test at its teardown, so one gate run does not fill the disk.
+tmp_path_retention_policy = "failed"
 
 [tool.basedpyright]
 pythonVersion = "3.11"
