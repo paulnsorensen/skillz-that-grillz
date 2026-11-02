@@ -234,3 +234,59 @@ max_seconds = 20
 "tests/skillz_inspect/test_press_inspect.py" = { max_seconds = 48, reason = "Slowest of CI runs 41417007579 and 41419094652: 19.0 s, before the prune PR." }
 "tests/skillz_live/test_changelog_proof.py" = { max_seconds = 34, reason = "Slowest of CI runs 41417007579 and 41419094652: 13.5 s, before the prune PR." }
 "tests/skillz_live/test_live_smoke.py" = { max_seconds = 76, reason = "Slowest of CI runs 41417007579 and 41419094652: 30.1 s, before the prune PR." }
+
+# Test-size ratchet (.github/scripts/check_test_counts.py): the cases that pytest collects from one test file, and the
+# rows of one parametrized test function. A ceiling only goes down; run `tighten` after a waived count falls.
+[tool.skillz.test-size]
+max_cases = 80
+max_rows = 12
+
+[tool.skillz.test-size.files]
+"packages/fromargs/tests/test_run.py" = { max_cases = 84, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_claude.py" = { max_cases = 287, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_gemini.py" = { max_cases = 83, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_graders.py" = { max_cases = 81, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_mode_fixtures.py" = { max_cases = 125, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_autoimprove.py" = { max_cases = 194, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_graders.py" = { max_cases = 90, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_harness_sandbox.py" = { max_cases = 168, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_inspect_v4.py" = { max_cases = 83, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_new_cli.py" = { max_cases = 98, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_token_cost.py" = { max_cases = 110, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_wedge_targets.py" = { max_cases = 85, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_redact.py" = { max_cases = 118, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_run_search.py" = { max_cases = 118, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_skillz_autoimprove_journeys.py" = { max_cases = 113, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_inspect/test_inspect_parity.py" = { max_cases = 104, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/wedge/tests/wedge/test_press_targets.py" = { max_cases = 121, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+
+[tool.skillz.test-size.functions]
+"packages/agent-session-analytics/tests/test_cli.py::test_invalid_duckdb_setting_fails_before_the_stage_step" = { max_rows = 14, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_codex_journey.py::test_codex_converse_does_not_treat_missing_read_or_failed_turn_as_success" = { max_rows = 19, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_contract.py::test_contract_surface_rejects_a_malformed_block" = { max_rows = 15, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_facts.py::test_each_check_fails_on_its_fixture" = { max_rows = 23, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_family_budgets.py::test_an_invalid_family_value_in_a_contract_is_refused_by_code" = { max_rows = 17, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_graders.py::test_a_failed_capture_scores_zero_and_skips_the_judge" = { max_rows = 19, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_judge_verdicts.py::test_ac1_a_reply_that_omits_adds_or_misranges_a_level_is_an_invalid_judge_response" = { max_rows = 14, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_mode_fixtures.py::test_grader_longest_sentence_matches_the_inspector" = { max_rows = 15, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_mode_fixtures.py::test_seeded_bad_output_is_rejected_by_the_mode_grader" = { max_rows = 43, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_new_cli.py::test_a_bad_component_rejects_the_candidate_with_its_code" = { max_rows = 21, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_autoimprove.py::test_gate_is_sign_symmetric_scale_invariant_and_order_free" = { max_rows = 40, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_autoimprove.py::test_split_invariants_hold_for_random_drafts" = { max_rows = 20, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_autoimprove.py::test_tampered_budget_never_exceeds_the_approved_ceiling_on_resume" = { max_rows = 13, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_contract.py::test_run_with_hostile_skill_contract_exits_with_a_structured_error" = { max_rows = 29, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_graders.py::test_command_grader_scores_only_an_exact_numeric_score_in_range" = { max_rows = 15, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_press_harness_sandbox.py::test_supported_rejectsMalformedOrOlderBanners" = { max_rows = 15, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_redact.py::test_a_quote_that_only_looks_like_an_apostrophe_opens_a_value" = { max_rows = 13, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_redact.py::test_a_quoted_credential_key_at_two_or_more_escape_layers_redacts_its_value" = { max_rows = 24, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_redact.py::test_a_unicode_apostrophe_after_a_credential_key_redacts_like_an_ascii_quote" = { max_rows = 15, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_schemas.py::test_schema_and_python_reader_agree_on_the_shared_examples" = { max_rows = 55, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_seed.py::test_a_malformed_evals_file_stops_with_evals_unreadable" = { max_rows = 15, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_skillz_autoimprove_journeys.py::test_the_gate_fails_each_hard_rule" = { max_rows = 14, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_skillz_journey_gate_approval.py::test_the_gate_requires_the_stop_hash_in_the_text_after_a_cases_unapproved_stop" = { max_rows = 16, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_experiments/test_statistics.py::test_an_invalid_statistics_block_fails_parse_with_a_code" = { max_rows = 13, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_inspect/test_inspect_parity.py::test_every_failure_kind_exits_three_with_one_json_line_on_stderr_and_nothing_else" = { max_rows = 17, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_inspect/test_inspect_parity.py::test_pyz_reports_what_the_old_inspector_reported_for_tricky_content" = { max_rows = 28, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/skillz/tests/skillz_live/test_fromargs_benefit.py::test_the_oracle_applies_each_rule_of_the_fixture_skill" = { max_rows = 23, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/wedge/tests/wedge/test_config_properties.py::test_an_edge_value_where_it_takes_effect_is_a_config_error" = { max_rows = 42, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
+"packages/wedge/tests/wedge/test_press_targets.py::test_load_targets_unsafe_target_name_is_a_config_error" = { max_rows = 13, reason = "Pre-existing at adoption; keep its measured ceiling until it shrinks." }
