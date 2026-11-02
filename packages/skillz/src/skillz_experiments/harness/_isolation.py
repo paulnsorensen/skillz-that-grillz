@@ -107,7 +107,8 @@ def probe(workspace: Path, sealed: Path, engine: Path, port: int, *, link: str =
     On other systems, the script allows none of them.
     """
     allowed = {"PATH", "HOME", "TMPDIR", "LANG", "LC_CTYPE", "__CF_USER_TEXT_ENCODING"}
-    denied = [str(sealed), str(workspace / link), str(engine)]
+    engine_file = next((path for path in (engine, *engine.parents) if path.is_file()), engine)
+    denied = [str(sealed), str(workspace / link), str(engine_file)]
     return (
         "import os,pathlib,socket,sys\n"
         f"for name in {denied!r}:\n"
