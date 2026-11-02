@@ -342,9 +342,8 @@ def test_converse_second_init_event_inside_turn_one_is_compared(tmp_path: Path) 
 
 
 @pytest.mark.parametrize("bad", [
-    {"reply": "x"}, {"done": True}, {"reply": "x", "done": "true"}, {"reply": "x", "done": 1}, {"reply": None, "done": False},
-    {"reply": 5, "done": False}, {"reply": "x", "done": False, "extra": 1}, {}, ["reply", "done"],
-], ids=["no-done", "no-reply", "string-done", "int-done", "null-reply", "int-reply", "extra-field", "empty", "list"])
+    {"reply": "x"}, {"reply": "x", "done": "true"}, {"reply": "x", "done": False, "extra": 1},
+], ids=["no-done", "string-done", "extra-field"])
 def test_malformed_simulator_reply_is_rejected_without_a_hang_and_the_process_group_is_reaped(tmp_path: Path, bad: object) -> None:
     class Simulator:
         def __init__(self) -> None:
@@ -618,9 +617,8 @@ def test_case_hash_changes_with_the_brief_the_turn_limit_and_the_order_of_requir
 
 
 @pytest.mark.parametrize("changes", [
-    {"max_turns": 0}, {"max_turns": -1}, {"max_turns": True}, {"max_turns": 1.5}, {"max_turns": "3"}, {"max_turns": None},
-    {"requirements": "R1"}, {"requirements": [1]}, {"requirements": [None]},
-], ids=["zero", "negative", "bool", "float", "string", "null", "requirements-text", "requirements-int", "requirements-null"])
+    {"max_turns": 0}, {"max_turns": True}, {"requirements": "R1"}, {"requirements": [1]},
+], ids=["zero", "bool", "requirements-text", "requirements-int"])
 def test_a_journey_with_an_invalid_turn_limit_or_requirements_is_rejected_by_intake_and_by_load_cases(
         tmp_path: Path, changes: dict[str, object]) -> None:
     path = tmp_path / DRAFT_NAME

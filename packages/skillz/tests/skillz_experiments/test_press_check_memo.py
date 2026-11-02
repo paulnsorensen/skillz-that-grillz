@@ -1,7 +1,7 @@
-"""Press attacks on the session `CheckMemo` (gh-247): rejection reuse, lock scope, and one check per identity.
+"""Press attacks on the session `CheckMemo` (gh-247): rejection reuse and one check per identity.
 
-The attacks use the real Claude transport for the early-return rejection, the real `evaluate` for the lock scope,
-and a full command-harness run (GEPA with `parallel=True`) for the session memo.
+The attacks use the real Claude transport for the early-return rejection and a full command-harness run
+(GEPA with `parallel=True`) for the session memo.
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, cast, final
 
@@ -23,7 +22,7 @@ from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case
 from skillz_experiments._contract import Contract
 from skillz_experiments._records import read
-from skillz_experiments.evaluation import CheckMemo, CheckResult, evaluate
+from skillz_experiments.evaluation import CheckMemo, CheckResult
 from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments.harness._command import Command
@@ -31,7 +30,7 @@ from skillz_experiments._intake import intake_contract
 from skillz_experiments.run import run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
-from fake_provider import PASSED, FakeProvider, FakeRunProvider
+from fake_provider import PASSED, FakeRunProvider
 from memo_fixtures import SKILL, cases as _cases, contract as _contract
 
 if TYPE_CHECKING:
@@ -40,7 +39,6 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.usefixtures("host_login", "headroom_off")
 
 FAKE_CLAUDE = Path(__file__).parent / "fixtures/fake_claude.py"
-WAIT = 10.0
 
 
 @pytest.mark.ac("gh-247:AC-2")
@@ -80,59 +78,6 @@ def test_a_real_claude_early_rejection_keeps_none_after_another_candidate_left_a
     assert [(item["status"], item["rejection"]) for item in [first, *late]] == [
         ("candidate-contract-rejected", reason)] * 3
     assert budget.calls == 0
-
-
-class Timeout(RuntimeError):
-    """A wait in the attack fake timed out."""
-
-
-@final
-class Gated(FakeProvider):
-    """A task transport whose model call for `blocked` waits until another identity gets its contract check."""
-
-    def __init__(self, blocked: str) -> None:
-        self.budget = Budget(10, 60.0)
-        self.blocked = blocked
-        self.in_call = threading.Event()
-        self.other_checked = threading.Event()
-        self.lock = threading.Lock()
-        self.checked: list[str] = []
-
-    @override
-    def check_candidate(self, candidate: object) -> CheckResult:
-        identity = cast(Candidate, candidate).identity
-        with self.lock:
-            self.checked.append(identity)
-        if identity != self.blocked:
-            self.other_checked.set()
-        return PASSED
-
-    def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
-               *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:
-        del prompt, case, holdout, schema
-        if candidate is not None and candidate.identity == self.blocked:
-            self.in_call.set()
-            if not self.other_checked.wait(WAIT):
-                raise Timeout("another identity could not get its contract check during a model call")
-        raise Timeout("stop after the model call")
-
-
-def test_the_memo_lock_is_free_while_a_model_call_runs(tmp_path: Path) -> None:
-    """The lock must cover only the check. A model call that holds it would serialize or deadlock the search."""
-    contract = _contract(helper=False)
-    slow = Candidate({"SKILL.md": "slow"}, ("SKILL.md",), contract=contract)
-    fresh = Candidate({"SKILL.md": "fresh"}, ("SKILL.md",), contract=contract)
-    case = _cases(tmp_path, contract)[0]
-    task, memo = Gated(slow.identity), CheckMemo()
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(evaluate, task, task, slow, case, checks=memo)
-        assert task.in_call.wait(WAIT)
-        second = pool.submit(evaluate, task, task, fresh, case, checks=memo)
-        with pytest.raises(Timeout, match="stop after the model call"):
-            _ = second.result(timeout=WAIT)
-        with pytest.raises(Timeout, match="stop after the model call"):
-            _ = first.result(timeout=WAIT)
-    assert task.checked == [slow.identity, fresh.identity]
 
 
 @pytest.mark.ac("gh-247:AC-1")

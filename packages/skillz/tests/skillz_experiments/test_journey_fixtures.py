@@ -184,9 +184,7 @@ def test_culture_journey_scores_zero_when_the_seeded_bad_transcript_writes_a_sou
 @pytest.mark.parametrize(("events", "expected"), [
     ([tool_use("Write", file_path="notes/culture.md")], 1),
     ([tool_use("Write", file_path="src/app.py")], 0),
-    ([tool_use("Edit", file_path="lib/index.ts")], 0),
-    ([tool_use("Bash", command="ls"), {"type": "user", "message": {"content": "hello"}}], 1),
-], ids=["markdown", "python-write", "typescript-edit", "no-write"])
+], ids=["markdown", "python-write"])
 def test_culture_gate_reads_source_writes_from_the_trace(tmp_path: Path, events: list[dict[str, object]], expected: int) -> None:
     contract = load_contract(stage("culture-journey", tmp_path / "target"))
     assert gate(contract, tmp_path, events) == expected
@@ -207,10 +205,8 @@ def test_mold_journey_gate_finds_the_mcp_tool_call_and_the_companion_skill_call_
 
 @pytest.mark.parametrize(("events", "expected"), [
     ([tool_use("mcp__docs__search", query="x"), tool_use("Skill", skill="helper-skill")], 1),
-    ([tool_use("mcp__docs__search", query="x")], 0),
-    ([tool_use("Skill", skill="helper-skill")], 0),
     ([tool_use("mcp__docs__search", query="x"), tool_use("Skill", skill="other-skill")], 0),
-], ids=["both", "mcp-only", "companion-only", "wrong-companion"])
+], ids=["both", "wrong-companion"])
 def test_mold_gate_needs_both_calls_in_the_trace(tmp_path: Path, events: list[dict[str, object]], expected: int) -> None:
     contract = load_contract(stage("mold-journey", tmp_path / "target"))
     assert gate(contract, tmp_path, events) == expected

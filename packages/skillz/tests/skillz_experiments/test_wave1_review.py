@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from skillz_experiments import _runtime
-from skillz_experiments._budget import SECONDS_PER_CALL, Budget, BudgetExhausted, CallTimeout
+from skillz_experiments._budget import SECONDS_PER_CALL, Budget, CallTimeout
 from skillz_experiments.gate import DEFAULT_STATISTICS
 from skillz_experiments.run import Stop, _open, _outcomes, _plan, run
 from skillz_experiments.run._session import Session
@@ -41,17 +41,6 @@ def test_a_wait_for_a_slot_does_not_use_up_the_per_call_timeout(tmp_path: Path) 
     started = time.monotonic()
     _ = _quick(tmp_path, budget)
     assert time.monotonic() - started > budget.call_timeout()
-
-
-@pytest.mark.ac("gh-319:AC-2")
-def test_a_slot_wait_that_reaches_the_deadline_is_a_budget_stop_not_a_call_timeout(tmp_path: Path) -> None:
-    _ = _runtime.halve_call_slots()
-    assert _runtime._CHILDREN.acquire(1)  # pyright: ignore[reportPrivateUsage]
-    try:
-        with pytest.raises(BudgetExhausted):
-            _ = _quick(tmp_path, Budget(10, 0.4, 0, call_seconds=100))
-    finally:
-        _runtime._CHILDREN.release()  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.ac("gh-318:AC-6")

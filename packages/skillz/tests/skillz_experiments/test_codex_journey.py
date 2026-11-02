@@ -160,10 +160,10 @@ def test_codex_later_snapshot_recovers_middle_gap(tmp_path: Path, monkeypatch: p
 
 
 @pytest.mark.usefixtures("host_login")
+# One mode per error message: modes that share a message with a kept mode are left out.
 @pytest.mark.parametrize("mode", ["unloaded", "read_failed", "marker_wrong", "failed", "timeout", "approval",
-                                   "wrong_started", "wrong_thread", "wrong_turn", "no_answer", "request_start",
-                                   "error_start", "unexpected_response", "unexpected_response_start", "unscoped_item",
-                                   "global_wrong_thread", "legacy_event", "invalid_usage", "decreasing_usage"])
+                                   "wrong_started", "wrong_thread", "wrong_turn", "no_answer", "error_start",
+                                   "unexpected_response", "invalid_usage", "decreasing_usage"])
 def test_codex_converse_does_not_treat_missing_read_or_failed_turn_as_success(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
     fake_codex(tmp_path, monkeypatch, mode)
@@ -178,12 +178,9 @@ def test_codex_converse_does_not_treat_missing_read_or_failed_turn_as_success(
         else:
             errors = {"approval": "requested an unsupported client action", "wrong_started": "started another journey thread",
                       "wrong_thread": "changed the journey thread", "wrong_turn": "event for another turn",
-                      "no_answer": "turn has no assistant message", "request_start": "requested an unsupported client action",
-                      "error_start": "rejected request", "unexpected_response": "unexpected response",
-                      "unexpected_response_start": "unexpected response", "unscoped_item": "changed the journey thread",
-                      "global_wrong_thread": "changed the journey thread", "legacy_event": "changed the journey thread",
-                      "invalid_usage": "invalid token usage", "decreasing_usage": "token usage decreased",
-                      "failed": "turn failed"}
+                      "no_answer": "turn has no assistant message", "error_start": "rejected request",
+                      "unexpected_response": "unexpected response", "invalid_usage": "invalid token usage",
+                      "decreasing_usage": "token usage decreased", "failed": "turn failed"}
             expected = CallTimeout if mode == "timeout" else RuntimeError
             with pytest.raises(expected, match=errors.get(mode, "Codex app-server call timed out")):
                 _ = transport.converse("first request", candidate, case, False, lambda _text: Reply("next", False))

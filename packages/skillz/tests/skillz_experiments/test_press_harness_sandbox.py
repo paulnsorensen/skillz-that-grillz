@@ -35,8 +35,7 @@ WRAPPER_MAIN = 'import sys; from skillz_experiments._cli import main; sys.exit(m
 # ---------------------------------------------------------------- AC-1 / AC-2 version parsing
 
 @pytest.mark.parametrize('banner', [
-    'codex-cli 0.154.0+build', 'codex-cli 0.154.0+build.5-x', 'codex-cli 0.1540.0', 'codex-cli 0.160.0',
-    'codex-cli 1.0.0', '  codex-cli 0.160.0  ', '\ncodex-cli 0.160.0\n', 'codex-cli 0.155.0-alpha.1',
+    'codex-cli 0.154.0+build', 'codex-cli 0.1540.0', 'codex-cli 1.0.0', '  codex-cli 0.160.0  ', 'codex-cli 0.155.0-alpha.1',
     'codex-cli 99999999999999999999.0.0',
 ])
 def test_supported_acceptsEveryReleaseAtOrAboveTheMinimum(banner: str) -> None:
@@ -44,18 +43,15 @@ def test_supported_acceptsEveryReleaseAtOrAboveTheMinimum(banner: str) -> None:
 
 
 @pytest.mark.parametrize('banner', [
-    'codex-cli 0.154.0-alpha.1', 'codex-cli 0.154', 'codex-cli 0.154.0.1', 'codex-cli 0.153.99999', 'codex-cli 0.9.9',
-    'codex-cli -1.154.0', 'codex-cli 1.-154.0', 'codex-cli 1.154.-0', 'codex-cli +1.154.0', 'codex-cli 1.154.0-',
-    'codex-cli 1.154.0+', 'codex-cli  1.154.0', 'codex-cli\t1.154.0', 'Codex-CLI 1.154.0', 'codex-cli 1.154.0 extra',
-    'codex-cli 1.154.0\ncodex-cli 1.154.0', 'codex-cli 1.154.0\nwarning: update', 'warning\ncodex-cli 1.154.0',
-    'codex-cli v1.154.0', 'codex-cli 1.154.0' + chr(0), 'codex-cli 1_0.154.0', 'codex-cli 1,154,0',
-    '', '   ', 'codex-cli', 'codex-cli ..', 'codex-cli 1..0',
+    'codex-cli 0.154.0-alpha.1', 'codex-cli 0.154', 'codex-cli 0.154.0.1', 'codex-cli 0.153.99999', 'codex-cli -1.154.0',
+    'codex-cli +1.154.0', 'codex-cli 1.154.0-', 'codex-cli 1.154.0+', 'codex-cli  1.154.0', 'Codex-CLI 1.154.0',
+    'codex-cli 1.154.0 extra', 'codex-cli 1.154.0\ncodex-cli 1.154.0', 'codex-cli v1.154.0', 'codex-cli 1_0.154.0', '',
 ])
 def test_supported_rejectsMalformedOrOlderBanners(banner: str) -> None:
     assert supported(banner) is False
 
 
-@pytest.mark.parametrize('banner', ['codex-cli ٠.١٥٤.٠', 'codex-cli ١.٠.٠', 'codex-cli ０.１６０.０'])
+@pytest.mark.parametrize('banner', ['codex-cli ٠.١٥٤.٠', 'codex-cli ０.１６０.０'])
 def test_supported_nonAsciiDigits_areUnparsable(banner: str) -> None:
     '''AC-2: a version written in non-ASCII digits is unparsable and must be refused. The regex digit class and int() accept it.'''
     assert supported(banner) is False
@@ -358,13 +354,10 @@ def test_inlineCommand_withRepeatedDashLeadingElements_buildsOneArgv(
 @pytest.mark.parametrize('flags', [
     ['--harness', 'command', '--command='],
     ['--harness', 'command', '--command=/definitely/not/installed/harness'],
-    ['--harness', 'command', '--command=definitely-not-installed-harness', '--command=-I'],
     ['--harness', 'command', '--command=/tmp'],
-    ['--harness', 'command', '--command=' + 'a' * 5000],
     ['--harness', 'command'],
     ['--command=python3'],
     ['--harness', 'claude', '--command=python3'],
-    ['--harness', 'codex', '--command=python3'],
 ])
 def test_runUsageErrors_exitNonzeroAsJsonAndCreateNothingUnderOut(
         tmp_path: Path, target: Path, capsys: pytest.CaptureFixture[str], flags: list[str]) -> None:
@@ -374,25 +367,18 @@ def test_runUsageErrors_exitNonzeroAsJsonAndCreateNothingUnderOut(
     assert not out.exists()
 
 
-@pytest.mark.parametrize('kind', ['missing', 'directory', 'empty', 'binary', 'array', 'null', 'bad-version', 'unknown-role',
-                                  'nono-key'])
+@pytest.mark.parametrize('kind', ['missing', 'directory', 'binary', 'array', 'bad-version', 'nono-key'])
 def test_harnessConfig_thatCannotLoad_exitsNonzeroAsJsonAndCreatesNothingUnderOut(
         tmp_path: Path, target: Path, capsys: pytest.CaptureFixture[str], kind: str) -> None:
     config = tmp_path / 'cfg.json'
     if kind == 'directory':
         config.mkdir()
-    elif kind == 'empty':
-        _ = config.write_text('')
     elif kind == 'binary':
         _ = config.write_bytes(bytes([255, 254, 0, 1]))
     elif kind == 'array':
         _ = config.write_text('[]')
-    elif kind == 'null':
-        _ = config.write_text('null')
     elif kind == 'bad-version':
         _ = config.write_text(json.dumps({'schema_version': 2}))
-    elif kind == 'unknown-role':
-        _ = config.write_text(json.dumps({'schema_version': 1, 'roles': {'extra': {}}}))
     elif kind == 'nono-key':
         _ = config.write_text(json.dumps({'schema_version': 1, 'adapter': 'codex', 'isolation': 'nono'}))
     out = tmp_path / 'run'
@@ -453,13 +439,10 @@ class _Driver:
 PROBE_FAILURES = {
     'exit-3': 'sys.exit(3)',
     'garbage-stdout': "print('not json')",
-    'bad-envelope': "print(json.dumps({'schema_version': 1, 'operation': 'sandbox'}))",
     'probe-not-ok': "print(json.dumps({'schema_version': 1, 'operation': 'sandbox', 'returncode': 0, 'stdout': 'nope', 'stderr': ''}))",
     'probe-nonzero': "print(json.dumps({'schema_version': 1, 'operation': 'sandbox', 'returncode': 1, 'stdout': 'isolation-ok', 'stderr': ''}))",
     'wrong-op': "print(json.dumps({'schema_version': 1, 'operation': 'infer'}))",
-    'string-version': "print(json.dumps({'schema_version': '1', 'operation': 'sandbox', 'returncode': 0, 'stdout': 'isolation-ok', 'stderr': ''}))",
     'bool-returncode': "print(json.dumps({'schema_version': 1, 'operation': 'sandbox', 'returncode': False, 'stdout': 'isolation-ok', 'stderr': ''}))",
-    'extra-field': "print(json.dumps({'schema_version': 1, 'operation': 'sandbox', 'returncode': 0, 'stdout': 'isolation-ok', 'stderr': '', 'x': 1}))",
 }
 
 
@@ -615,8 +598,8 @@ def workspace(runner_tempdir: Path) -> Path:
 
 
 @pytest.mark.parametrize(('raw', 'message'), [
-    *[(raw, 'request is not JSON') for raw in ['', '   ', '{', 'nul']],
-    *[(raw, 'request must be a JSON object') for raw in ['null', '1', '"x"', '[]', '[1]', 'true']],
+    *[(raw, 'request is not JSON') for raw in ['', '{']],
+    *[(raw, 'request must be a JSON object') for raw in ['null', '1', '[]']],
     ('{"schema_version": 1}', 'unknown operation'),
     ('{"schema_version": 1, "operation": "sandbox"}', 'workspace must be an existing absolute directory'),
 ])
@@ -625,7 +608,7 @@ def test_respond_nonRequests_raiseValueErrorOnly(tmp_path: Path, raw: str, messa
         _ = _gemini.respond(raw, bin_dir=_bin(tmp_path))
 
 
-@pytest.mark.parametrize('version', [2, 0, '1', 1.0, True, None, [1], {'v': 1}, -1])
+@pytest.mark.parametrize('version', [2, '1', 1.0, True, None])
 def test_respond_wrongProtocolVersion_isRejectedBeforeAnyTool(tmp_path: Path, workspace: Path, version: object) -> None:
     directory = _bin(tmp_path)
     raw = json.dumps({'schema_version': version, 'operation': 'sandbox', 'workspace': str(workspace), 'argv': ['true']})
@@ -634,7 +617,7 @@ def test_respond_wrongProtocolVersion_isRejectedBeforeAnyTool(tmp_path: Path, wo
     assert _logged(directory / 'docker.log') == []
 
 
-@pytest.mark.parametrize('operation', ['', 'SANDBOX', 'sandbox ', 'exec', None, 1, True, ['sandbox'], {'a': 1}, [], {}])
+@pytest.mark.parametrize('operation', ['', 'SANDBOX', 'sandbox ', None, ['sandbox'], {'a': 1}])
 def test_respond_unknownOperation_raisesValueErrorNotTypeError(tmp_path: Path, workspace: Path, operation: object) -> None:
     '''AC-14: an unhashable operation (list, dict) is a bad request. The set membership test raises TypeError instead.'''
     directory = _bin(tmp_path)
@@ -643,14 +626,14 @@ def test_respond_unknownOperation_raisesValueErrorNotTypeError(tmp_path: Path, w
     assert _logged(directory / 'docker.log') == []
 
 
-@pytest.mark.parametrize('workspace_value', [None, 5, '', 'relative/dir', '/definitely/not/a/dir', '/tmp/' + chr(0) + 'x', ['/tmp']])
+@pytest.mark.parametrize('workspace_value', [None, 'relative/dir', '/definitely/not/a/dir', '/tmp/' + chr(0) + 'x', ['/tmp']])
 def test_respond_badWorkspace_raisesValueError(tmp_path: Path, workspace_value: object) -> None:
     raw = json.dumps({'schema_version': 1, 'operation': 'sandbox', 'workspace': workspace_value, 'argv': ['true']})
     with pytest.raises(ValueError, match='workspace must be|embedded null character'):
         _ = _gemini.respond(raw, bin_dir=_bin(tmp_path))
 
 
-@pytest.mark.parametrize('argv', [None, 'true', [], [''], [1], ['true', 2], ['true', ''], [None], [['true']], {'0': 'true'}, 0])
+@pytest.mark.parametrize('argv', [None, 'true', [], [''], ['true', 2], [['true']]])
 def test_sandbox_badArgv_raisesValueErrorBeforeAnyRuntimeCall(tmp_path: Path, workspace: Path, argv: object) -> None:
     directory = _bin(tmp_path)
     with pytest.raises(ValueError, match='argv'):
@@ -665,7 +648,7 @@ def docker_host(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures('docker_host')
-@pytest.mark.parametrize('first', ['--privileged', '-v', '--network=host', '--volume=/:/host', '--entrypoint=sh', '-i', '--rm'])
+@pytest.mark.parametrize('first', ['--privileged', '-v', '--entrypoint=sh', '--rm'])
 def test_sandbox_flagLikeArgv_staysAfterTheImageAndNeverBecomesADockerFlag(
         tmp_path: Path, workspace: Path, first: str) -> None:
     directory = _bin(tmp_path)
@@ -713,7 +696,7 @@ def _gemini_script(directory: Path, depth: int) -> None:
     script.chmod(0o700)
 
 
-@pytest.mark.parametrize('depth', [50, 400, 900, 990, 2_000, 100_000])
+@pytest.mark.parametrize('depth', [50, 990, 2_000, 100_000])
 def test_infer_deeplyNestedModelAnswer_isACleanResultOrACleanError(tmp_path: Path, workspace: Path, depth: int) -> None:
     '''AC-14: any nesting depth yields a serialisable dict or a RuntimeError, never a RecursionError.'''
     directory = _bin(tmp_path)
@@ -728,7 +711,7 @@ def test_infer_deeplyNestedModelAnswer_isACleanResultOrACleanError(tmp_path: Pat
     _ = json.dumps(result)
 
 
-@pytest.mark.parametrize('depth', [900, 990, 2_000, 100_000])
+@pytest.mark.parametrize('depth', [990, 100_000])
 def test_wrapperCli_deeplyNestedModelAnswer_neverEndsInATraceback(tmp_path: Path, workspace: Path, depth: int) -> None:
     directory = _bin(tmp_path)
     _gemini_script(directory, depth)

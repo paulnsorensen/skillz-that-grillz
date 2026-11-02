@@ -431,11 +431,12 @@ def test_holdout_reaches_the_minimum_when_the_draft_allows_it(tmp_path: Path, si
         assert split == split_cases(cases, seed)
 
 
-@pytest.mark.parametrize("seed", range(60))
-def test_the_fallback_gives_validation_a_family_of_two_cases_when_one_fits(tmp_path: Path, seed: int) -> None:
+def test_the_fallback_gives_validation_a_family_of_two_cases_when_one_fits(tmp_path: Path) -> None:
     """A 1-case validation gives 1 paired delta, and a promotion needs 2. Here a 2-case family fits validation."""
-    counts = counted(split_cases(load_draft(write_draft(tmp_path, sized([1, 1, 2, 2, 6]))), seed))
-    assert counts["validation"][0] >= 2, (seed, counts)
+    cases = load_draft(write_draft(tmp_path, sized([1, 1, 2, 2, 6])))
+    for seed in range(60):
+        counts = counted(split_cases(cases, seed))
+        assert counts["validation"][0] >= 2, (seed, counts)
 
 
 def feasible(sizes: tuple[int, ...]) -> bool:

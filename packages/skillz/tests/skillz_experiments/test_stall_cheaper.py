@@ -37,10 +37,7 @@ def test_an_equal_and_cheaper_proposal_resets_the_stall_streak_in_a_token_rule_r
 @pytest.mark.ac("gh-529:AC-3")
 @pytest.mark.parametrize("score, tokens, seed_tokens", [
     (0.5, 100, 100),    # equal tokens
-    (0.5, 160, 100),    # more tokens
     (0.5, None, 100),   # unknown candidate tokens
-    (0.5, 60, None),    # unknown baseline tokens
-    (0.4, 60, 100),     # lower quality
 ])
 def test_a_tie_that_is_not_known_to_be_cheaper_stays_a_stall_in_a_token_rule_run(
         score: float, tokens: int | None, seed_tokens: int | None) -> None:

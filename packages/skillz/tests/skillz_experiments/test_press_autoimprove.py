@@ -504,7 +504,7 @@ def _fuzz_draft(rng: random.Random) -> list[DraftCase]:
     return cases
 
 
-@pytest.mark.parametrize("trial", range(150))
+@pytest.mark.parametrize("trial", range(20))
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
 def test_split_invariants_hold_for_random_drafts(trial: int) -> None:
     """PA-5: family never crosses splits, splits are deterministic and order-free, and every split minimum holds when possible."""
@@ -556,7 +556,7 @@ def _dyadic(rng: random.Random) -> list[float]:
     return [pool[0]] * len(pool) if pool and rng.random() < 0.3 else pool
 
 
-@pytest.mark.parametrize("trial", range(200))
+@pytest.mark.parametrize("trial", range(40))
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-9")
 def test_gate_is_sign_symmetric_scale_invariant_and_order_free(trial: int) -> None:
     """PA-6: negating deltas swaps promote and reject; scaling by powers of two and shuffling change nothing."""

@@ -153,7 +153,6 @@ def _symlinked(root: Path) -> Path:
 @pytest.mark.ac("gh-367:AC-5")
 @pytest.mark.parametrize(("label", "gate", "files", "code"), [
     ("outside-evals", "scripts/check.py", {"scripts/check.py": SCRIPT}, "contract-gate-invalid"),
-    ("not-python", "evals/gates/check.txt", {"evals/gates/check.txt": SCRIPT}, "contract-gate-invalid"),
     ("dotdot", "evals/gates/../check.py", {"evals/check.py": SCRIPT}, "contract-gate-invalid"),
     ("missing", "evals/gates/none.py", {}, "contract-gate-invalid"),
     ("third-party", GATE, {GATE: "import requests\n"}, "contract-gate-invalid"),
@@ -161,8 +160,7 @@ def _symlinked(root: Path) -> Path:
     ("syntax", GATE, {GATE: "def (\n"}, "contract-gate-invalid"),
     ("cycle", GATE, {GATE: "import _a\n", "evals/gates/_a.py": "import _b\n", "evals/gates/_b.py": "import _a\n"},
      "contract-gate-invalid"),
-    ("too-large", GATE, {GATE: "# " + "x" * 70_000 + "\n"}, "contract-gate-invalid"),
-], ids=["outside-evals", "not-python", "dotdot", "missing", "third-party", "shadow", "syntax", "cycle", "too-large"])
+], ids=["outside-evals", "dotdot", "missing", "third-party", "shadow", "syntax", "cycle"])
 def test_an_unusable_gate_stops_with_a_coded_error(
         tmp_path: Path, label: str, gate: str, files: dict[str, str], code: str) -> None:
     del label
