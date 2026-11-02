@@ -4,6 +4,7 @@ These records explain three gates ported from paulnsorensen/milknado: the file-s
 (`.github/scripts/check_file_lengths.py`), the whole-symbol dead-code gate (`.github/scripts/check_dead_code_coverage.py`),
 and the coverage gate (`.github/scripts/check_coverage.py`).
 milknado runs them in `just check-llm` as `file-size`, `dead-code-coverage`, and the project and diff coverage steps.
+ADR-004 records how the CI shards split the skillz lanes by committed test durations.
 
 ## Records
 
@@ -25,4 +26,10 @@ milknado runs them in `just check-llm` as `file-size`, `dead-code-coverage`, and
 - **Decision:** A module name is the path below `packages/<name>/src`. Exemptions are the `[tool.vulture].ignore_decorators` patterns, the `[project.scripts]` targets of every workspace package, and the `module:qualname` entries in `[tool.skillz.dead-code].allow`. Each allow entry carries a comment that says why no test reaches the symbol.
 - **Consequences:** A function that only a built `.pyz` archive or a live harness runs needs a test, a `# pragma: no cover`, or an allow entry. A function whose whole body is on its `def` line cannot be flagged.
 
-_Source: milknado `scripts/check_file_lengths.py`, `scripts/check_dead_code_coverage.py`, and `justfile` `check-llm` at origin/main 39e9247 · Updated: 2026-10-29_
+### ADR-004: CI shards split the skillz lanes by committed test durations  [status: accepted]
+
+- **Context:** The six CI shards split the two skillz lanes by collection position modulo six (`.github/scripts/pytest_shard.py`). That split ignores the duration of each test, so one slow module can make one shard the longest job.
+- **Decision:** pytest-split replaces the modulo plugin. With `GATE_SHARD=<n>/6`, `run_gate.py skillz` runs each lane with `--splits 6 --group <n> --splitting-algorithm least_duration`. The split reads `packages/skillz/.test_durations`, a committed JSON map of test id to seconds. pytest-split reads and writes one `--durations-path`, so each lane starts from a copy of the committed file below `$GATE_COVERAGE_DIR/durations/`. `--store-durations --clean-durations` then replaces the copy with the durations of this shard's tests. The `coverage` job merges the six shard uploads with `merge_durations.py` into the `test-durations` artifact. The merge fails when a test is in two files. A test that the file does not name gets the mean duration of the named tests.
+- **Consequences:** The committed file is the one reviewable data source for the shard split. The seed file gives each collected test the same value (0.1 s), so the first split balances by test count. A refresh replaces the file with the merged CI artifact; until then, renamed and new tests get the mean. Local `just build` and `just ci` leave `GATE_SHARD` unset and run each lane whole. The selection runs in each xdist worker; it is deterministic, so every worker of one shard selects the same tests.
+
+_Source: milknado `scripts/check_file_lengths.py`, `scripts/check_dead_code_coverage.py`, and `justfile` `check-llm` at origin/main 39e9247; ADR-004 from spec `test-suite-cost-gates` (F-3) · Updated: 2026-11-02_

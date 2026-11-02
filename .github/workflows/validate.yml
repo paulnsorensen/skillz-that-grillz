@@ -163,6 +163,16 @@ jobs:
           retention-days: 5
           overwrite: true
 
+      - name: Upload shard durations
+        # pytest-split stores the durations of the tests that this shard ran, one file per skillz lane.
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: durations-shard-${{ matrix.shard }}
+          path: ${{ runner.temp }}/coverage/durations/*.json
+          if-no-files-found: error
+          retention-days: 5
+          overwrite: true
+
   coverage:
     # The gate job and the six skillz shards each measure part of the pytest lanes. This job combines
     # their data, then checks the project floor, whole-symbol dead code, and the diff coverage.
@@ -193,6 +203,27 @@ jobs:
           pattern: coverage-*
           path: ${{ runner.temp }}/coverage
           merge-multiple: true
+
+      - name: Download shard durations
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: durations-shard-*
+          path: ${{ runner.temp }}/durations
+          merge-multiple: true
+
+      - name: Merge shard durations
+        # The merged file replaces packages/skillz/.test_durations when the durations are refreshed.
+        run: python .github/scripts/merge_durations.py "$RUNNER_TEMP/durations" "$RUNNER_TEMP/test-durations/.test_durations"
+
+      - name: Upload merged durations
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: test-durations
+          path: ${{ runner.temp }}/test-durations/.test_durations
+          if-no-files-found: error
+          # upload-artifact v4 and later skip dotfiles unless this is set.
+          include-hidden-files: true
+          overwrite: true
 
       - name: Check coverage
         run: uv run --locked python .github/scripts/check_coverage.py "$RUNNER_TEMP/coverage"
