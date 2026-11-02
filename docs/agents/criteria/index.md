@@ -30,6 +30,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 <!-- HALLOUMINATE:INDEX-START -->
 - [autoimprove-authoring-headroom](./autoimprove-authoring-headroom.md) — autoimprove-authoring-headroom: stop a run when the seed already saturates a family
 - [autoimprove-live-proof](./autoimprove-live-proof.md) — autoimprove-live-proof: the autoimprove journey promotes a planted-defect fix with a suggested CLI
+- [autoimprove-useful-answer](./autoimprove-useful-answer.md) — autoimprove-useful-answer: a stopped baseline answers a diagnosis, and a missing fixture stops before a call
 - [fromargs-benefit-smoke](./fromargs-benefit-smoke.md) — fromargs-benefit-smoke: autoimprove writes its own eval and ships a fromargs CLI
 - [fromargs-cli-library](./fromargs-cli-library.md) — fromargs-cli-library: fromargs public contract
 - [gh-131](./gh-131.md) — gh-131: the network preflight probes and the macOS live path
