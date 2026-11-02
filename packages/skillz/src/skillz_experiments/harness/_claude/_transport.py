@@ -4,7 +4,6 @@ import json
 import os
 import secrets
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -28,6 +27,7 @@ from skillz_experiments.harness._check import (
     SUBSCRIPTION_LOGIN,
     UNVERIFIED_CREDENTIAL,
 )
+from skillz_experiments.harness._claude._capture import take_stderr
 from skillz_experiments.harness._claude._constants import (
     AUTH_FAILED,
     INSTALL_BUBBLEWRAP,
@@ -87,9 +87,6 @@ NETWORK_PROBE = "loopback-dns-nonloopback-v3"
 READ_PROBE = "read-tool-outside-workspace-v4"
 
 
-SANDBOX_STDERR_LIMIT = 100_000
-
-
 # Settings sources that Claude Code reads besides `--settings`. `project` keeps the staged project skill and drops user
 # settings, user skills, and plugins. `--restricted` would also drop the project skill, so the runner does not use it.
 SETTING_SOURCES = "project"
@@ -105,35 +102,10 @@ INVENTORY_SECONDS = 60
 MCP_FILE = "mcp.json"
 
 
-def _take_stderr(capture: Path) -> str:
-    """Read the command's standard error file. A link, a special file, or a missing file reads as empty. Never raises."""
-    try:
-        descriptor = os.open(capture / SANDBOX_STDERR, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
-        return ""
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            os.close(descriptor)
-            return ""
-    except OSError:
-        os.close(descriptor)
-        return ""
-    try:
-        handle = os.fdopen(descriptor, "rb")
-    except OSError:
-        os.close(descriptor)
-        return ""
-    try:
-        with handle:
-            data = handle.read(SANDBOX_STDERR_LIMIT)
-    except OSError:
-        return ""
-    return data.decode("utf-8", errors="replace")
-
-
 @final
 class ClaudeCode:
     claude_sandbox: ClassVar[bool] = True
+    surface_tools: ClassVar[frozenset[str] | None] = None
     refuses_claude_options: ClassVar[bool] = False
     role: str = "task"
 
@@ -546,7 +518,7 @@ class ClaudeCode:
             redirect_failed = result.stderr.strip() != "" and not os.path.lexists(capture / SANDBOX_STDERR)
             if result.returncode != 0 and (result.stderr.startswith(f"{name}:") or redirect_failed):
                 raise SandboxUnavailable(f"sandbox setup fails: {result.stderr[:200].strip()}", sandbox_fix(result.stderr))
-            return result.returncode, result.stdout, _take_stderr(capture)
+            return result.returncode, result.stdout, take_stderr(capture)
         finally:
             remove_tree(capture)
 

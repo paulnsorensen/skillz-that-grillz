@@ -18,7 +18,7 @@ from typing import cast, final
 
 import pytest
 
-from skillz_experiments.harness._claude import _constants, _sandbox, _transport
+from skillz_experiments.harness._claude import _capture, _constants, _sandbox, _transport
 import skillz_experiments.evaluation._scoring as evaluation_module
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments._cases import CodedError
@@ -518,9 +518,9 @@ def test_bubblewrap_argv_without_a_capture_directory_sends_stderr_to_the_null_de
 
 
 def test_the_capture_reader_returns_a_regular_file_and_nothing_else(tmp_path: Path) -> None:
-    take = _transport._take_stderr  # pyright: ignore[reportPrivateUsage]
+    take = _capture.take_stderr
     name = _constants.SANDBOX_STDERR
-    limit = _transport.SANDBOX_STDERR_LIMIT
+    limit = _capture.SANDBOX_STDERR_LIMIT
     assert take(tmp_path) == ""
     _ = (tmp_path / name).write_text("hello")
     assert take(tmp_path) == "hello"
@@ -540,7 +540,7 @@ def test_the_capture_reader_returns_a_regular_file_and_nothing_else(tmp_path: Pa
 
 @pytest.mark.skipif(not Path("/proc/self/fd").is_dir(), reason="needs /proc/self/fd")
 def test_the_capture_reader_leaks_no_descriptor_for_a_directory(tmp_path: Path) -> None:
-    take = _transport._take_stderr  # pyright: ignore[reportPrivateUsage]
+    take = _capture.take_stderr
     (tmp_path / _constants.SANDBOX_STDERR).mkdir()
     before = len(os.listdir("/proc/self/fd"))
     for _ in range(50):

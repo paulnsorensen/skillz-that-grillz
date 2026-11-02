@@ -2932,14 +2932,6 @@ def test_contract_surface_candidate_mcp_config_text_is_fixed(tmp_path: Path) -> 
     assert caught.value.code == "contract-surface"
 
 
-def test_contract_surface_unsupported_for_a_non_claude_task_role(tmp_path: Path) -> None:
-    config = tmp_path / "harness.json"
-    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "codex"}))
-    with pytest.raises(CodedError, match="only the claude harness") as caught:
-        _ = Configuration.load(config, "m").create("m", Budget(10, 120, 0), lambda: None, None, SURFACE, SURFACE_FILES)
-    assert caught.value.code == "contract-surface-unsupported"
-
-
 @pytest.mark.parametrize("mode", ["surface-mcp", "surface-agent", "surface-skill"])
 def test_contract_surface_declared_server_agent_or_skill_passes_the_preflight(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sandbox_passes: None, mode: str) -> None:

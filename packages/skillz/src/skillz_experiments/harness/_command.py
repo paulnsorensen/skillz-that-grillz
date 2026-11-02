@@ -130,6 +130,7 @@ def _failure(stderr: str) -> str:
 @final
 class Command:
     claude_sandbox: ClassVar[bool] = False
+    surface_tools: ClassVar[frozenset[str] | None] = frozenset()
     refuses_claude_options: ClassVar[bool] = False
     role: str = "task"
 
