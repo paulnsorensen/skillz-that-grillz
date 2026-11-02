@@ -36,6 +36,8 @@ DEFAULT_HOST_SLOTS = 2
 COVERAGE_DIR_VARIABLE = "GATE_COVERAGE_DIR"
 # The serial lane that combines the lane data and runs check_coverage.py after every other lane passes.
 COVERAGE_LANE = "coverage"
+# The report-only step that prints the per-file test times of the committed durations (quality-ratchets ADR-006).
+TIME_REPORT = "test-time-report"
 
 
 def _environment() -> dict[str, str]:
@@ -65,18 +67,21 @@ def _sharded(jobs: list[Job], shard: str, directory: Path) -> list[Job]:
     """Run one group of each lane; each lane stores its durations to `<directory>/<lane>.<i>of<n>.json`.
 
     Each lane starts from a copy of the committed durations file, so the split reads the committed data.
-    Remove the durations files of an earlier run first: a retry that skips a lane must not leave that lane's
-    stale copy, because the merge rejects a test id that two files hold.
+    Each lane also writes a JUnit report to `<lane>.<i>of<n>.xml`: its `tests` count is the count of tests that
+    the shard selected, which the time ratchet compares with the merged durations (quality-ratchets ADR-006).
+    Remove the files of an earlier run first: a retry that skips a lane must not leave that lane's stale copy,
+    because the merge rejects a test id that two files hold.
     """
     index, count = parse_shard(shard)
     directory.mkdir(parents=True, exist_ok=True)
-    for stale in directory.glob("*.json"):
+    for stale in [*directory.glob("*.json"), *directory.glob("*.xml")]:
         stale.unlink()
     sharded: list[Job] = []
     for name, command in jobs:
         durations = directory / f"{name}.{index}of{count}.json"
         _ = shutil.copyfile(DURATIONS_FILE, durations)
-        sharded.append((name, command + split_arguments(index, count, durations)))
+        junit = ["--junitxml", str(directory / f"{name}.{index}of{count}.xml")]
+        sharded.append((name, command + junit + split_arguments(index, count, durations)))
     return sharded
 
 
@@ -310,6 +315,7 @@ def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None
         ("pr-title-workflow-tests", root + ["python", ".github/scripts/test_pr_title_workflow.py"]),
         ("dist-publisher-tests", root + ["python", ".github/scripts/test_publish_dist.py"]),
         ("durations-merge-tests", root + ["python", ".github/scripts/test_merge_durations.py"]),
+        ("durations-check-tests", root + ["python", ".github/scripts/test_check_test_durations.py"]),
         pytest("agent-session-analytics-pytest", analytics, ["packages/agent-session-analytics/tests"], "a"),
         ("fromargs-typecheck", fromargs + ["basedpyright", "--project", "packages/fromargs"]),
         ("wedge-check", wedge + ["wedge", "check", "--root", "packages/wedge/examples/skills",
@@ -349,6 +355,23 @@ def _coverage(data_dir: Path, skip: frozenset[str]) -> int:
     return 0 if run_step(COVERAGE_LANE, command) else 1
 
 
+def _time_report() -> None:
+    """Print the per-file test-time report of the committed durations; it never fails the gate (ADR-006).
+
+    The local host often runs other gates and agents, so only the CI coverage job enforces the time ceilings.
+    """
+    command = ["uv", "run", "--locked", "--no-sync", "--all-groups", "python",
+               ".github/scripts/check_test_durations.py", "report", str(DURATIONS_FILE)]
+    _check_cancelled()
+    print(f"→ {TIME_REPORT}", flush=True)
+    try:
+        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, env=_environment(), check=False)
+    except OSError as error:
+        print(f"- {TIME_REPORT} (not run: {error})", flush=True)
+        return
+    print(f"• {TIME_REPORT} (report only)\n{result.stdout}{result.stderr}", end="", flush=True)
+
+
 def _without(jobs: list[Job], skip: frozenset[str]) -> list[Job]:
     for name, _ in jobs:
         if name in skip:
@@ -381,9 +404,9 @@ def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: 
     data_dir = coverage_dir(temp_root)
     jobs = _without(_test_jobs(test_workers, temp_root, data_dir) + _check_jobs(), skip)
     with host_slot(slots):
-        if not run_jobs(jobs, workers):
-            return 1
-    return _coverage(data_dir, skip)
+        passed = run_jobs(jobs, workers)
+    _time_report()
+    return _coverage(data_dir, skip) if passed else 1
 
 
 def _workers(name: str) -> int:

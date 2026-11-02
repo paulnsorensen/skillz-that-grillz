@@ -149,3 +149,88 @@ max_lines = 300
 "packages/skillz/src/skillz_experiments/search/_history.py" = { max_lines = 334, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/wrapper/_gemini.py" = { max_lines = 492, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/wedge/src/wedge/_build.py" = { max_lines = 641, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+
+# Test-time ratchet (.github/scripts/check_test_durations.py, quality-ratchets ADR-006): the summed CI wall time of
+# each test file, in seconds. A ceiling is 2.5 x the slowest measured run, rounded up; `tighten` lowers improved ceilings.
+[tool.skillz.test-time]
+max_seconds = 20
+
+# Keys are the node-id file prefixes of packages/skillz/.test_durations.
+[tool.skillz.test-time.exceptions]
+"tests/skillz_experiments/e2e/test_auth_env.py" = { max_seconds = 142, reason = "Slowest of CI runs 41417007579 and 41419094652: 56.4 s, before the prune PR." }
+"tests/skillz_experiments/e2e/test_gate_scenarios.py" = { max_seconds = 824, reason = "Slowest of CI runs 41417007579 and 41419094652: 329.4 s, before the prune PR." }
+"tests/skillz_experiments/e2e/test_gemini_wrapper.py" = { max_seconds = 724, reason = "Slowest of CI runs 41417007579 and 41419094652: 289.2 s, before the prune PR." }
+"tests/skillz_experiments/e2e/test_generated_target.py" = { max_seconds = 607, reason = "Slowest of CI runs 41417007579 and 41419094652: 242.4 s, before the prune PR." }
+"tests/skillz_experiments/e2e/test_journeys.py" = { max_seconds = 560, reason = "Slowest of CI runs 41417007579 and 41419094652: 223.7 s, before the prune PR." }
+"tests/skillz_experiments/e2e/test_lifecycle.py" = { max_seconds = 120, reason = "Slowest of CI runs 41417007579 and 41419094652: 47.9 s, before the prune PR." }
+"tests/skillz_experiments/e2e/test_rrsi.py" = { max_seconds = 465, reason = "Slowest of CI runs 41417007579 and 41419094652: 185.6 s, before the prune PR." }
+"tests/skillz_experiments/e2e/test_verdicts.py" = { max_seconds = 1246, reason = "Slowest of CI runs 41417007579 and 41419094652: 498.1 s, before the prune PR." }
+"tests/skillz_experiments/e2e/test_wedge.py" = { max_seconds = 491, reason = "Slowest of CI runs 41417007579 and 41419094652: 196.2 s, before the prune PR." }
+"tests/skillz_experiments/test_ac_marker.py" = { max_seconds = 43, reason = "Slowest of CI runs 41417007579 and 41419094652: 17.1 s, before the prune PR." }
+"tests/skillz_experiments/test_analytics_packs.py" = { max_seconds = 45, reason = "Slowest of CI runs 41417007579 and 41419094652: 17.9 s, before the prune PR." }
+"tests/skillz_experiments/test_autoimprove_claims.py" = { max_seconds = 557, reason = "Slowest of CI runs 41417007579 and 41419094652: 222.5 s, before the prune PR." }
+"tests/skillz_experiments/test_bundle.py" = { max_seconds = 83, reason = "Slowest of CI runs 41417007579 and 41419094652: 33.2 s, before the prune PR." }
+"tests/skillz_experiments/test_call_timeout.py" = { max_seconds = 73, reason = "Slowest of CI runs 41417007579 and 41419094652: 28.9 s, before the prune PR." }
+"tests/skillz_experiments/test_check_timeouts.py" = { max_seconds = 54, reason = "Slowest of CI runs 41417007579 and 41419094652: 21.5 s, before the prune PR." }
+"tests/skillz_experiments/test_claude.py" = { max_seconds = 139, reason = "Slowest of CI runs 41417007579 and 41419094652: 55.3 s, before the prune PR." }
+"tests/skillz_experiments/test_cli_self_test.py" = { max_seconds = 117, reason = "Slowest of CI runs 41417007579 and 41419094652: 46.4 s, before the prune PR." }
+"tests/skillz_experiments/test_codex_model.py" = { max_seconds = 36, reason = "Slowest of CI runs 41417007579 and 41419094652: 14.2 s, before the prune PR." }
+"tests/skillz_experiments/test_command.py" = { max_seconds = 162, reason = "Slowest of CI runs 41417007579 and 41419094652: 64.6 s, before the prune PR." }
+"tests/skillz_experiments/test_compatibility.py" = { max_seconds = 83, reason = "Slowest of CI runs 41417007579 and 41419094652: 33.1 s, before the prune PR." }
+"tests/skillz_experiments/test_document_parser_properties.py" = { max_seconds = 67, reason = "Slowest of CI runs 41417007579 and 41419094652: 26.5 s, before the prune PR." }
+"tests/skillz_experiments/test_export_criteria.py" = { max_seconds = 27, reason = "Slowest of CI runs 41417007579 and 41419094652: 10.8 s, before the prune PR." }
+"tests/skillz_experiments/test_family_budgets.py" = { max_seconds = 55, reason = "Slowest of CI runs 41417007579 and 41419094652: 21.7 s, before the prune PR." }
+"tests/skillz_experiments/test_frontmatter_properties.py" = { max_seconds = 49, reason = "Slowest of CI runs 41417007579 and 41419094652: 19.3 s, before the prune PR." }
+"tests/skillz_experiments/test_gate.py" = { max_seconds = 39, reason = "Slowest of CI runs 41417007579 and 41419094652: 15.4 s, before the prune PR." }
+"tests/skillz_experiments/test_gate_power.py" = { max_seconds = 1214, reason = "Slowest of CI runs 41417007579 and 41419094652: 485.3 s, before the prune PR." }
+"tests/skillz_experiments/test_gate_ratchet.py" = { max_seconds = 143, reason = "Slowest of CI runs 41417007579 and 41419094652: 56.8 s, before the prune PR." }
+"tests/skillz_experiments/test_gate_ratchet_attack.py" = { max_seconds = 86, reason = "Slowest of CI runs 41417007579 and 41419094652: 34.0 s, before the prune PR." }
+"tests/skillz_experiments/test_gemini.py" = { max_seconds = 84, reason = "Slowest of CI runs 41417007579 and 41419094652: 33.4 s, before the prune PR." }
+"tests/skillz_experiments/test_graders.py" = { max_seconds = 78, reason = "Slowest of CI runs 41417007579 and 41419094652: 31.2 s, before the prune PR." }
+"tests/skillz_experiments/test_harness_parser_properties.py" = { max_seconds = 185, reason = "Slowest of CI runs 41417007579 and 41419094652: 73.9 s, before the prune PR." }
+"tests/skillz_experiments/test_headroom.py" = { max_seconds = 91, reason = "Slowest of CI runs 41417007579 and 41419094652: 36.3 s, before the prune PR." }
+"tests/skillz_experiments/test_helper_witness.py" = { max_seconds = 58, reason = "Slowest of CI runs 41417007579 and 41419094652: 22.9 s, before the prune PR." }
+"tests/skillz_experiments/test_intake.py" = { max_seconds = 35, reason = "Slowest of CI runs 41417007579 and 41419094652: 13.7 s, before the prune PR." }
+"tests/skillz_experiments/test_journey_fixtures.py" = { max_seconds = 74, reason = "Slowest of CI runs 41417007579 and 41419094652: 29.6 s, before the prune PR." }
+"tests/skillz_experiments/test_journey_press.py" = { max_seconds = 56, reason = "Slowest of CI runs 41417007579 and 41419094652: 22.3 s, before the prune PR." }
+"tests/skillz_experiments/test_judge_rationale.py" = { max_seconds = 107, reason = "Slowest of CI runs 41417007579 and 41419094652: 42.4 s, before the prune PR." }
+"tests/skillz_experiments/test_layout.py" = { max_seconds = 55, reason = "Slowest of CI runs 41417007579 and 41419094652: 21.8 s, before the prune PR." }
+"tests/skillz_experiments/test_mode_fixtures.py" = { max_seconds = 184, reason = "Slowest of CI runs 41417007579 and 41419094652: 73.2 s, before the prune PR." }
+"tests/skillz_experiments/test_module_interface.py" = { max_seconds = 73, reason = "Slowest of CI runs 41417007579 and 41419094652: 28.8 s, before the prune PR." }
+"tests/skillz_experiments/test_new_cli.py" = { max_seconds = 231, reason = "Slowest of CI runs 41417007579 and 41419094652: 92.3 s, before the prune PR." }
+"tests/skillz_experiments/test_new_cli_properties.py" = { max_seconds = 48, reason = "Slowest of CI runs 41417007579 and 41419094652: 19.0 s, before the prune PR." }
+"tests/skillz_experiments/test_press_attempt_history.py" = { max_seconds = 82, reason = "Slowest of CI runs 41417007579 and 41419094652: 32.5 s, before the prune PR." }
+"tests/skillz_experiments/test_press_autoimprove.py" = { max_seconds = 177, reason = "Slowest of CI runs 41417007579 and 41419094652: 70.6 s, before the prune PR." }
+"tests/skillz_experiments/test_press_check_memo.py" = { max_seconds = 40, reason = "Slowest of CI runs 41417007579 and 41419094652: 15.7 s, before the prune PR." }
+"tests/skillz_experiments/test_press_claude.py" = { max_seconds = 149, reason = "Slowest of CI runs 41417007579 and 41419094652: 59.4 s, before the prune PR." }
+"tests/skillz_experiments/test_press_compatibility.py" = { max_seconds = 67, reason = "Slowest of CI runs 41417007579 and 41419094652: 26.6 s, before the prune PR." }
+"tests/skillz_experiments/test_press_contract.py" = { max_seconds = 24, reason = "Slowest of CI runs 41417007579 and 41419094652: 9.4 s, before the prune PR." }
+"tests/skillz_experiments/test_press_harness_sandbox.py" = { max_seconds = 180, reason = "Slowest of CI runs 41417007579 and 41419094652: 71.6 s, before the prune PR." }
+"tests/skillz_experiments/test_press_helper_witness.py" = { max_seconds = 35, reason = "Slowest of CI runs 41417007579 and 41419094652: 13.8 s, before the prune PR." }
+"tests/skillz_experiments/test_press_inspect_v4.py" = { max_seconds = 405, reason = "Slowest of CI runs 41417007579 and 41419094652: 162.0 s, before the prune PR." }
+"tests/skillz_experiments/test_press_new_cli.py" = { max_seconds = 237, reason = "Slowest of CI runs 41417007579 and 41419094652: 94.7 s, before the prune PR." }
+"tests/skillz_experiments/test_press_token_cost.py" = { max_seconds = 44, reason = "Slowest of CI runs 41417007579 and 41419094652: 17.2 s, before the prune PR." }
+"tests/skillz_experiments/test_press_wedge_targets.py" = { max_seconds = 340, reason = "Slowest of CI runs 41417007579 and 41419094652: 135.8 s, before the prune PR." }
+"tests/skillz_experiments/test_redact.py" = { max_seconds = 426, reason = "Slowest of CI runs 41417007579 and 41419094652: 170.2 s, before the prune PR." }
+"tests/skillz_experiments/test_reflection_faults.py" = { max_seconds = 21, reason = "Slowest of CI runs 41417007579 and 41419094652: 8.3 s, before the prune PR." }
+"tests/skillz_experiments/test_reflection_size.py" = { max_seconds = 35, reason = "Slowest of CI runs 41417007579 and 41419094652: 13.7 s, before the prune PR." }
+"tests/skillz_experiments/test_reflections.py" = { max_seconds = 59, reason = "Slowest of CI runs 41417007579 and 41419094652: 23.4 s, before the prune PR." }
+"tests/skillz_experiments/test_retained_seed_holdout.py" = { max_seconds = 47, reason = "Slowest of CI runs 41417007579 and 41419094652: 18.6 s, before the prune PR." }
+"tests/skillz_experiments/test_run.py" = { max_seconds = 35, reason = "Slowest of CI runs 41417007579 and 41419094652: 13.7 s, before the prune PR." }
+"tests/skillz_experiments/test_run_harness_options.py" = { max_seconds = 73, reason = "Slowest of CI runs 41417007579 and 41419094652: 29.0 s, before the prune PR." }
+"tests/skillz_experiments/test_run_ports.py" = { max_seconds = 26, reason = "Slowest of CI runs 41417007579 and 41419094652: 10.1 s, before the prune PR." }
+"tests/skillz_experiments/test_run_restore.py" = { max_seconds = 81, reason = "Slowest of CI runs 41417007579 and 41419094652: 32.0 s, before the prune PR." }
+"tests/skillz_experiments/test_run_search.py" = { max_seconds = 980, reason = "Slowest of CI runs 41417007579 and 41419094652: 391.9 s, before the prune PR." }
+"tests/skillz_experiments/test_runtime.py" = { max_seconds = 44, reason = "Slowest of CI runs 41417007579 and 41419094652: 17.3 s, before the prune PR." }
+"tests/skillz_experiments/test_search_faults.py" = { max_seconds = 72, reason = "Slowest of CI runs 41417007579 and 41419094652: 28.5 s, before the prune PR." }
+"tests/skillz_experiments/test_skillz_autoimprove_journeys.py" = { max_seconds = 139, reason = "Slowest of CI runs 41417007579 and 41419094652: 55.4 s, before the prune PR." }
+"tests/skillz_experiments/test_skillz_journey_gate_approval.py" = { max_seconds = 34, reason = "Slowest of CI runs 41417007579 and 41419094652: 13.4 s, before the prune PR." }
+"tests/skillz_experiments/test_split_cases_properties.py" = { max_seconds = 27, reason = "Slowest of CI runs 41417007579 and 41419094652: 10.6 s, before the prune PR." }
+"tests/skillz_experiments/test_statistics.py" = { max_seconds = 23, reason = "Slowest of CI runs 41417007579 and 41419094652: 8.9 s, before the prune PR." }
+"tests/skillz_experiments/test_token_cost.py" = { max_seconds = 76, reason = "Slowest of CI runs 41417007579 and 41419094652: 30.3 s, before the prune PR." }
+"tests/skillz_experiments/test_validation_repeats.py" = { max_seconds = 36, reason = "Slowest of CI runs 41417007579 and 41419094652: 14.3 s, before the prune PR." }
+"tests/skillz_experiments/test_wedge_targets.py" = { max_seconds = 208, reason = "Slowest of CI runs 41417007579 and 41419094652: 82.8 s, before the prune PR." }
+"tests/skillz_inspect/test_inspect_parity.py" = { max_seconds = 193, reason = "Slowest of CI runs 41417007579 and 41419094652: 76.8 s, before the prune PR." }
+"tests/skillz_inspect/test_press_inspect.py" = { max_seconds = 48, reason = "Slowest of CI runs 41417007579 and 41419094652: 19.0 s, before the prune PR." }
+"tests/skillz_live/test_changelog_proof.py" = { max_seconds = 34, reason = "Slowest of CI runs 41417007579 and 41419094652: 13.5 s, before the prune PR." }
+"tests/skillz_live/test_live_smoke.py" = { max_seconds = 76, reason = "Slowest of CI runs 41417007579 and 41419094652: 30.1 s, before the prune PR." }
