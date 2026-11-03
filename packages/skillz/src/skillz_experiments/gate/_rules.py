@@ -123,7 +123,8 @@ def _loss_se(values: Sequence[float], se_floor: float) -> float:
 def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statistics = DEFAULT_STATISTICS,
             families: Mapping[str, str] | None = None,
             tokens: Mapping[str, tuple[float | None, float | None]] | None = None,
-            se_floor: float = 0.0, planned: int | None = None) -> Verdict:
+            se_floor: float = 0.0, planned: int | None = None, flips: Sequence[str] = (),
+            unscored: Sequence[str] = ()) -> Verdict:
     """Promote when the mean case delta exceeds twice its standard error and passes the floors.
 
     The floors only tighten the rule: a `promote` that misses `min_gain` or `min_lower_bound` becomes
@@ -154,6 +155,11 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
     above 0: if `len(deltas) / planned` is below `min_coverage`, the verdict is `inconclusive` with reason
     `low-coverage`. It runs before the floors and the token rule, keeps `delta` and `se`, and the family rule
     can still force `reject`.
+    `flips` names the negative flips: holdout cases that the baseline passed on every scored repeat and the winner
+    lost. `unscored` names the protected cases whose winner repeats failed to score, so a flip cannot be ruled out.
+    The floor guard runs after the token rule and before the families: a `promote` or `promote-cheaper` with a flip
+    or an unscored protected case becomes `inconclusive`. `reasons` gets `negative-flip:<case>` for each flip, then
+    `unscored-protected:<case>` for each unscored case, in the given order.
     """
     if families is not None and not isinstance(deltas, Mapping):
         raise ValueError("families need deltas keyed by case id")
@@ -219,6 +225,10 @@ def verdict(deltas: Mapping[str, float] | Sequence[float], *, thresholds: Statis
                   and _reaches(delta - 2 * _loss_se(values, se_floor), -thresholds.max_quality_loss)
                   and _exceeds(-token_delta, 2 * token_se) and _reaches(-token_delta, saving)):
                 name = "promote-cheaper"
+    if (flips or unscored) and name in ("promote", "promote-cheaper"):
+        name = "inconclusive"
+        reasons.extend(f"negative-flip:{case}" for case in flips)
+        reasons.extend(f"unscored-protected:{case}" for case in unscored)
     if breached:
         name = "reject"
         reasons.extend(regressions)
