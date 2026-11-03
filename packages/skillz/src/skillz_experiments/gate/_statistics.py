@@ -146,6 +146,9 @@ class Statistics:
 
 DEFAULT_STATISTICS = Statistics()
 
+FLIP_MARGIN = 0.5
+"""A case that the baseline passes on every repeat flips when the winner repeat mean is below `1 - FLIP_MARGIN`."""
+
 
 def case_deltas(
     baseline: Mapping[str, Sequence[float]], winner: Mapping[str, Sequence[float]]
@@ -164,12 +167,13 @@ def case_deltas(
 
 @dataclass(frozen=True)
 class HoldoutDeltas:
-    """The paired holdout result: per-case deltas, the SE floor, the per-case moves, and the shared case count."""
+    """The paired holdout result: per-case deltas, the SE floor, the per-case moves, the shared case count, and the flips."""
 
     deltas: dict[str, float]
     se_floor: float
     moves: dict[str, list[str]]
     n_shared: int
+    flips: list[str]
 
 
 def _repeat_se(scores: Sequence[float]) -> float:
@@ -186,11 +190,13 @@ def holdout_deltas(
     The floor is `sqrt(sum(se_b^2 + se_w^2)) / n` over the shared cases, where each `se` is the standard error of
     the repeat mean of one case on one arm. A move is resolved when the mean delta exceeds
     `max(2 * sqrt(se_b^2 + se_w^2), 1e-9)`; a resolved positive move is `fixed`, a resolved negative move is
-    `broke`, and the rest are `unresolved`. Each list of case ids is sorted.
+    `broke`, and the rest are `unresolved`. A negative flip is a shared case that scores 1.0 on every baseline
+    repeat and whose winner repeat mean is below `1 - FLIP_MARGIN`. Each list of case ids is sorted.
     """
     shared = sorted(case_id for case_id in baseline.keys() & winner.keys() if baseline[case_id] and winner[case_id])
     deltas: dict[str, float] = {}
     moves: dict[str, list[str]] = {"fixed": [], "broke": [], "unresolved": []}
+    flips: list[str] = []
     total = 0.0
     for case_id in shared:
         base, won = baseline[case_id], winner[case_id]
@@ -202,5 +208,7 @@ def holdout_deltas(
             moves["fixed" if delta > 0 else "broke"].append(case_id)
         else:
             moves["unresolved"].append(case_id)
+        if all(score == 1.0 for score in base) and statistics.fmean(won) < 1.0 - FLIP_MARGIN:
+            flips.append(case_id)
     floor = math.sqrt(total) / len(shared) if shared else 0.0
-    return HoldoutDeltas(deltas, floor, moves, len(shared))
+    return HoldoutDeltas(deltas, floor, moves, len(shared), flips)

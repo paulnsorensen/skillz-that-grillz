@@ -62,6 +62,8 @@ class Search:
         self.padding = 0
         self.drain_search = False
         self.score_of: Callable[[str, str], float | None] | None = None
+        # When set, it scores one (skill text, split, case id) after `score_of`; None keeps the score.
+        self.case_score_of: Callable[[str, str, str], float | None] | None = None
         self.invokes = 0
         self.invoke_fault: Callable[[int], Exception | None] = lambda _number: None
         self.holdout_calls = 0
@@ -174,6 +176,9 @@ class Provider(FakeRunProvider):
         score = min(1.0, max(0.0, base + (digest % 3 - 1) * 0.2))
         if state.score_of is not None:
             chosen = state.score_of(candidate.files["SKILL.md"], case.split)
+            score = score if chosen is None else chosen
+        if state.case_score_of is not None:
+            chosen = state.case_score_of(candidate.files["SKILL.md"], case.split, case.identifier)
             score = score if chosen is None else chosen
         extra = {} if holdout else state.extra
         return {"score": score, "candidate_hash": candidate.identity, "case_hash": case.identifier} | extra

@@ -493,6 +493,15 @@ When the SE is 0, the second test uses 2·SE = 0.
 A result that fails a floor becomes `inconclusive`. A floor never creates a `reject`.
 With both floors at 0, the verdict equals the built-in rule.
 
+The floor guard runs after the floors and the token rule, and before the family rule.
+A protected case is a holdout case that scores 1.0 on every scored baseline repeat (a pass-to-pass case).
+The winner flips a protected case when its repeat mean on that case is below 0.5 (the margin `FLIP_MARGIN` is 0.5).
+With 3 repeats, one failed winner repeat (mean 0.67) is not a flip. Two or three failed repeats are a flip.
+A flip turns `promote` or `promote-cheaper` into `inconclusive`, even when the mean delta rises. Each flip adds the reason `negative-flip:<case_id>`, sorted by case id.
+The guard never creates a `reject`, and it does not change any other verdict. A family breach still forces `reject`.
+The improvement claim then reads `inconclusive` with the same reasons, and `apply` is `false`.
+The rule covers every holdout case, not only `regression: true` cases. A guard that only watched the mean would let one lost case hide behind gains on other cases.
+
 The family rule runs after the floors. It uses the holdout cases, grouped by `family`.
 A family needs at least two holdout cases. For that family, the gate takes the mean delta and its SE (SE_f).
 The budget is the `family_budgets` value for that family, else `family_budget`. A family with no budget has no family rule.

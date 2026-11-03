@@ -185,7 +185,7 @@ def run_gate(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
                    if case_id in paired.deltas} if statistics.token_rule else None)
         outcome = replace(gate_verdict(paired.deltas, thresholds=statistics, families=families,
                                        tokens=tokens, se_floor=paired.se_floor,
-                                       planned=len(holdout)), moves=paired.moves)
+                                       planned=len(holdout), flips=paired.flips), moves=paired.moves)
         record["gate"] = {**outcome.data(), "repeats": repeats}
     record["winner_hash"] = winner.identity
     record["phase"] = "gated"
