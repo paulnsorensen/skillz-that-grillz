@@ -203,7 +203,7 @@ def test_each_holdout_regression_case_scores_once_under_the_reproduce_arm_before
 
 @pytest.mark.ac("gh-651:AC-9")
 def test_a_holdout_regression_case_keeps_only_the_level_of_each_unmet_criterion() -> None:
-    outcome = {"score": 0.0, "criteria": {"gap": {"level": 2, "reason": "the draft quotes the holdout text", "met": False},
+    outcome: dict[str, object] = {"score": 0.0, "criteria": {"gap": {"level": 2, "reason": "the draft quotes the holdout text", "met": False},
                                           "ok": {"level": 4, "reason": "fine", "met": True}}}
     held = Case("h", "f", "holdout", "request", {"a": "b"}, {}, "session", True, regression=True)
     trained = Case("t", "g", "train", "request", {"a": "b"}, {}, "session", True, regression=True)
