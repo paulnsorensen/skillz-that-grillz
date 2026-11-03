@@ -333,6 +333,7 @@ Each case has these fields:
 - `expected`: the reference answer as JSON. A `task` case needs it.
   A scored case whose kind uses a `judge`, `hybrid`, or `journey` grader also needs `expected.criteria`. Draft them with the criteria drafting reference that `SKILL.md` lists.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
+- `regression`: optional. `true` marks a case that comes from a field failure. It is valid only with `source: session`. See `Draft journeys` for the reproduction check.
 
 A `trigger` case is a request that should load the skill. A `near-miss` case is a similar request that should not.
 The runner records `trigger` and `near-miss` cases as pending. It does not score them yet.
@@ -434,6 +435,15 @@ When session analytics exists, mine past sessions for hard cases. Follow these s
 
 The approval question is the only check of the redaction. Read every case before you show the list.
 Issue #132 plans a `prepare-cases` command for this work. Until then, follow these steps by hand.
+
+A case that comes from a field failure takes `regression: true`. The field is valid only with `source: session`. A task case and a journey case both take it.
+The headroom pass checks whether the seed reproduces the failure. It reproduces when the seed scores 0 on every scored repeat (fail-to-pass).
+The run records `headroom.reproduction.<id>` with the split, the seed scores, `reproduces`, `solvable: "unknown"`, and the unmet criteria. One seed run cannot show that a case is solvable.
+A regression case that the seed passes is a floor case (pass-to-pass). It stays in the record as a regression floor, and it leaves its family mean and the `cases-too-easy` decision.
+The seed scores each holdout regression case once under the `reproduce` arm. Search, the gate, the claims, and the baseline report never read it. The estimate shows these calls as `reproduce.calls`, and the approved total includes them.
+A holdout case keeps only the level of each unmet criterion, so no judge text about a holdout case reaches the record.
+The run summary holds the `headroom` block. Tell the user about each floor case: it does not reproduce the failure.
+A single-step case can miss a failure that comes from a skipped step. To reproduce that failure, draft a journey that runs the whole skill.
 
 ## Read the gate verdict
 

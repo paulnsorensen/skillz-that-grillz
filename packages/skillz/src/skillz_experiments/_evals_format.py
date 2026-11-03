@@ -205,8 +205,21 @@ def parse_evals(document: object, *, strict: bool) -> ParsedEvals:
     return ParsedEvals(tuple(entries), tuple(errors))
 
 
-JOURNEY_KEYS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
+JOURNEY_KEYS = {"id", "family", "kind", "request", "files", "expected", "source", "regression"} | JOURNEY_FIELDS
 JOURNEY_REQUIRED = ("id", "family", "kind", "request", "brief", "expected", "source")
+
+
+def regression_of(item: dict[str, object], source: object) -> bool:
+    """Return whether the case is a regression case (`regression: true`). Raise `cases-invalid` for a bad value.
+
+    The field must be a boolean, and `true` needs `source: session`: only a field failure drafts a regression case.
+    """
+    regression = item.get("regression", False)
+    if type(regression) is not bool:
+        raise CodedError("cases-invalid", "regression must be true or false")
+    if regression and source != "session":
+        raise CodedError("cases-invalid", "regression: true needs source: session")
+    return regression
 
 
 @dataclass(frozen=True)
@@ -239,6 +252,10 @@ def _journey(item: dict[str, object], strict: bool) -> dict[str, object]:
     if journey is None:
         raise ValueError("a journey case needs journey fields")
     case |= journey.data()
+    try:
+        case |= {"regression": True} if regression_of(item, source) else {}
+    except CodedError as error:
+        raise CodedError(error.code, f"case {ident!r}: {error}") from None
     if "files" in item:
         case["files"] = text_map(item["files"])
     case["expected"] = item["expected"]

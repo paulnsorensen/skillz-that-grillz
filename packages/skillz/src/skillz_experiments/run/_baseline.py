@@ -45,7 +45,7 @@ def _cut(text: str) -> str:
     return clean if len(clean) <= FIELD_LIMIT else clean[:FIELD_LIMIT - len(TRUNCATED)] + TRUNCATED
 
 
-def _unmet(item: dict[str, object]) -> dict[str, dict[str, object]]:
+def unmet_criteria(item: dict[str, object]) -> dict[str, dict[str, object]]:
     """Return the level and the cut reason of each criterion below `MET_LEVEL`, by the rule that export uses."""
     levels = criterion_levels(item)
     criteria = cast(dict[str, dict[str, object]], item.get("criteria"))
@@ -95,7 +95,7 @@ def _failing(seed: list[dict[str, object]], families: Mapping[str, str | None]) 
         if failed or type(score) not in (int, float) or cast(float, score) < 1:
             failing.append({"case_id": item.get("case_id"), "split": item.get("split"),
                             "family": families.get(str(item.get("case_id"))), "repeat": item.get("repeat"),
-                            "score": None if failed else score, "status": item.get("status"), "criteria": _unmet(item)})
+                            "score": None if failed else score, "status": item.get("status"), "criteria": unmet_criteria(item)})
     return failing
 
 

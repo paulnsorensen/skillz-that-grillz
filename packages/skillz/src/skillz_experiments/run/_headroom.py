@@ -12,6 +12,7 @@ from skillz_experiments.gate import close
 from skillz_experiments.run._baseline import too_easy_stop
 from skillz_experiments.run._outcomes import failed_outcome, is_failed
 from skillz_experiments.run._plan import repeat_indices
+from skillz_experiments.run._reproduce import floor_cases, reproduce_outcomes, reproductions, score_holdout_regressions
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import RunState
 from skillz_experiments.search import unit_score
@@ -28,8 +29,10 @@ def run_headroom(state: RunState, search: SearchPhase) -> None:
     outcomes stand in for the seed validation pass of GEPA. Only the train outcomes add to the search ceiling, so
     the search keeps the room it had after its own seed pass. A resume scores only the runs that have no scored seed
     outcome, so a case with one repeat missing counts as missing and scores that repeat. A case scores the mean of its
-    scored repeats. A run whose statistics set `min_token_saving` expects saturated cases:
-    it records the scores and does not stop.
+    scored repeats. A regression case adds its reproduction to the block: the seed scores, whether every one is 0, and
+    the unmet criteria. Each holdout regression case scores once under the `reproduce` arm. A floor case, one that the
+    seed does not fail on every repeat, stays out of its family mean. A run whose statistics set `min_token_saving`
+    expects saturated cases: it records the scores and does not stop.
     """
     if isinstance(state.record.get("headroom"), dict):
         return
@@ -37,10 +40,9 @@ def run_headroom(state: RunState, search: SearchPhase) -> None:
     cases = [case for split in ("train", "validation") for case in state.cases_for(cast(Split, split))]
     runs = [(case, repeat) for case in cases for repeat in repeat_indices(case.split)]
 
-    def seed_scores() -> dict[tuple[object, object, object], float]:
+    def seed_items() -> dict[tuple[object, object, object], dict[str, object]]:
         with state.lock:
-            return {(item["split"], item["case_id"], item.get("repeat")): unit_score(item["score"])
-                    for item in search.search_outcomes()
+            return {(item["split"], item["case_id"], item.get("repeat")): item for item in search.search_outcomes()
                     if item.get("search_candidate") == seed.identity and not is_failed(item)}
 
     def score(run: tuple[Case, int | None]) -> None:
@@ -55,25 +57,30 @@ def run_headroom(state: RunState, search: SearchPhase) -> None:
                 state.checkpoint()
 
     search.mark_start()
-    found = seed_scores()
+    found = seed_items()
     with ThreadPoolExecutor(MAX_CONCURRENT_CALLS) as pool:
         _ = list(pool.map(score, [(case, repeat) for case, repeat in runs
                                   if (case.split, case.identifier, repeat) not in found]))
+    score_holdout_regressions(state)
     search.stop_if_faulted()
-    found = seed_scores()
+    found = seed_items()
+    reproduction = reproductions([*cases, *state.cases_for("holdout")], found, reproduce_outcomes(state))
+    floor = floor_cases(reproduction)
     by_family: dict[str, list[float]] = {}
     splits: dict[str, str] = {}
     for case in cases:
         splits[case.family] = case.split
-        scored = [found[key] for repeat in repeat_indices(case.split)
+        scored = [unit_score(found[key]["score"]) for repeat in repeat_indices(case.split)
                   if (key := (case.split, case.identifier, repeat)) in found]
-        if scored:
+        if scored and case.identifier not in floor:
             by_family.setdefault(case.family, []).append(math.fsum(scored) / len(scored))
     means = {name: sum(scores) / len(scores) for name, scores in sorted(by_family.items())}
     families = {name: {"split": splits[name], "mean": means[name], "cases": len(by_family[name])} for name in means}
     easy = {name: mean for name, mean in means.items() if mean >= HEADROOM_CEILING or close(mean, HEADROOM_CEILING)}
     stop = bool(easy) and state.statistics.min_token_saving is None
     block: dict[str, object] = {"ceiling": HEADROOM_CEILING, "families": families, "verdict": "too-easy" if stop else "ok"}
+    if reproduction:
+        block["reproduction"] = reproduction
     state.record["headroom"] = block
     state.checkpoint()
     if stop:
