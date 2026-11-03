@@ -28,9 +28,7 @@ from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, search_allowan
 PREFLIGHT_CALLS = 6
 """Three roles, each with two preflight calls: the Bash sandbox check and the Read file-access check (gh-176)."""
 
-
 SEARCH_CASE_FACTOR = 4
-
 
 VALIDATION_REPEATS = 2
 """The runs of one search candidate on one validation case. `run.json` freezes it as `validation_policy.repeats`."""
@@ -43,12 +41,9 @@ def repeat_indices(split: str) -> tuple[int | None, ...]:
 
 JOURNEY_SEARCH_CALLS = 460
 
-
 CALLS_PER_REFLECTION = 2 * REFLECTION_MINIBATCH
 
-
 MINIMUM_SEARCH_MARGIN = 4
-
 
 HOLDOUT_RETRIES_PER_ARM = 1
 
@@ -66,6 +61,7 @@ class _Plan:
     sandbox_seconds: int = 0
     headroom_calls: int = 0
     headroom_outcomes: int = 0
+    reproduce_calls: int = 0
 
     @property
     def reserve(self) -> int:
@@ -95,7 +91,7 @@ def case_calls(contract: Contract, case: Case) -> int:
 
 def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int, sandbox_seconds: int = 0,
           journey: bool = False, holdout_costs: Sequence[int] | None = None,
-          headroom_costs: Sequence[int] | None = None) -> _Plan:
+          headroom_costs: Sequence[int] | None = None, reproduce_costs: Sequence[int] = ()) -> _Plan:
     """Size the run. Shrink the search share to fit the cap; stop when the fixed cost alone exceeds it.
 
     `metric` counts metric calls: one search evaluation of one case. A metric call costs `per_evaluation` model calls.
@@ -128,6 +124,7 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     holdout_pass = sum(costs)
     headroom = sum(headroom_costs) if headroom_costs is not None else per_evaluation * train
     headroom_outcomes = len(headroom_costs) if headroom_costs is not None else train
+    reproduce = sum(reproduce_costs)
     holdout_calls = 2 * holdout_pass * repeats + retry_calls
     if PREFLIGHT_CALLS + holdout_calls + holdout_pass > max_calls:
         raise Stop("budget-unapproved", f"the preflight, the holdout gate, and the replay alone need "
@@ -136,11 +133,11 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     slow_gate_extra = gate_seconds(holdout_calls + holdout_pass) - estimate(search_calls=holdout_calls + holdout_pass).seconds
 
     def sandbox_total(metric: int) -> int:
-        return math.ceil((metric + headroom_outcomes + holdout_evaluations) * sandbox_seconds / MAX_CONCURRENT_CALLS)
+        return math.ceil((metric + headroom_outcomes + len(reproduce_costs) + holdout_evaluations) * sandbox_seconds / MAX_CONCURRENT_CALLS)
 
     def size(metric: int) -> Estimate:
         return estimate(preflight_calls=PREFLIGHT_CALLS, holdout=2 * holdout_pass, calls_per_evaluation=1,
-                        repeats=repeats, search_calls=metric * per_evaluation + headroom, retry_calls=retry_calls,
+                        repeats=repeats, search_calls=metric * per_evaluation + headroom + reproduce, retry_calls=retry_calls,
                         replay_calls=holdout_pass,
                         reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), journey=journey)
 
@@ -173,7 +170,7 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     return _Plan(metric_calls=metric, reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls=holdout_calls,
                  retry_calls=retry_calls, sized=Estimate(sized.calls, sized.seconds + total, journey),
                  replay_calls=holdout_pass, sandbox_gate=sandbox_gate, sandbox_total=total, sandbox_seconds=sandbox_seconds,
-                 headroom_calls=headroom, headroom_outcomes=headroom_outcomes)
+                 headroom_calls=headroom, headroom_outcomes=headroom_outcomes, reproduce_calls=reproduce)
 
 
 def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions) -> _Plan:
@@ -182,6 +179,7 @@ def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: 
     The holdout reserve sums the holdout case costs. A search metric call costs the mean over the searched runs:
     each train case once and each validation case `VALIDATION_REPEATS` times.
     The headroom pass charges the train case costs only. GEPA pays the validation pass of the seed in its own calls.
+    It also scores each holdout regression case once: those calls are `reproduce_calls`, outside `headroom_calls`.
     """
     split = {name: [case_calls(contract, case) for case in cases if case.split == name]
              for name in cast(tuple[str, ...], get_args(Split))}
@@ -189,7 +187,8 @@ def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: 
     per_evaluation = max(1, math.ceil(sum(searched) / len(searched))) if searched else 1
     return _plan(len(split["train"]), len(split["validation"]), len(split["holdout"]), per_evaluation, repeats,
                  _command_seconds(contract, cases, options), journey=any(case.journey is not None for case in cases),
-                 holdout_costs=split["holdout"], headroom_costs=split["train"])
+                 holdout_costs=split["holdout"], headroom_costs=split["train"],
+                 reproduce_costs=[case_calls(contract, case) for case in cases if case.split == "holdout" and case.regression])
 
 
 def editable_files(files: Mapping[str, str], contract: Contract, edit: Edit, frozen: Collection[str] = (),
@@ -299,4 +298,5 @@ def plan_estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, ob
             "replay_calls": plan.replay_calls, "seconds_per_call": ESTIMATE_SECONDS_PER_CALL,
             "headroom": {"calls": plan.headroom_calls, "outcomes": plan.headroom_outcomes},
             "metric_calls": plan.metric_calls, "reflection_calls": plan.reflection_calls,
-            **({"sandbox_seconds": plan.sandbox_total} if plan.sandbox_total else {}), **journey}
+            **({"sandbox_seconds": plan.sandbox_total} if plan.sandbox_total else {}), **journey,
+            **({"reproduce": {"calls": plan.reproduce_calls}} if plan.reproduce_calls else {})}

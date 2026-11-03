@@ -353,6 +353,7 @@ class Case:
     kind: Kind = "inspection"
     labels_reviewed: bool = False
     journey: Journey | None = None
+    regression: bool = False
 
     @property
     def eligible(self) -> bool:
@@ -388,12 +389,9 @@ def _case(value: object, kinds: Mapping[str, str], fixtures: Mapping[str, str]) 
     expected = audit_labels(item.get("expected"), files) if kinds[kind] == "audit" else item.get("expected")
     if expected is None and kinds[kind] == "command":
         raise CodedError("expected-missing", f"case {item.get('id')!r} of kind {kind!r} needs an expected value")
-    return Case(
-        string(item.get("id"), "id"), string(item.get("family"), "family"), cast(Split, split),
-        request, files, expected,
-        string(item.get("provenance"), "provenance"), item.get("provider_approved") is True,
-        cast(Visibility, visibility), kind, reviewed, journey_of(item, kinds[kind] == "journey"),
-    )
+    return Case(string(item.get("id"), "id"), string(item.get("family"), "family"), cast(Split, split), request, files, expected,
+                string(item.get("provenance"), "provenance"), item.get("provider_approved") is True,
+                cast(Visibility, visibility), kind, reviewed, journey_of(item, kinds[kind] == "journey"), item.get("regression") is True)
 
 
 def load_manifest(path: Path) -> dict[str, object]:

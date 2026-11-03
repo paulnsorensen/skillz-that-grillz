@@ -115,6 +115,8 @@ def _journey_properties() -> Json:
         "files": TEXT_MAP | {"description": "Inline files: path to text."},
         "expected": _expected(),
         "source": {"enum": list(SOURCES)},
+        "regression": {"type": "boolean", "description": "A case drafted from a field failure. Needs source: session. "
+                       + "The headroom pass records whether the seed fails it."},
     }
     return {name: properties[name] for name in sorted(JOURNEY_KEYS)}
 
