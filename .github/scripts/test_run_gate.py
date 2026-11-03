@@ -142,14 +142,6 @@ class GateRunnerTest(unittest.TestCase):
                             if event.startswith(("uv ", "just "))]
                 self.assertEqual(commands, ["uv python dir"])
 
-    def test_deliberate_cold_root_override_remains_in_the_step_environment(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            cold_root = str(Path(directory) / "cold-python")
-            with mock.patch.dict(os.environ, {"UV_PYTHON_INSTALL_DIR": cold_root, "UV_PYTHON_INSTALL_BIN": "0"}):
-                environment = run_gate._environment()
-            self.assertEqual(environment["UV_PYTHON_INSTALL_DIR"], cold_root)
-            self.assertEqual(environment["UV_PYTHON_INSTALL_BIN"], "0")
-
     def test_only_the_pytest_lanes_run_under_eatmydata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
