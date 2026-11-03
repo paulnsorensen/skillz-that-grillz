@@ -439,7 +439,9 @@ Issue #132 plans a `prepare-cases` command for this work. Until then, follow the
 A case that comes from a field failure takes `regression: true`. The field is valid only with `source: session`. A task case and a journey case both take it.
 The headroom pass checks whether the seed reproduces the failure. It reproduces when the seed scores 0 on every scored repeat (fail-to-pass).
 The run records `headroom.reproduction.<id>` with the split, the seed scores, `reproduces`, `solvable: "unknown"`, and the unmet criteria. One seed run cannot show that a case is solvable.
-A regression case that the seed scores above 0 on some repeat is a floor case (pass-to-pass). It stays in the record as a regression floor, and it leaves its family mean and the `cases-too-easy` decision.
+The record also holds `state`: `fail-to-pass` (the seed scores 0 on every scored repeat), `pass-to-pass` (it scores 1.0 on every scored repeat), or `partial` (any other scores).
+A `pass-to-pass` case is a floor case. It stays in the record as a regression floor, and it leaves its family mean and the `cases-too-easy` decision.
+A `partial` case still has headroom, so it stays in its family mean and counts toward `cases-too-easy`.
 The seed scores each holdout regression case once under the `reproduce` arm. Search, the gate, the claims, and the baseline report never read it. The estimate shows these calls as `reproduce.calls`, and the approved total includes them.
 When one of these evaluations fails, the run stops with `holdout-faulted` before it records `headroom`. A resume scores only the failed cases.
 A holdout case keeps only the level of each unmet criterion, so no judge text about a holdout case reaches the record.

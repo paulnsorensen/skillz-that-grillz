@@ -182,8 +182,8 @@ def test_a_regression_case_with_no_scored_outcome_records_null_with_a_reason() -
 
 
 @pytest.mark.ac("gh-651:AC-3")
-@pytest.mark.ac("gh-651:AC-5")
-def test_a_seed_score_just_above_zero_is_a_floor_case_and_unmet_keeps_the_lowest_level() -> None:
+@pytest.mark.ac("gh-663:AC-1")
+def test_a_seed_score_just_above_zero_is_partial_and_unmet_keeps_the_lowest_level() -> None:
     case = Case("v", "f", "validation", "request", {"a": "b"}, {}, "session", True, regression=True)
 
     def outcome(score: float, level: int) -> dict[str, object]:
@@ -194,8 +194,104 @@ def test_a_seed_score_just_above_zero_is_a_floor_case_and_unmet_keeps_the_lowest
         ("validation", "v", repeat): outcome(score, level)
         for repeat, score, level in zip(repeat_indices("validation"), scores, levels, strict=True)}
     found = reproductions([case], items, {})
-    assert found["v"]["reproduces"] is False and floor_cases(found) == {"v"}
+    assert (found["v"]["reproduces"], found["v"]["state"]) == (False, "partial") and floor_cases(found) == set()
     assert found["v"]["unmet"] == {"gap": {"level": 1, "reason": "level 1"}}
+
+
+@pytest.mark.ac("gh-663:AC-1")
+@pytest.mark.ac("gh-663:AC-2")
+@pytest.mark.parametrize(("first", "rest", "reproduces", "state", "floor"), [
+    (0.0, 0.0, True, "fail-to-pass", False),
+    (0.5, 0.5, False, "partial", False),
+    (1.0, 0.0, False, "partial", False),
+    (0.99, 1.0, False, "partial", False),
+    (1.0, 1.0, False, "pass-to-pass", True),
+])
+def test_the_reproduction_state_follows_the_seed_scores_and_only_pass_to_pass_is_a_floor_case(
+        first: float, rest: float, reproduces: bool, state: str, floor: bool) -> None:
+    scores = [first] + [rest] * (VALIDATION_REPEATS - 1)
+    case = Case("v", "f", "validation", "request", {"a": "b"}, {}, "session", True, regression=True)
+    items: dict[tuple[object, object, object], dict[str, object]] = {
+        ("validation", "v", repeat): {"score": score} for repeat, score in zip(repeat_indices("validation"), scores, strict=True)}
+    found = reproductions([case], items, {})
+    assert (found["v"]["reproduces"], found["v"]["state"]) == (reproduces, state)
+    assert floor_cases(found) == ({"v"} if floor else set())
+
+
+@pytest.mark.ac("gh-663:AC-1")
+@pytest.mark.ac("gh-663:AC-2")
+@pytest.mark.parametrize(("score", "state", "floor"), [
+    (0.0, "fail-to-pass", False), (0.5, "partial", False), (1.0, "pass-to-pass", True)])
+def test_a_single_repeat_train_case_and_a_holdout_case_take_a_state_from_one_score(
+        score: float, state: str, floor: bool) -> None:
+    outcome: dict[str, object] = {"score": score}
+    train = Case("t", "f", "train", "request", {"a": "b"}, {}, "session", True, regression=True)
+    held = Case("h", "g", "holdout", "request", {"a": "b"}, {}, "session", True, regression=True)
+    found = reproductions([train, held], {("train", "t", None): outcome}, {"h": outcome})
+    for name in ("t", "h"):
+        assert (found[name]["state"], found[name]["reproduces"]) == (state, score == 0.0)
+    assert floor_cases(found) == ({"t", "h"} if floor else set())
+
+
+@pytest.mark.ac("gh-663:AC-1")
+@pytest.mark.ac("gh-663:AC-2")
+def test_a_record_with_no_scored_outcome_carries_no_state_and_a_stale_state_never_makes_a_floor_case() -> None:
+    holdout = Case("h", "f", "holdout", "request", {"a": "b"}, {}, "session", True, regression=True)
+    found = reproductions([holdout], {}, {})
+    assert "state" not in found["h"] and found["h"]["reproduces"] is None
+    assert floor_cases({"x": {"reproduces": False}, "y": {"state": "fail-to-pass"}, "z": {"state": "partial"}}) == set()
+
+
+@pytest.mark.ac("gh-663:AC-2")
+def test_floor_cases_picks_only_the_pass_to_pass_cases_from_a_mixed_set() -> None:
+    cases = [Case(name, "f", "train", "request", {"a": "b"}, {}, "session", True, regression=True) for name in "abc"]
+    items: dict[tuple[object, object, object], dict[str, object]] = {
+        ("train", "a", None): {"score": 1.0}, ("train", "b", None): {"score": 0.5}, ("train", "c", None): {"score": 0.0}}
+    assert floor_cases(reproductions(cases, items, {})) == {"a"}
+
+
+@pytest.mark.ac("gh-663:AC-3")
+def test_a_family_with_a_pass_to_pass_and_a_partial_regression_case_averages_only_the_partial_one(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, state, approved, calls = _start(tmp_path, make_target, write_draft, approvals)
+
+    def score(text: str, split: str, case_id: str) -> float | None:
+        """Score the seed 1.0 on each train case that ends in -0, 0.5 on each other train case, and 0 elsewhere."""
+        if "improved" in text:
+            return None
+        return (1.0 if case_id.endswith("-0") else 0.5) if split == "train" else 0.0
+
+    state.case_score_of = score
+    _ = _go(state, target, out, approved, calls)
+    headroom = _record(out)["headroom"]
+    train = _splits(out, "train")
+    assert {headroom["reproduction"][name]["state"] for name in train} == {"pass-to-pass", "partial"}
+    families = [item for item in headroom["families"].values() if item["split"] == "train"]
+    assert families and all(item["cases"] == 1 and item["mean"] == pytest.approx(0.5) for item in families)
+    assert headroom["verdict"] == "ok"
+
+@pytest.mark.ac("gh-663:AC-3")
+def test_a_partially_failing_regression_case_stays_in_its_family_mean_so_the_run_is_not_too_easy(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, state, approved, calls = _start(
+        tmp_path, make_target, write_draft, approvals, regression=lambda case: str(case["id"]).endswith("-0"))
+
+    def score(text: str, split: str, case_id: str) -> float | None:
+        """Score the seed 0.5 on each train regression case, 0.95 on each other train case, and 0 elsewhere."""
+        if "improved" in text:
+            return None
+        if split != "train":
+            return 0.0
+        return 0.5 if case_id.endswith("-0") else 0.95
+
+    state.case_score_of = score
+    _ = _go(state, target, out, approved, calls)
+    headroom = _record(out)["headroom"]
+    partial = {name for name in _splits(out, "train") if name.endswith("-0")}
+    assert partial and all(headroom["reproduction"][name]["state"] == "partial" for name in partial)
+    assert headroom["verdict"] == "ok"
+    train = [item for item in headroom["families"].values() if item["split"] == "train"]
+    assert train and all(item["cases"] == 2 and item["mean"] == pytest.approx(0.725) for item in train)
 
 
 @pytest.mark.ac("gh-651:AC-4")
