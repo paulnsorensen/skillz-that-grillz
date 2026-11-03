@@ -23,7 +23,7 @@ import run_gate  # noqa: E402
 
 RUNNER = Path(run_gate.__file__).resolve()
 FAKE_TOOL = """#!/usr/bin/env python3
-import os, pathlib, signal, sys, time
+import os, pathlib, signal, subprocess, sys, time
 args = sys.argv[1:]
 with open(os.environ['EVENT_LOG'], 'a') as log:
     log.write(pathlib.Path(sys.argv[0]).name + ' ' + ' '.join(args) + '\\n')
@@ -31,6 +31,24 @@ with open(os.environ['EVENT_LOG'], 'a') as log:
         log.write('live-flag-leaked\\n')
     if 'COVERAGE_FILE' in os.environ:
         log.write('coverage-file ' + os.environ['COVERAGE_FILE'] + '\\n')
+if args == ['python', 'dir']:
+    print(os.environ.get('FAKE_PYTHON_DIR',
+                         os.environ.get('UV_PYTHON_INSTALL_DIR', str(pathlib.Path.home() / 'managed-python'))))
+    if os.environ.get('FAKE_PYTHON_DIR_STATUS', '0') != '0':
+        print('compiler discovery failed', file=sys.stderr)
+    sys.exit(int(os.environ.get('FAKE_PYTHON_DIR_STATUS', '0')))
+if os.environ.get('COMPILER_ENV_LOG'):
+    with open(os.environ['COMPILER_ENV_LOG'], 'a') as log:
+        log.write('step ' + os.environ.get('UV_PYTHON_INSTALL_DIR', '') + ' ' +
+                  os.environ.get('UV_PYTHON_INSTALL_BIN', '') + '\\n')
+        if 'pytest' in args:
+            home = str(pathlib.Path(os.environ['EVENT_LOG']).parent / 'private-home')
+            probe = subprocess.run(
+                [sys.executable, '-c', "import os; print(os.environ['HOME'], "
+                 "os.environ.get('UV_PYTHON_INSTALL_DIR', ''), os.environ.get('UV_PYTHON_INSTALL_BIN', ''))"],
+                env={**os.environ, 'HOME': home}, capture_output=True, text=True, check=True,
+            )
+            log.write('child ' + probe.stdout)
 if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
     pid_file = pathlib.Path(os.environ['CHILD_PID'])
     pid_tmp = pid_file.with_name(pid_file.name + '.tmp')
@@ -69,12 +87,62 @@ class GateRunnerTest(unittest.TestCase):
         # A private lock directory keeps the fake gates out of the real host slots that the outer gate holds.
         return {**inherited, "PATH": str(root) + os.pathsep + os.environ["PATH"],
                 "EVENT_LOG": str(root / "events"), "GATE_JOBS": "2", "TEST_WORKERS": "3",
-                "GATE_EATMYDATA": "0", "XDG_RUNTIME_DIR": str(root / "run")}
+                "GATE_EATMYDATA": "0", "XDG_RUNTIME_DIR": str(root / "run"),
+                "UV_PYTHON_INSTALL_DIR": str(root / "managed-python")}
 
     def _fake_eatmydata(self, root: Path) -> None:
         tool = root / "eatmydata"
         _ = tool.write_text(FAKE_EATMYDATA)
         tool.chmod(0o755)
+
+    def test_compiler_root_reaches_every_mode_and_children_with_private_homes(self) -> None:
+        for mode in ("fix", "check", "test", "skillz", *sorted(run_gate.PACKAGE_MODES)):
+            for configured in (None, "", "caller-python"):
+                with self.subTest(mode=mode, configured=configured), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    env = {**self._fake_env(root), "HOME": str(root / "original-home"),
+                           "UV_PYTHON_INSTALL_BIN": "1", "COMPILER_ENV_LOG": str(root / "compiler-env")}
+                    _ = env.pop("UV_PYTHON_INSTALL_DIR")
+                    expected = root / "original-home" / "managed-python"
+                    if configured is not None:
+                        env["UV_PYTHON_INSTALL_DIR"] = str(root / configured) if configured else ""
+                        if configured:
+                            expected = root / configured
+                    expected = expected.resolve()
+                    result = subprocess.run([sys.executable, str(RUNNER), mode], env=env,
+                                            capture_output=True, text=True, check=False, timeout=10)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    events = (root / "events").read_text().splitlines()
+                    self.assertEqual(events.count("uv python dir"), 0 if configured else 1)
+                    if not configured:
+                        self.assertEqual(events[0], "uv python dir")
+                    commands = [event for event in events if event.startswith(("uv ", "just "))]
+                    observations = (root / "compiler-env").read_text().splitlines()
+                    steps = [line for line in observations if line.startswith("step ")]
+                    children = [line for line in observations if line.startswith("child ")]
+                    self.assertEqual(steps, [f"step {expected} 0"] * len(steps))
+                    self.assertEqual(len(steps), len(commands) - (0 if configured else 1))
+                    self.assertEqual(children, [f"child {root / 'private-home'} {expected} 0"] * len(children))
+                    self.assertEqual(len(children), sum(" pytest " in event for event in events))
+                    self.assertGreater(len(children), 0)
+                    self.assertFalse(any(event.startswith("uv python install") for event in events))
+
+    def test_compiler_discovery_failure_stops_before_preparation(self) -> None:
+        cases = (("7", "/unused", "compiler discovery failed"),
+                 ("0", "  ", "uv python dir returned an empty compiler root"),
+                 ("0", "relative-root", "uv python dir must return one absolute compiler root"))
+        for status, output, diagnostic in cases:
+            with self.subTest(status=status, output=output), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = {**self._fake_env(root), "UV_PYTHON_INSTALL_DIR": "",
+                       "FAKE_PYTHON_DIR_STATUS": status, "FAKE_PYTHON_DIR": output}
+                result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                        capture_output=True, text=True, check=False, timeout=10)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(diagnostic, result.stdout + result.stderr)
+                commands = [event for event in (root / "events").read_text().splitlines()
+                            if event.startswith(("uv ", "just "))]
+                self.assertEqual(commands, ["uv python dir"])
 
     def test_only_the_pytest_lanes_run_under_eatmydata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
