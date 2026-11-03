@@ -176,7 +176,7 @@ def run_gate(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
                        + f"{left} remain in the approved budget after the replay reserve",
                        {"next": "start a new run in a new directory"})
         score_holdout(state, [(arms[arm], case, arm, repeat) for arm, case, repeat in todo], inspect=inspect)
-        paired = holdout_deltas(arm_scores(outcomes, "baseline"), arm_scores(outcomes, "winner"))
+        paired = holdout_deltas(arm_scores(outcomes, "baseline"), arm_scores(outcomes, "winner"), repeats)
         lost = [item for item in outcomes if item.get("split") == "holdout" and item.get("arm") in arms and is_failed(item)]
         if lost and not paired.deltas:
             raise CodedError("holdout-faulted", f"no holdout case has a scored baseline and winner pair; {len(lost)} holdout "
@@ -185,7 +185,8 @@ def run_gate(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
                    if case_id in paired.deltas} if statistics.token_rule else None)
         outcome = replace(gate_verdict(paired.deltas, thresholds=statistics, families=families,
                                        tokens=tokens, se_floor=paired.se_floor,
-                                       planned=len(holdout), flips=paired.flips), moves=paired.moves)
+                                       planned=len(holdout), flips=paired.flips, unscored=paired.unscored),
+                          moves=paired.moves)
         record["gate"] = {**outcome.data(), "repeats": repeats}
     record["winner_hash"] = winner.identity
     record["phase"] = "gated"

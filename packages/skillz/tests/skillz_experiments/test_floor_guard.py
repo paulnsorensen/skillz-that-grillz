@@ -32,6 +32,24 @@ def test_a_case_flips_only_when_the_baseline_passes_every_repeat_and_the_winner_
         baseline: list[float], winner: list[float], flipped: bool) -> None:
     paired = holdout_deltas({"a": baseline, "b": [0.5] * 3, "z": [1.0] * 3}, {"a": winner, "b": [0.0] * 3})
     assert paired.flips == (["a"] if flipped else [])
+    # `z` has no scored winner repeat, so a flip cannot be ruled out: it is unscored, not a flip.
+    assert "z" in paired.unscored and "b" not in paired.unscored
+
+
+@pytest.mark.ac("gh-651:AC-10")
+@pytest.mark.parametrize(("winner", "repeats", "flips", "unscored"), [
+    ([], 3, [], ["a"]),
+    ([1.0], 3, [], ["a"]),
+    ([1.0, 0.0], 3, [], ["a"]),
+    ([1.0, 1.0], 3, [], []),
+    ([0.0], 3, ["a"], []),
+    ([], None, [], ["a"]),
+    ([1.0], None, [], []),
+])
+def test_a_protected_case_whose_failed_winner_repeats_could_hide_a_flip_is_unscored(
+        winner: list[float], repeats: int | None, flips: list[str], unscored: list[str]) -> None:
+    paired = holdout_deltas({"a": [1.0] * 3, "b": [0.0] * 3}, {"a": winner, "b": [1.0] * 3}, repeats)
+    assert (paired.flips, paired.unscored) == (flips, unscored)
 
 
 @pytest.mark.ac("gh-651:AC-10")
@@ -47,6 +65,15 @@ def test_a_flip_turns_a_promote_into_inconclusive_and_names_the_case() -> None:
     guarded = verdict(MASKED, flips=["a"])
     assert (guarded.verdict, guarded.reasons) == ("inconclusive", ("negative-flip:a",))
     assert (guarded.delta, guarded.se) == (verdict(MASKED).delta, verdict(MASKED).se)
+
+
+@pytest.mark.ac("gh-651:AC-11")
+def test_an_unscored_protected_case_turns_a_promote_into_inconclusive_after_the_flips() -> None:
+    guarded = verdict(MASKED, unscored=["z"])
+    assert (guarded.verdict, guarded.reasons) == ("inconclusive", ("unscored-protected:z",))
+    both = verdict(MASKED, flips=["a"], unscored=["z"])
+    assert both.reasons == ("negative-flip:a", "unscored-protected:z")
+    assert verdict({"a": -1.0, "b": 0.5}, unscored=["z"]) == verdict({"a": -1.0, "b": 0.5})
 
 
 @pytest.mark.ac("gh-651:AC-11")
@@ -105,3 +132,27 @@ def test_the_holdout_gate_does_not_promote_a_winner_that_loses_a_case_the_baseli
     claims = cast(dict[str, Any], result["claims"])  # pyright: ignore[reportExplicitAny]
     assert claims["improvement"]["status"] == "inconclusive" and claims["apply"] is False
     assert f"negative-flip:{victim}" in claims["improvement"]["reasons"]
+
+
+
+@pytest.mark.ac("gh-651:AC-12")
+def test_the_holdout_gate_does_not_promote_a_winner_whose_evaluations_of_a_protected_case_all_fail(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out, families=6)
+    approved, calls = approvals(target, out)
+    held = sorted(case["id"] for case in cast(list[dict[str, str]], read(out / "cases.json")["cases"])
+                  if case["split"] == "holdout")
+    victim = held[0]
+    state = Search(target)
+    state.case_score_of = lambda text, split, case_id: (
+        None if split != "holdout" else 1.0 if case_id == victim or "improved" in text else 0.0)
+    state.holdout_case_fault = lambda improved, case_id: (
+        RuntimeError("the call timed out") if improved and case_id == victim else None)
+    result = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=state.factory)
+    gate = cast(dict[str, Any], read(out / "run.json")["gate"])  # pyright: ignore[reportExplicitAny]
+    assert verdict({case_id: 1.0 for case_id in held if case_id != victim}).verdict == "promote"
+    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", [f"unscored-protected:{victim}"])
+    claims = cast(dict[str, Any], result["claims"])  # pyright: ignore[reportExplicitAny]
+    assert claims["improvement"]["status"] == "inconclusive" and claims["apply"] is False
