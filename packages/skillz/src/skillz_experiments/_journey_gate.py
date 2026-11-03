@@ -49,8 +49,10 @@ def _tool_step(name: object, raw: object) -> Step:
     data = _map(raw)
     if tool == "Bash":
         return Step(tool, str(data.get("command", "")), None)
-    if tool in EDIT_TOOLS and "file_path" in data:
-        return Step(tool, str(data["file_path"]), None)
+    path = data.get("file_path", data.get("notebook_path"))
+    if tool in EDIT_TOOLS and path is not None:
+        # Codex reports every file change as one kind, so each Claude edit tool becomes `Edit` too.
+        return Step("Edit", str(path), None)
     return Step(tool, json.dumps(data, sort_keys=True), None)
 
 

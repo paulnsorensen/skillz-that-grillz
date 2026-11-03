@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import __future__
+import ast
 import json
 import subprocess
 import sys
@@ -10,7 +11,8 @@ from pathlib import Path
 from typing import cast
 
 import pytest
-from skillz_experiments._journey_gate import Matcher, Step, missing_receipt, steps
+from skillz_experiments import _journey_gate
+from skillz_experiments._journey_gate import Matcher, Step, missing_receipt, steps, trace_steps
 
 ROOT = Path(__file__).resolve().parents[4]
 SOURCE = (ROOT / "packages/skillz/src/skillz_experiments/_journey_gate.py").read_text(encoding="utf-8")
@@ -143,6 +145,32 @@ def test_the_default_gate_ignores_receipts(tmp_path: Path) -> None:
     other = tmp_path / "n"
     other.mkdir()
     assert _run(other, ["[1]"]) == {"score": 0, "failed": ["no-agent-turn"]}
+    done = subprocess.run([sys.executable, "-I", "-c", SOURCE], cwd=tmp_path / "n" / "trace", capture_output=True,
+                          text=True, check=True)
+    assert json.loads(done.stdout) == {"score": 0, "failed": ["no-trace"]}
+
+
+@pytest.mark.ac("gh-651:AC-13")
+def test_every_claude_edit_tool_matches_a_codex_file_change() -> None:
+    codex = steps(cast(object, json.loads(_codex("edit", "/s/report.md"))))
+    for name, key in (("Write", "file_path"), ("MultiEdit", "file_path"), ("NotebookEdit", "notebook_path")):
+        claude = {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": name, "input": {key: "/s/report.md", "content": "x"}}]}}
+        assert steps(claude) == codex == [Step("Edit", "/s/report.md", None)]
+
+
+@pytest.mark.ac("gh-651:AC-14")
+def test_main_reads_the_trace_and_reports_the_missing_receipt(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "trace").mkdir()
+    lines = ["not json", *_lines("codex", [step for step in GOOD if "validate" not in step[1]])]
+    _ = (tmp_path / "trace/events.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert trace_steps(lines) == _flat("codex", [step for step in GOOD if "validate" not in step[1]])
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(_journey_gate, "RECEIPTS", RECEIPTS)
+    monkeypatch.setattr(_journey_gate, "TERMINAL", TERMINAL)
+    _journey_gate.main()
+    assert json.loads(capsys.readouterr().out) == {"score": 0, "failed": ["receipt-missing:validated"]}
 
 
 @pytest.mark.ac("gh-651:AC-16")
@@ -150,3 +178,4 @@ def test_the_gate_defers_its_annotations_so_an_older_host_python3_can_run_it() -
     # `Matcher | None` raises TypeError at import on Python 3.9, which a host `python3` may still resolve to.
     code = compile(SOURCE, "journey.py", "exec", dont_inherit=True)
     assert code.co_flags & __future__.annotations.compiler_flag
+    _ = ast.parse(SOURCE, feature_version=(3, 9))

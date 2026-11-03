@@ -368,9 +368,10 @@ The gate checks ordered receipts. Edit two constants in `evals/gates/journey.py`
   `tool` is an exact tool name. `input` and `text` are regexes that the gate applies with `re.search`. Every field that you give must match one step.
 - `TERMINAL`: one `Matcher`, or `None`. The gate counts only the steps before the first step that matches it. A receipt after it does not count.
 
-The receipts must appear in order. Other steps may sit between them. A receipt that is missing scores 0 with `receipt-missing:<name>`. The gate reports only the first one.
+The receipts must appear in order. Other steps may sit between them. Each receipt needs its own step, so one chained command satisfies only one receipt. A receipt that is missing scores 0 with `receipt-missing:<name>`. The gate reports only the first one.
 The gate turns each Claude or Codex event into steps with `tool`, `input`, and `text`. `input` is the Bash command, the edited path, or the sorted JSON of the tool input.
-A Codex command, file change, and agent message become a `Bash` step, one `Edit` step for each path, and a text step. One list therefore works on both traces.
+A Codex command, file change, and agent message become a `Bash` step, one `Edit` step for each path, and a text step. A Claude `Write`, `MultiEdit`, or `NotebookEdit` also becomes an `Edit` step. One list therefore works on both traces.
+A Codex command can arrive wrapped in a shell, such as `/bin/zsh -lc 'git push'`. Do not anchor an `input` pattern with `^`.
 With no receipts and no terminal, the gate only checks `no-trace` and `no-agent-turn`.
 
 Write each journey case with these fields:
