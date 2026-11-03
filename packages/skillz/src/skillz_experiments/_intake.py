@@ -94,7 +94,7 @@ def _case(value: object, position: int, journeys: Collection[str], fixtures: Map
             raise ValueError("a task case needs files and an expected reference")
         return DraftCase(string(item["id"], "id"), string(item["family"], "family"), cast(str, kind),
                           string(item["request"], "request"), cast(str, source), files, expected,
-                          journey_of(item, kind in journeys), regression_of(item, source))
+                          journey_of(item, kind in journeys), regression_of(item, source, kind not in PENDING_KINDS))
     except CodedError as error:
         raise CodedError(error.code, f"case {name}: {error}") from None
     except ValueError as error:
@@ -116,9 +116,8 @@ def load_draft(path: Path, journeys: Collection[str] = ("journey",)) -> list[Dra
     fixtures = text_map(shared.get("fixtures", {}))
     cases = [_case(item, position, journeys, fixtures) for position, item in enumerate(cast(list[object], shared["cases"]), 1)]
     names = [case.identifier for case in cases]
-    for name in names:
-        if names.count(name) > 1:
-            raise ValueError(f"duplicate case id {name}")
+    if len(set(names)) != len(names):
+        raise ValueError(f"duplicate case id {next(name for name in names if names.count(name) > 1)}")
     return cases
 
 

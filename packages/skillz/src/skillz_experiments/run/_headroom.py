@@ -12,7 +12,9 @@ from skillz_experiments.gate import close
 from skillz_experiments.run._baseline import too_easy_stop
 from skillz_experiments.run._outcomes import failed_outcome, is_failed
 from skillz_experiments.run._plan import repeat_indices
-from skillz_experiments.run._reproduce import floor_cases, reproduce_outcomes, reproductions, score_holdout_regressions
+from skillz_experiments.run._reproduce import (
+    floor_cases, reproduce_outcomes, reproductions, score_holdout_regressions, stop_if_unreproduced,
+)
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import RunState
 from skillz_experiments.search import unit_score
@@ -63,8 +65,10 @@ def run_headroom(state: RunState, search: SearchPhase) -> None:
                                   if (case.split, case.identifier, repeat) not in found]))
     score_holdout_regressions(state)
     search.stop_if_faulted()
+    reproduced = reproduce_outcomes(state)
+    stop_if_unreproduced(state, reproduced)
     found = seed_items()
-    reproduction = reproductions([*cases, *state.cases_for("holdout")], found, reproduce_outcomes(state))
+    reproduction = reproductions([*cases, *state.cases_for("holdout")], found, reproduced)
     floor = floor_cases(reproduction)
     by_family: dict[str, list[float]] = {}
     splits: dict[str, str] = {}

@@ -1,16 +1,17 @@
 """Reproduction of regression cases: does the seed fail the case that a field failure produced?
 
-A regression case reproduces when every scored seed repeat scores 0 (fail-to-pass). A case that the seed passes does not
-reproduce: it is a floor case (pass-to-pass), kept as a regression floor and out of the too-easy decision.
+A regression case reproduces when every scored seed repeat scores exactly 0 (fail-to-pass). A case that the seed scores
+above 0 on some repeat does not reproduce: it is a floor case (pass-to-pass), kept as a regression floor and out of the
+too-easy decision.
 """
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from typing import cast
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments.gate import close
 from skillz_experiments.run._baseline import unmet_criteria
 from skillz_experiments.run._outcomes import failed_outcome, holdout_unscored
 from skillz_experiments.run._plan import repeat_indices
@@ -60,10 +61,12 @@ def _reproduction(case: Case, scored: Sequence[Mapping[str, object]]) -> dict[st
     scores = [unit_score(item["score"]) for item in scored]
     unmet: dict[str, dict[str, object]] = {}
     for item in scored:
-        unmet |= unmet_criteria(dict(item))
+        for name, value in unmet_criteria(dict(item)).items():
+            if name not in unmet or cast(int, value["level"]) < cast(int, unmet[name]["level"]):
+                unmet[name] = value
     if case.split == "holdout":
         unmet = {name: {"level": value["level"]} for name, value in unmet.items()}
-    return record | {"scores": scores, "reproduces": all(close(score, 0.0) for score in scores), "unmet": unmet}
+    return record | {"scores": scores, "reproduces": all(score == 0.0 for score in scores), "unmet": unmet}
 
 
 def reproductions(cases: Sequence[Case], seed_items: Mapping[tuple[object, object, object], dict[str, object]],
@@ -86,6 +89,17 @@ def reproductions(cases: Sequence[Case], seed_items: Mapping[tuple[object, objec
     return found
 
 
+def stop_if_unreproduced(state: RunState, reproduced: Mapping[str, object]) -> None:
+    """Raise `holdout-faulted` when a holdout regression case has no scored `reproduce` outcome.
+
+    The headroom pass then stays open, so a resume scores only the cases that failed.
+    """
+    lost = sorted(case.identifier for case in state.cases_for("holdout") if case.regression and case.identifier not in reproduced)
+    if lost:
+        raise CodedError("holdout-faulted", f"the seed evaluation of {len(lost)} holdout regression cases failed "
+                         + f"({', '.join(lost)}); wait for the provider, then resume the run in the same directory")
+
+
 def floor_cases(records: Mapping[str, Mapping[str, object]]) -> set[str]:
-    """Return the ids of the floor cases: regression cases that the seed passes on some repeat."""
+    """Return the ids of the floor cases: regression cases that the seed scores above 0 on some repeat."""
     return {name for name, record in records.items() if record["reproduces"] is False}

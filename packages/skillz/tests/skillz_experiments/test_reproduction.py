@@ -16,7 +16,7 @@ from skillz_experiments._intake import DRAFT_NAME, case_hash, load_draft, split_
 from skillz_experiments._records import read
 from skillz_experiments.harness import EnvironmentDiffers
 from skillz_experiments.run import Stop, _session, run
-from skillz_experiments.run._plan import VALIDATION_REPEATS
+from skillz_experiments.run._plan import VALIDATION_REPEATS, repeat_indices
 from skillz_experiments.run._reproduce import REPRODUCE_ARM, floor_cases, reproductions
 
 from test_run_search import MODEL, Search
@@ -107,6 +107,15 @@ def test_a_bad_regression_value_stops_as_cases_invalid_naming_the_case(
     assert parsed.cases == () and len(parsed.errors) == 1 and "'j1'" in parsed.errors[0] and reason in parsed.errors[0]
 
 
+@pytest.mark.ac("gh-651:AC-1")
+@pytest.mark.parametrize("kind", ["trigger", "near-miss"])
+def test_a_pending_draft_case_cannot_take_regression_true(tmp_path: Path, kind: str) -> None:
+    with pytest.raises(CodedError) as draft:
+        _ = load_draft(_draft(tmp_path, _case(kind=kind, source="session", regression=True)))
+    assert draft.value.code == "cases-invalid" and "field-1" in str(draft.value) and "scored kind" in str(draft.value)
+    assert [case.regression for case in load_draft(_draft(tmp_path, _case(kind=kind, source="session")))] == [False]
+
+
 @pytest.mark.ac("gh-651:AC-2")
 def test_an_omitted_or_false_regression_gives_the_same_case_data_and_hash(tmp_path: Path) -> None:
     hashes: list[str] = []
@@ -172,6 +181,22 @@ def test_a_regression_case_with_no_scored_outcome_records_null_with_a_reason() -
     assert floor_cases(found) == set()
 
 
+@pytest.mark.ac("gh-651:AC-3")
+@pytest.mark.ac("gh-651:AC-5")
+def test_a_seed_score_just_above_zero_is_a_floor_case_and_unmet_keeps_the_lowest_level() -> None:
+    case = Case("v", "f", "validation", "request", {"a": "b"}, {}, "session", True, regression=True)
+
+    def outcome(score: float, level: int) -> dict[str, object]:
+        return {"score": score, "criteria": {"gap": {"level": level, "reason": f"level {level}", "met": False}}}
+
+    scores, levels = [5e-13] + [0.0] * (VALIDATION_REPEATS - 1), [1] + [2] * (VALIDATION_REPEATS - 1)
+    items = {("validation", "v", repeat): outcome(score, level)
+             for repeat, score, level in zip(repeat_indices("validation"), scores, levels, strict=True)}
+    found = reproductions([case], items, {})
+    assert found["v"]["reproduces"] is False and floor_cases(found) == {"v"}
+    assert found["v"]["unmet"] == {"gap": {"level": 1, "reason": "level 1"}}
+
+
 @pytest.mark.ac("gh-651:AC-4")
 @pytest.mark.ac("gh-651:AC-9")
 def test_each_holdout_regression_case_scores_once_under_the_reproduce_arm_before_the_engine_starts(
@@ -229,6 +254,26 @@ def test_a_resume_does_not_score_a_holdout_regression_case_again(
     again = Counter(item["case_id"] for item in _record(out)["outcomes"] if item.get("arm") == REPRODUCE_ARM)
     assert again == Counter(dict.fromkeys(_splits(out, "holdout"), 1))
 
+
+
+@pytest.mark.ac("gh-651:AC-4")
+def test_a_failed_holdout_reproduction_stops_before_headroom_and_a_resume_scores_only_that_case(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, state, approved, calls = _start(tmp_path, make_target, write_draft, approvals)
+    _seed_zero(state)
+    state.holdout_fault = lambda number: RuntimeError("provider fell over") if number == 1 else None
+    with pytest.raises(CodedError) as caught:
+        _ = _go(state, target, out, approved, calls)
+    assert caught.value.code == "holdout-faulted" and "holdout regression" in str(caught.value)
+    assert "headroom" not in _record(out) and _record(out)["failure_code"] == "holdout-faulted"
+    holdout = _splits(out, "holdout")
+    first = Counter(item["case_id"] for item in _record(out)["outcomes"] if item.get("arm") == REPRODUCE_ARM)
+    assert first == Counter(dict.fromkeys(holdout, 1))
+    state.holdout_fault = lambda _number: None
+    _ = run(target, out, MODEL, live=True, factory=state.factory)
+    again = Counter(item["case_id"] for item in _record(out)["outcomes"] if item.get("arm") == REPRODUCE_ARM)
+    assert sum(again.values()) == len(holdout) + 1 and set(again) == set(holdout)
+    assert all(item["reproduces"] is True for name, item in _reproduction(out).items() if name in holdout)
 
 @pytest.mark.ac("gh-651:AC-5")
 def test_a_family_with_only_floor_cases_does_not_stop_the_run_and_the_floor_stays_listed(
