@@ -23,7 +23,8 @@ TABLE = f"{WIDE}::test_table"
 @contextmanager
 def _root() -> Generator[Path]:
     with tempfile.TemporaryDirectory() as directory:
-        yield Path(directory)
+        # pytest resolves its rootdir; on macOS the temp dir is a symlink (/var -> /private/var).
+        yield Path(directory).resolve()
 
 
 def _config(files: str = "", functions: str = "", max_cases: int = 5, max_rows: int = 3) -> str:
