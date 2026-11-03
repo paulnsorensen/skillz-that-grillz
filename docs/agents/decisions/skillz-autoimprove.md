@@ -90,6 +90,7 @@ The manual macOS checklist is in `skills/skillz/references/experiment-harness.md
 - **Alternatives:** A runner-owned bwrap and Seatbelt outer sandbox with a Python proxy (more security code to maintain). Docker Sandboxes or microsandbox (need KVM). Anthropic sandbox-runtime (needs Node and has the same seccomp bug).
 - **Consequences:** The nono backend bills an API key, not the Claude login. A task command can call `api.anthropic.com` with the proxy token, but cannot read the key or reach another host. macOS stays unverified. A fresh run stops with `host-not-ready`, and a resume stops with `nono-unavailable`. A free local check with a stand-in Claude passed the full preflight under real nono on Ubuntu 26.04. No paid live run has exercised it yet. Under nono, `sandboxed=False` drops the `.claude` deny rule, and the workspace is read-write. A task can create `<workspace>/.claude/skills/*`.
 - **Superseded 2026-10-11:** The change for issue #211 removed the nono backend and the `--isolation` option. A resume of a run that recorded nono stops with `nono-removed`. The text above is the original record.
+- **Note 2026-11-02 (removal record):** `skillz-harness-ergonomics.md` ADR-002 records the removal of the nono backend.
 
 ### ADR-008: Score journeys as an autoimprove case kind  [status: accepted]
 - **Context:** The skills /culture, /mold, and /cook ask the user questions across several turns. The runner was one-shot, so it could not score them.
