@@ -360,7 +360,8 @@ The command writes `<skill>/evals/autoimprove.json` with `status: draft`, a `jou
 It stops with `contract-exists` when the file exists, and it leaves that file unchanged.
 Show the user the rubric and the gate. Set `status` to `approved` only after the user approves them.
 
-The rubric tells the judge to grade the files in the output, the artifact, against each criterion. The judge uses the transcript only for what the agent said or did.
+When the agent writes files, the rubric tells the judge to grade those output files, the artifact, against each criterion that names them. The judge uses the transcript only for what the agent said or did.
+The gate stays valid on Python 3.9, because the host `python3` can be that old.
 The gate checks ordered receipts. Edit two constants in `evals/gates/journey.py`:
 
 - `RECEIPTS`: a list of `Matcher(name, tool=, input=, text=)`. It is empty by default.

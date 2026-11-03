@@ -2,8 +2,10 @@
 
 The grader runs it as `python3 -I -c SOURCE` in the journey workspace. It reads `trace/events.jsonl`
 and prints `{"score": 0 or 1, "failed": [...]}`. Fill `RECEIPTS` and `TERMINAL` below, and add checks below `main`.
-Standard library only.
+Standard library only. Keep it valid on Python 3.9, the oldest `python3` that a host may resolve.
 """
+from __future__ import annotations
+
 import json
 import pathlib
 import re

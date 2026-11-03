@@ -1,6 +1,7 @@
 """The scaffold journey gate checks ordered receipts over one step shape for Claude and Codex traces."""
 from __future__ import annotations
 
+import __future__
 import json
 import subprocess
 import sys
@@ -142,3 +143,10 @@ def test_the_default_gate_ignores_receipts(tmp_path: Path) -> None:
     other = tmp_path / "n"
     other.mkdir()
     assert _run(other, ["[1]"]) == {"score": 0, "failed": ["no-agent-turn"]}
+
+
+@pytest.mark.ac("gh-651:AC-16")
+def test_the_gate_defers_its_annotations_so_an_older_host_python3_can_run_it() -> None:
+    # `Matcher | None` raises TypeError at import on Python 3.9, which a host `python3` may still resolve to.
+    code = compile(SOURCE, "journey.py", "exec", dont_inherit=True)
+    assert code.co_flags & __future__.annotations.compiler_flag
