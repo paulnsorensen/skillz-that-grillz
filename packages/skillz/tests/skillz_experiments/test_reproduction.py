@@ -190,8 +190,9 @@ def test_a_seed_score_just_above_zero_is_a_floor_case_and_unmet_keeps_the_lowest
         return {"score": score, "criteria": {"gap": {"level": level, "reason": f"level {level}", "met": False}}}
 
     scores, levels = [5e-13] + [0.0] * (VALIDATION_REPEATS - 1), [1] + [2] * (VALIDATION_REPEATS - 1)
-    items = {("validation", "v", repeat): outcome(score, level)
-             for repeat, score, level in zip(repeat_indices("validation"), scores, levels, strict=True)}
+    items: dict[tuple[object, object, object], dict[str, object]] = {
+        ("validation", "v", repeat): outcome(score, level)
+        for repeat, score, level in zip(repeat_indices("validation"), scores, levels, strict=True)}
     found = reproductions([case], items, {})
     assert found["v"]["reproduces"] is False and floor_cases(found) == {"v"}
     assert found["v"]["unmet"] == {"gap": {"level": 1, "reason": "level 1"}}
