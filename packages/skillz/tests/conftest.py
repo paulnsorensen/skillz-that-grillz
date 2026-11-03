@@ -8,8 +8,24 @@ from types import ModuleType
 from typing import cast
 
 import pytest
+from hypothesis import strategies as st
 
 AC_MARKER = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*:[A-Z]+-[A-Z]*[0-9]+")
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Load the Unicode tables of Hypothesis in each test process before the first test starts.
+
+    The first `st.text` or `st.characters` strategy of a process loads the Unicode category table and the UTF-8 codec
+    table from `.hypothesis`. It builds each table that has no cached copy. A CI checkout has no cached copy, so each
+    xdist worker built both tables inside its first test that draws text, and the test-time ratchet charged that
+    build to the test. Hypothesis already collects its local constants before the first test for the same reason.
+    The hook runs after the Hypothesis plugin ends its initialization, so Hypothesis does not warn about slow plugin
+    code.
+    """
+    del session
+    st.characters(codec="utf-8").validate()
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
