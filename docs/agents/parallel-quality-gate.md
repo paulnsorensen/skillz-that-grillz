@@ -112,6 +112,15 @@ Each pytest suite receives a separate base directory and cache.
 Short bases avoid the Mac Unix-socket path limit after xdist adds worker directories.
 The scheduler stops owned process groups before it deletes the temporary root on interruption.[^6]
 
+Before preparation, every gate mode fixes an absolute `UV_PYTHON_INSTALL_DIR` for its children.
+A nonempty caller value selects the root, including the value that CI exports.
+Otherwise, the scheduler queries `uv python dir` under the original home and preserves that result.
+Failed discovery or empty output stops the gate before preparation.
+Tests can then assign private `HOME` values without changing ordinary compiler storage.
+The scheduler sets `UV_PYTHON_INSTALL_BIN=0` to prevent compiler installation from creating user bin links.
+Existing archive preparation provisions the compiler matrix; the scheduler adds no installation step.
+Tests that deliberately override the compiler root still use their isolated cold roots.[^13]
+
 ## Dependencies and artifact keys
 
 pytest-xdist remains a development dependency in both workspace packages.
@@ -154,5 +163,6 @@ A still-live descendant fails after the observation deadline.[^9]
 
 [^11]: [Mergify dequeue report for PR #595](https://github.com/paulnsorensen/skillz-that-grillz/pull/595#issuecomment-6554300944); [failed queue title check](https://github.com/paulnsorensen/skillz-that-grillz/actions/runs/41279938830/job/124769619836).
 [^12]: .github/workflows/pr-title.yml; .github/workflows/validate.yml; .github/scripts/test_pr_title_workflow.py. The user approves this narrow queue exception on 2026-11-01.
+[^13]: .github/scripts/run_gate.py (`_pin_compiler_root`, `main`, `_environment`); .github/scripts/test_run_gate.py; packages/skillz/tests/skillz_experiments/conftest.py:114-138; decisions/wedge-skill-packaging.md (ADR-014).
 
 _Source: Approved parallel-build contract, workspace rebase, local verification, Linux CI finding, and approved queue-title exception · Updated: 2026-11-01 · Supersedes: immediate descendant-state observation_
