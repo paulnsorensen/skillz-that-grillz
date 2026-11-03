@@ -506,7 +506,8 @@ class GateRunnerTest(unittest.TestCase):
     def test_the_six_split_groups_partition_the_collected_tests_under_xdist(self) -> None:
         """Spec test-suite-cost-gates AC-6: each collected test runs in exactly one shard."""
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            # pytest resolves its rootdir; on macOS the temp dir is a symlink (/var -> /private/var).
+            root = Path(directory).resolve()
             tests = root / "tests"
             tests.mkdir()
             for module in "abc":
