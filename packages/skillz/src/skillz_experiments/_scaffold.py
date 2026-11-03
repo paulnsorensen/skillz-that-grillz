@@ -12,8 +12,8 @@ from skillz_experiments._intake import skill_frontmatter
 
 RUBRIC = ("Grade the conversation on each criterion. The agent runs the {skill} skill for a user. "
           + "`reference.criteria` holds the approved criteria, and `reference.must` and `reference.must_not` hold the "
-          + "observables that they come from. When the agent writes files, grade those output files, the artifact, "
-          + "against each criterion that names them. Use the transcript only for what the agent said or did.")
+          + "observables that they come from. When the agent writes files, grade those files in `output_files`, the "
+          + "artifact, against each criterion that names them. Use the transcript only for what the agent said or did.")
 NEXT = ("Draft the journey cases in RUN/cases.draft.json: brief, max_turns, requirements, "
         + ", ".join(f"expected.{name}" for name in JOURNEY_EXPECTED_FIELDS)
         + ". Then ask the user to approve the contract and set its status to approved.")

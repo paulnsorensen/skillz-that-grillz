@@ -1,7 +1,8 @@
 """Generic gate of the `journey` grader. The scaffold command copies this file to `evals/gates/journey.py`.
 
 The grader runs it as `python3 -I -c SOURCE` in the journey workspace. It reads `trace/events.jsonl`
-and prints `{"score": 0 or 1, "failed": [...]}`. Fill `RECEIPTS` and `TERMINAL` below, and add checks below `main`.
+and prints `{"score": 0 or 1, "failed": [...]}`. It also prints each failure to stderr, which the run reports.
+Fill `RECEIPTS` and `TERMINAL` below, and add checks below `main`.
 Standard library only. Keep it valid on Python 3.9, the oldest `python3` that a host may resolve.
 """
 from __future__ import annotations
@@ -9,6 +10,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
+import sys
 from typing import NamedTuple, cast
 
 
@@ -53,7 +55,7 @@ def _tool_step(name: object, raw: object) -> Step:
     if tool in EDIT_TOOLS and path is not None:
         # Codex reports every file change as one kind, so each Claude edit tool becomes `Edit` too.
         return Step("Edit", str(path), None)
-    return Step(tool, json.dumps(data, sort_keys=True), None)
+    return Step(tool, json.dumps(data, sort_keys=True, ensure_ascii=False), None)
 
 
 def steps(event: object) -> list[Step]:
@@ -76,7 +78,7 @@ def steps(event: object) -> list[Step]:
         return [_tool_step("Bash", {"command": item.get("command", "")})]
     if kind == "agentMessage":
         return [Step(None, "", str(item.get("text", "")))]
-    if kind == "fileChange":
+    if kind == "fileChange" and item.get("status", "completed") == "completed":
         return [Step("Edit", str(_map(change).get("path", "")), None) for change in _list(item.get("changes"))]
     return []
 
@@ -88,6 +90,17 @@ def matches(matcher: Matcher, step: Step) -> bool:
         return False
     return matcher.text is None or (step.text is not None and re.search(matcher.text, step.text) is not None)
 
+
+
+def invalid_pattern(matchers: list[Matcher]) -> str | None:
+    """Return the name of the first matcher whose `input` or `text` is not a valid regex."""
+    for matcher in matchers:
+        for pattern in (matcher.input, matcher.text):
+            try:
+                _ = None if pattern is None else re.compile(pattern)
+            except re.error:
+                return matcher.name
+    return None
 
 def missing_receipt(found: list[Step], receipts: list[Matcher], terminal: Matcher | None) -> str | None:
     """Return the name of the first receipt that has no step in order before the terminal step."""
@@ -138,7 +151,9 @@ def trace_steps(lines: list[str]) -> list[Step]:
 def main() -> None:
     trace = pathlib.Path("trace/events.jsonl")
     failed: list[str] = []
-    if not trace.is_file():
+    if (bad := invalid_pattern([*RECEIPTS, *([] if TERMINAL is None else [TERMINAL])])) is not None:
+        failed.append(f"receipt-invalid:{bad}")
+    elif not trace.is_file():
         failed.append("no-trace")
     else:
         lines = trace.read_text(encoding="utf-8").splitlines()
@@ -146,6 +161,8 @@ def main() -> None:
             failed.append("no-agent-turn")
         elif (name := missing_receipt(trace_steps(lines), RECEIPTS, TERMINAL)) is not None:
             failed.append(f"receipt-missing:{name}")
+    if failed:
+        print("journey gate failed: " + ", ".join(failed), file=sys.stderr)
     print(json.dumps({"score": 0 if failed else 1, "failed": failed}))
 
 

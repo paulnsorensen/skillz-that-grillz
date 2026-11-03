@@ -4,6 +4,7 @@ from __future__ import annotations
 import __future__
 import ast
 import json
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -179,3 +180,70 @@ def test_the_gate_defers_its_annotations_so_an_older_host_python3_can_run_it() -
     code = compile(SOURCE, "journey.py", "exec", dont_inherit=True)
     assert code.co_flags & __future__.annotations.compiler_flag
     _ = ast.parse(SOURCE, feature_version=(3, 9))
+
+
+def _python39() -> str | None:
+    """Return a Python 3.9 interpreter on this host, or None."""
+    for name in ("python3.9", "/usr/bin/python3"):
+        path = shutil.which(name)
+        if path is None:
+            continue
+        version = subprocess.run([path, "-c", "import sys; print(sys.version_info[:2])"], capture_output=True, text=True,
+                                 check=False).stdout.strip()
+        if version == "(3, 9)":
+            return path
+    return None
+
+
+@pytest.mark.ac("gh-651:AC-16")
+def test_the_authored_gate_runs_on_a_python_3_9_interpreter(tmp_path: Path) -> None:
+    python = _python39()
+    if python is None:
+        pytest.skip("no Python 3.9 interpreter on this host")
+    flow = [step for step in GOOD if "validate" not in step[1]]
+    for directory, lines, failed in ((tmp_path / "ok", _lines("codex", GOOD), []),
+                                     (tmp_path / "miss", _lines("claude", flow), ["receipt-missing:validated"])):
+        (directory / "trace").mkdir(parents=True)
+        _ = (directory / "trace/events.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        done = subprocess.run([python, "-I", "-c", _authored()], cwd=directory, capture_output=True, text=True, check=True)
+        assert json.loads(done.stdout) == {"score": 0 if failed else 1, "failed": failed}
+
+
+@pytest.mark.ac("gh-651:AC-14")
+@pytest.mark.parametrize("flow", [GOOD, [("text", "hello")]])
+def test_an_invalid_receipt_regex_scores_0_and_names_the_receipt_on_every_trace(tmp_path: Path, flow: Flow) -> None:
+    source = _authored().replace('input="validate"', 'input="validate("')
+    (tmp_path / "trace").mkdir()
+    _ = (tmp_path / "trace/events.jsonl").write_text("\n".join(_lines("claude", flow)) + "\n", encoding="utf-8")
+    done = subprocess.run([sys.executable, "-I", "-c", source], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert json.loads(done.stdout) == {"score": 0, "failed": ["receipt-invalid:validated"]}
+    assert "receipt-invalid:validated" in done.stderr and "Traceback" not in done.stderr
+    terminal = _authored().replace('input="git push"', 'input="git (push"')
+    again = subprocess.run([sys.executable, "-I", "-c", terminal], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert json.loads(again.stdout) == {"score": 0, "failed": ["receipt-invalid:publish"]}
+
+
+@pytest.mark.ac("gh-651:AC-14")
+def test_a_missing_receipt_also_reaches_stderr_so_the_run_reports_it(tmp_path: Path) -> None:
+    (tmp_path / "trace").mkdir()
+    flow = [step for step in GOOD if "validate" not in step[1]]
+    _ = (tmp_path / "trace/events.jsonl").write_text("\n".join(_lines("codex", flow)) + "\n", encoding="utf-8")
+    done = subprocess.run([sys.executable, "-I", "-c", _authored()], cwd=tmp_path, capture_output=True, text=True, check=True)
+    assert done.stderr.strip() == "journey gate failed: receipt-missing:validated"
+    passed = tmp_path / "p"
+    passed.mkdir()
+    (passed / "trace").mkdir()
+    _ = (passed / "trace/events.jsonl").write_text("\n".join(_lines("codex", GOOD)) + "\n", encoding="utf-8")
+    ok = subprocess.run([sys.executable, "-I", "-c", _authored()], cwd=passed, capture_output=True, text=True, check=True)
+    assert ok.stderr == ""
+
+
+@pytest.mark.ac("gh-651:AC-13")
+def test_a_failed_codex_file_change_gives_no_step_and_other_tool_input_keeps_non_ascii_text() -> None:
+    for status, found in (("failed", []), ("declined", []), ("completed", [Step("Edit", "/s/a.md", None)])):
+        event = {"method": "item/completed", "params": {"item": {"type": "fileChange", "status": status,
+                                                                 "changes": [{"path": "/s/a.md"}]}}}
+        assert steps(event) == found
+    read = {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read", "input": {"q": "café"}}]}}
+    step = steps(read)[0]
+    assert missing_receipt([step], [Matcher("m", tool="Read", input="café")], None) is None
