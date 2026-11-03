@@ -15,7 +15,7 @@ from skillz_experiments._cases import (
     JOURNEY_FIELDS, CodedError, Journey, Split, case_criteria, journey_of, loads_untrusted, mapping, string, text_map,
 )
 from skillz_experiments._contract import LOCATION, RUBRIC_GRADERS, Contract, Grader, load_contract, parse
-from skillz_experiments._evals_format import EVAL_KINDS, SOURCES
+from skillz_experiments._evals_format import EVAL_KINDS, SOURCES, regression_of
 from skillz_experiments._frontmatter import read_frontmatter
 from skillz_experiments._records import approval_digest, share_files, write_cases
 
@@ -31,7 +31,7 @@ MINIMUM_FAMILIES = TRAIN_FAMILIES_MINIMUM + 2
 SPLITS: tuple[Split, ...] = ("train", "validation", "holdout")
 TASK_RUBRIC = ("Grade the answer on each criterion. `reference` holds the expected output and the assertions that the "
                "criteria come from. Ignore differences in JSON shape, quoting, or whitespace.")
-DRAFT_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source"} | JOURNEY_FIELDS
+DRAFT_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source", "regression"} | JOURNEY_FIELDS
 DRAFT_REQUIRED = {"id", "family", "kind", "request", "source"}
 
 
@@ -45,6 +45,7 @@ class DraftCase:
     files: dict[str, str]
     expected: object
     journey: Journey | None = None
+    regression: bool = False
 
     @property
     def pending(self) -> bool:
@@ -67,7 +68,7 @@ class IntakeCase(DraftCase):
             item.update(self.journey.data())
         if not self.scored and not self.pending:
             item["scored"] = False
-        return item
+        return item | ({"regression": True} if self.regression else {})
 
 
 def _case(value: object, position: int, journeys: Collection[str], fixtures: Mapping[str, str]) -> DraftCase:
@@ -93,7 +94,7 @@ def _case(value: object, position: int, journeys: Collection[str], fixtures: Map
             raise ValueError("a task case needs files and an expected reference")
         return DraftCase(string(item["id"], "id"), string(item["family"], "family"), cast(str, kind),
                           string(item["request"], "request"), cast(str, source), files, expected,
-                          journey_of(item, kind in journeys))
+                          journey_of(item, kind in journeys), regression_of(item, source, kind not in PENDING_KINDS))
     except CodedError as error:
         raise CodedError(error.code, f"case {name}: {error}") from None
     except ValueError as error:
@@ -114,11 +115,9 @@ def load_draft(path: Path, journeys: Collection[str] = ("journey",)) -> list[Dra
         raise ValueError("draft must be a nonempty list of cases, or an object with only fixtures and a nonempty cases list")
     fixtures = text_map(shared.get("fixtures", {}))
     cases = [_case(item, position, journeys, fixtures) for position, item in enumerate(cast(list[object], shared["cases"]), 1)]
-    seen: set[str] = set()
-    for case in cases:
-        if case.identifier in seen:
-            raise ValueError(f"duplicate case id {case.identifier}")
-        seen.add(case.identifier)
+    names = [case.identifier for case in cases]
+    if len(set(names)) != len(names):
+        raise ValueError(f"duplicate case id {next(name for name in names if names.count(name) > 1)}")
     return cases
 
 
@@ -325,7 +324,7 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task"
     for family in sorted({case.family for case in cases} - set(assigned)):
         assigned[family] = rng.choice(SPLITS)
     return [IntakeCase(c.identifier, c.family, kind if scores(c) and c.journey is None and kind is not None else c.kind,
-                       c.request, c.source, c.files, c.expected, c.journey, split=assigned[c.family],
+                       c.request, c.source, c.files, c.expected, c.journey, c.regression, split=assigned[c.family],
                        scored=scores(c) or (not c.pending and c.journey is not None and c.kind in also)) for c in cases]
 
 

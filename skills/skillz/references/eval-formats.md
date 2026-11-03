@@ -69,8 +69,14 @@ The file is a JSON list with at least one case. Each case has these fields:
 | `files` | An inline map of path to text. It is optional. |
 | `expected` | The closed reference object below. |
 | `source` | `skill` for a case drafted from the skill, or `session` for a case mined from past sessions. The seed uses `skill` when it is absent. |
+| `regression` | Optional. `true` marks a case that comes from a field failure. It is valid only with `source: session`. A draft `trigger` or `near-miss` case cannot take it, because the run does not score it. The default is `false`, and a false value is not stored. |
 
 CI requires `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`. Any other key is an error.
+
+A regression case (`regression: true`) shows whether it reproduces the failure on the seed. It reproduces when the seed scores 0 on every scored repeat (fail-to-pass).
+A regression case that the seed scores above 0 on some repeat is a floor case (pass-to-pass). The run keeps it as a regression floor. The `cases-too-easy` decision ignores it.
+The run records `headroom.reproduction.<id>` for each regression case, with `solvable: "unknown"`, because one seed run cannot show that the case is solvable.
+The draft case format (`cases.draft.json`) takes the same `regression` field.
 
 The `expected` object takes only these keys. It needs a nonempty `must` or `must_not`. The `criteria` list is optional in `journeys.json`, but intake requires it before a run scores a judged case:
 

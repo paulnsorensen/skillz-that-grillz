@@ -101,6 +101,10 @@
             "minimum": 1,
             "default": 8
           },
+          "regression": {
+            "type": "boolean",
+            "description": "A case drafted from a field failure. Needs source: session. The headroom pass records whether the seed fails it."
+          },
           "request": {
             "type": "string",
             "pattern": "\\S",
