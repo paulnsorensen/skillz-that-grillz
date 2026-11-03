@@ -283,10 +283,9 @@ def test_inspect_matches_the_old_inspector_on_three_hundred_generated_documents(
     pool = _fragments()
     old_inspect = cast(Callable[[Path], dict[str, object]], getattr(old_module, "inspect"))
     mismatches: list[str] = []
-    for number in range(300):
+    for _ in range(300):
         body = "\n".join(generator.choice(pool) for _ in range(generator.randint(1, 40)))
-        path = write(tmp_path / f"doc{number}" / "SKILL.md", FRONT + body + "\n")
-        _ = write(tmp_path / f"doc{number}" / "a.md", "a")
+        path = write(tmp_path / "SKILL.md", FRONT + body + "\n")
         actual = _outcome(inspect, path)
         expected = _outcome(old_inspect, path)
         # gh-403: the old inspector also reads links in code fences and code spans; the new one may only drop those.
@@ -298,6 +297,7 @@ def test_inspect_matches_the_old_inspector_on_three_hundred_generated_documents(
         if actual_facts != expected_facts or not actual_links <= expected_links or dropped:
             mismatches.append(body)
     assert not mismatches, mismatches[:2]
+    assert list(tmp_path.iterdir()) == [tmp_path / "SKILL.md"]
 
 
 # --- the built archive is not stale -----------------------------------------------------------------------------
