@@ -146,6 +146,9 @@ class Statistics:
 
 DEFAULT_STATISTICS = Statistics()
 
+FLIP_MARGIN = 0.5
+"""A case that the baseline passes on every repeat flips when the winner repeat mean is below `1 - FLIP_MARGIN`."""
+
 
 def case_deltas(
     baseline: Mapping[str, Sequence[float]], winner: Mapping[str, Sequence[float]]
@@ -164,12 +167,15 @@ def case_deltas(
 
 @dataclass(frozen=True)
 class HoldoutDeltas:
-    """The paired holdout result: per-case deltas, the SE floor, the per-case moves, and the shared case count."""
+    """The paired holdout result: per-case deltas, the SE floor, the per-case moves, the shared case count, the flips,
+    and the unscored protected cases."""
 
     deltas: dict[str, float]
     se_floor: float
     moves: dict[str, list[str]]
     n_shared: int
+    flips: list[str]
+    unscored: list[str]
 
 
 def _repeat_se(scores: Sequence[float]) -> float:
@@ -177,8 +183,29 @@ def _repeat_se(scores: Sequence[float]) -> float:
     return statistics.stdev(scores) / math.sqrt(len(scores)) if len(scores) > 1 else 0.0
 
 
+def _floor_guard(baseline: Mapping[str, Sequence[float]], winner: Mapping[str, Sequence[float]],
+                 repeats: int | None) -> tuple[list[str], list[str]]:
+    """Return the negative flips and the unscored protected cases, each sorted by case id.
+
+    A protected case scores 1.0 on every scored baseline repeat. It flips when the winner repeat mean is below
+    `1 - FLIP_MARGIN`. It is unscored when it does not flip, but the winner mean with each missing repeat of
+    `repeats` taken as 0 is below `1 - FLIP_MARGIN`: the failed winner repeats could hide a flip.
+    """
+    flips: list[str] = []
+    unscored: list[str] = []
+    for case_id in sorted(baseline):
+        base, won = baseline[case_id], winner.get(case_id, ())
+        if not base or any(score != 1.0 for score in base):
+            continue
+        if won and statistics.fmean(won) < 1.0 - FLIP_MARGIN:
+            flips.append(case_id)
+        elif math.fsum(won) / max(repeats or 1, len(won)) < 1.0 - FLIP_MARGIN:
+            unscored.append(case_id)
+    return flips, unscored
+
+
 def holdout_deltas(
-    baseline: Mapping[str, Sequence[float]], winner: Mapping[str, Sequence[float]]
+    baseline: Mapping[str, Sequence[float]], winner: Mapping[str, Sequence[float]], repeats: int | None = None
 ) -> HoldoutDeltas:
     """Pair the scored repeats of both arms per case and return the deltas, the SE floor, and the moves.
 
@@ -186,7 +213,8 @@ def holdout_deltas(
     The floor is `sqrt(sum(se_b^2 + se_w^2)) / n` over the shared cases, where each `se` is the standard error of
     the repeat mean of one case on one arm. A move is resolved when the mean delta exceeds
     `max(2 * sqrt(se_b^2 + se_w^2), 1e-9)`; a resolved positive move is `fixed`, a resolved negative move is
-    `broke`, and the rest are `unresolved`. Each list of case ids is sorted.
+    `broke`, and the rest are `unresolved`. `repeats` is the planned repeat count of each case; the floor guard
+    (`_floor_guard`) uses it to find the unscored protected cases. Each list of case ids is sorted.
     """
     shared = sorted(case_id for case_id in baseline.keys() & winner.keys() if baseline[case_id] and winner[case_id])
     deltas: dict[str, float] = {}
@@ -203,4 +231,4 @@ def holdout_deltas(
         else:
             moves["unresolved"].append(case_id)
     floor = math.sqrt(total) / len(shared) if shared else 0.0
-    return HoldoutDeltas(deltas, floor, moves, len(shared))
+    return HoldoutDeltas(deltas, floor, moves, len(shared), *_floor_guard(baseline, winner, repeats))

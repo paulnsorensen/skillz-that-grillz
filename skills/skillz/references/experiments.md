@@ -493,6 +493,18 @@ When the SE is 0, the second test uses 2·SE = 0.
 A result that fails a floor becomes `inconclusive`. A floor never creates a `reject`.
 With both floors at 0, the verdict equals the built-in rule.
 
+The floor guard runs after the floors and the token rule, and before the family rule.
+A protected case is a holdout case that scores 1.0 on every scored baseline repeat (a pass-to-pass case).
+The winner flips a protected case when its repeat mean on that case is below 0.5 (the margin `FLIP_MARGIN` is 0.5).
+With 3 repeats, one winner repeat that scores 0 (mean 0.67) is not a flip. Two or three repeats that score 0 are a flip.
+A winner repeat that fails to score (`evaluation-failed`, for example a timeout) has no score. The guard then takes each missing repeat as 0.
+When that pessimistic mean is below 0.5 and the scored repeats do not flip, the case is unscored: the failed repeats could hide a flip.
+An unscored protected case also turns `promote` or `promote-cheaper` into `inconclusive`, with the reason `unscored-protected:<case_id>`.
+A flip turns `promote` or `promote-cheaper` into `inconclusive`, even when the mean delta rises. Each flip adds the reason `negative-flip:<case_id>`, sorted by case id.
+The guard never creates a `reject`, and it does not change any other verdict. A family breach still forces `reject`.
+The improvement claim then reads `inconclusive` with the same reasons, and `apply` is `false`.
+The rule covers every holdout case, not only `regression: true` cases. A guard that only watched the mean would let one lost case hide behind gains on other cases.
+
 The family rule runs after the floors. It uses the holdout cases, grouped by `family`.
 A family needs at least two holdout cases. For that family, the gate takes the mean delta and its SE (SE_f).
 The budget is the `family_budgets` value for that family, else `family_budget`. A family with no budget has no family rule.
@@ -550,7 +562,7 @@ A run whose floors or token rule block a challenger keeps the seed, so its gate 
 
 ### Reasons and reporting
 
-The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `min-lower-bound`. The family reason is `family-regression:<name>`. The token reasons are `token-cost` and `unknown-usage`. The coverage reason is `low-coverage`.
+The gate verdict holds `reasons`, a list of the rules that fired. The floor reasons are `min-gain` and `min-lower-bound`. The family reason is `family-regression:<name>`. The floor guard reasons are `negative-flip:<case_id>` and `unscored-protected:<case_id>`. The token reasons are `token-cost` and `unknown-usage`. The coverage reason is `low-coverage`.
 A holdout delta that is not finite makes the verdict `inconclusive` with the reason `non-finite-delta`, and the record shows a NaN `delta` and `se`. A family breach still turns it into `reject`.
 A plain verdict has an empty list. A winner equal to the baseline has the reason `winner-equals-baseline`.
 The summary and the export report show `reasons`, `skipped_families`, `token_delta`, and `token_se` in the `gate` object. The token fields are `null` while the token rule is off or the usage is unknown.
