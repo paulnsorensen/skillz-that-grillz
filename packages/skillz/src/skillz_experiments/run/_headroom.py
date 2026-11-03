@@ -31,10 +31,10 @@ def run_headroom(state: RunState, search: SearchPhase) -> None:
     outcomes stand in for the seed validation pass of GEPA. Only the train outcomes add to the search ceiling, so
     the search keeps the room it had after its own seed pass. A resume scores only the runs that have no scored seed
     outcome, so a case with one repeat missing counts as missing and scores that repeat. A case scores the mean of its
-    scored repeats. A regression case adds its reproduction to the block: the seed scores, whether every one is 0, and
-    the unmet criteria. Each holdout regression case scores once under the `reproduce` arm. A floor case, one that the
-    seed does not fail on every repeat, stays out of its family mean. A run whose statistics set `min_token_saving`
-    expects saturated cases: it records the scores and does not stop.
+    scored repeats. A regression case adds its reproduction to the block: the seed scores, whether every one is 0, its
+    state, and the unmet criteria. Each holdout regression case scores once under the `reproduce` arm. A floor case,
+    one that the seed scores 1.0 on every repeat, stays out of its family mean; a partial case stays in it.
+    A run whose statistics set `min_token_saving` expects saturated cases: it records the scores and does not stop.
     """
     if isinstance(state.record.get("headroom"), dict):
         return

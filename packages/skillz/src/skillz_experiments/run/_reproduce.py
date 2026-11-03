@@ -1,8 +1,9 @@
 """Reproduction of regression cases: does the seed fail the case that a field failure produced?
 
-A regression case reproduces when every scored seed repeat scores exactly 0 (fail-to-pass). A case that the seed scores
-above 0 on some repeat does not reproduce: it is a floor case (pass-to-pass), kept as a regression floor and out of the
-too-easy decision.
+A regression case reproduces when every scored seed repeat scores exactly 0 (fail-to-pass). Its `state` is
+`fail-to-pass`, `pass-to-pass` when every scored seed repeat scores exactly 1.0, and `partial` otherwise (gh-663).
+Only a pass-to-pass case is a floor case: it stays as a regression floor and out of the too-easy decision. A partial
+case still has headroom, so it stays in its family mean.
 """
 from __future__ import annotations
 
@@ -66,7 +67,9 @@ def _reproduction(case: Case, scored: Sequence[Mapping[str, object]]) -> dict[st
                 unmet[name] = value
     if case.split == "holdout":
         unmet = {name: {"level": value["level"]} for name, value in unmet.items()}
-    return record | {"scores": scores, "reproduces": all(score == 0.0 for score in scores), "unmet": unmet}
+    reproduces = all(score == 0.0 for score in scores)
+    state = "fail-to-pass" if reproduces else "pass-to-pass" if all(score == 1.0 for score in scores) else "partial"
+    return record | {"scores": scores, "reproduces": reproduces, "state": state, "unmet": unmet}
 
 
 def reproductions(cases: Sequence[Case], seed_items: Mapping[tuple[object, object, object], dict[str, object]],
@@ -101,5 +104,5 @@ def stop_if_unreproduced(state: RunState, reproduced: Mapping[str, object]) -> N
 
 
 def floor_cases(records: Mapping[str, Mapping[str, object]]) -> set[str]:
-    """Return the ids of the floor cases: regression cases that the seed scores above 0 on some repeat."""
-    return {name for name, record in records.items() if record["reproduces"] is False}
+    """Return the ids of the floor cases: regression cases that the seed scores 1.0 on every scored repeat."""
+    return {name for name, record in records.items() if record.get("state") == "pass-to-pass"}

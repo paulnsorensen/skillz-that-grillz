@@ -74,7 +74,9 @@ The file is a JSON list with at least one case. Each case has these fields:
 CI requires `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`. Any other key is an error.
 
 A regression case (`regression: true`) shows whether it reproduces the failure on the seed. It reproduces when the seed scores 0 on every scored repeat (fail-to-pass).
-A regression case that the seed scores above 0 on some repeat is a floor case (pass-to-pass). The run keeps it as a regression floor. The `cases-too-easy` decision ignores it.
+The record also holds `state`: `fail-to-pass` when the seed scores 0 on every scored repeat, `pass-to-pass` when it scores 1.0 on every scored repeat, and `partial` otherwise.
+A `pass-to-pass` case is a floor case. The run keeps it as a regression floor. The `cases-too-easy` decision ignores it.
+A `partial` case still has headroom, so the `cases-too-easy` decision counts it, as it counts a `fail-to-pass` case.
 The run records `headroom.reproduction.<id>` for each regression case, with `solvable: "unknown"`, because one seed run cannot show that the case is solvable.
 The draft case format (`cases.draft.json`) takes the same `regression` field.
 
