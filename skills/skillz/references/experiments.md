@@ -382,6 +382,15 @@ One list therefore works on both traces for `Bash`, `Edit`, and text receipts. O
 A Codex command can arrive wrapped in a shell, such as `/bin/zsh -lc 'git push'`. Do not anchor an `input` pattern with `^`.
 With no receipts and no terminal, the gate only checks `no-trace` and `no-agent-turn`.
 
+Gate fixtures: put a passing and a failing run in `evals/gates/<gate>.fixtures/pass/` and `fail/`. Each holds `trace/events.jsonl` (Claude or Codex encoding) and an `output/` tree. Other files of a side go to the workspace root, where a run puts the case files. `validate` runs the gate as `python3 -I` in a temporary directory, with a 20 s timeout, and reports these findings:
+
+- `gate-unpassable` (error): the gate does not score 1 on `pass`.
+- `gate-permissive` (error): the gate scores above 0 on `fail`.
+- `gate-fixture-timeout` (error): the gate outlives the timeout.
+- `gate-fixture-unsafe` (error): a fixture holds a symbolic link, a file that is not a regular file, or too many files.
+- `gate-null-trace` (warning): a journey gate with `must` items scores a null trace above 0.
+- `gate-fixture-missing` (warning): the gate has no fixture for a side.
+
 Write each journey case with these fields:
 
 - `brief`: the user goal and the facts that the simulated user may share. Only the simulator sees it.
