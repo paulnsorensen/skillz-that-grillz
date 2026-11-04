@@ -299,13 +299,17 @@ def test_a_failed_command_gate_records_its_redacted_stderr_tail_and_both_feedbac
     case, candidate = case_and_candidate(tmp_path, kind, contract(NOISY_GATE))
     result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     diagnostic = cast(str, result["gate_diagnostic"])
-    assert result["score"] == 0.0 and diagnostic.endswith("x [redacted]") and len(diagnostic) == 1000
+    stderr = diagnostic.split("\nstderr: ", 1)[1]
+    assert result["score"] == 0.0 and diagnostic.startswith("the grader argv exits with code 1\n") and stderr.endswith("x [redacted]")
+    assert len(stderr) == 1000
     # The reuse path reads the outcome back from `run.json`.
     write(tmp_path / "run.json", {"outcome": result})
     recorded = cast(dict[str, object], read(tmp_path / "run.json")["outcome"])
     for outcome in (result, recorded):
         gate = cast(str, feedback_for(outcome, case, HarnessText(), candidate)[1]["gate_feedback"])
-        assert gate == diagnostic and "GATESECRET" not in gate and len(gate) <= 1000
+        assert gate.startswith("the grader argv exits with code 1\n") and "GATESECRET" not in gate and len(gate) <= 1000
+        kept = gate.split("\nstderr: ", 1)[1]
+        assert kept.endswith("x [redacted]") and stderr.endswith(kept) and 0 < len(kept) < len(stderr)
 
 
 SPLIT_SECRETS = {
@@ -328,7 +332,8 @@ def test_a_secret_that_crosses_the_old_stderr_window_never_reaches_the_diagnosti
     case, candidate = case_and_candidate(tmp_path, kind, contract(script))
     result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     diagnostic = cast(str, result["gate_diagnostic"])
-    assert "ZZCANARY" not in diagnostic and len(diagnostic) <= 1000 and diagnostic.startswith("pad ")
+    stderr = diagnostic.split("\nstderr: ", 1)[1]
+    assert "ZZCANARY" not in diagnostic and len(stderr) <= 1000 and stderr.startswith("pad ")
     write(tmp_path / "run.json", {"outcome": result})
     recorded = cast(dict[str, object], read(tmp_path / "run.json")["outcome"])
     for outcome in (result, recorded):
@@ -336,40 +341,41 @@ def test_a_secret_that_crosses_the_old_stderr_window_never_reaches_the_diagnosti
         gate = cast(str, feedback["gate_feedback"])
         assert "ZZCANARY" not in gate and len(gate) <= 1000
         prompt, _ = reflection_request("prose", {"SKILL.md": "x"}, {"SKILL.md": [feedback]}, ["SKILL.md"], progress=START)
-        assert "ZZCANARY" not in prompt and gate in prompt
+        assert "ZZCANARY" not in prompt and json.dumps(gate)[1:-1] in prompt
 
 
 @pytest.mark.ac("gh-501:AC-4")
-@pytest.mark.parametrize(("script", "score", "diagnostic"), [
-    ("print('not json')", 0.0, INVALID_STDOUT),
-    ("print('{\"other\": 1}')", 0.0, INVALID_STDOUT),
-    ("print('{\"score\": true}')", 0.0, INVALID_STDOUT),
-    ("print('{\"score\": 2}')", 0.0, INVALID_STDOUT),
-    ("print('{\"score\": -0.5}')", 0.0, INVALID_STDOUT),
-    ("print('{\"score\": \"1\"}')", 0.0, INVALID_STDOUT),
-    ("print('{\"score\": 0}')", 0.0, "the grader argv exits with code 0"),
-    ("print('{\"score\": 0.25}')", 0.25, "the grader argv exits with code 0"),
-    ("print('{\"score\": 1}')", 1.0, None)],
+@pytest.mark.parametrize(("script", "score", "lead", "stdout"), [
+    ("print('not json')", 0.0, INVALID_STDOUT, "not json"),
+    ("print('{\"other\": 1}')", 0.0, INVALID_STDOUT, '{"other": 1}'),
+    ("print('{\"score\": true}')", 0.0, INVALID_STDOUT, '{"score": true}'),
+    ("print('{\"score\": 2}')", 0.0, INVALID_STDOUT, '{"score": 2}'),
+    ("print('{\"score\": -0.5}')", 0.0, INVALID_STDOUT, '{"score": -0.5}'),
+    ("print('{\"score\": \"1\"}')", 0.0, INVALID_STDOUT, '{"score": "1"}'),
+    ("print('{\"score\": 0}')", 0.0, "the gate scored 0", '{"score": 0}'),
+    ("print('{\"score\": 0.25}')", 0.25, "the gate scored 0.25", '{"score": 0.25}'),
+    ("print('{\"score\": 1}')", 1.0, None, None)],
     ids=["malformed", "missing", "boolean", "above-range", "below-range", "text", "valid-zero", "valid-fraction", "valid-one"])
-def test_a_command_gate_that_exits_zero_with_an_invalid_score_says_so_and_a_valid_score_does_not(
-        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, score: float, diagnostic: str | None) -> None:
+def test_a_command_gate_that_exits_zero_names_its_verdict_and_shows_the_stdout_tail(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script: str, score: float, lead: str | None, stdout: str | None) -> None:
     case, candidate = case_and_candidate(tmp_path, "gate", contract(script))
     result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
-    assert result["score"] == score and result.get("gate_diagnostic") == diagnostic
+    assert result["score"] == score
+    assert result.get("gate_diagnostic") == (None if lead is None else f"{lead}\nstdout: {stdout}")
 
 
 @pytest.mark.ac("gh-501:AC-4")
 def test_a_nonzero_exit_keeps_the_exit_code_diagnostic_even_when_stdout_is_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     case, candidate = case_and_candidate(tmp_path, "gate", contract("print('not json');raise SystemExit(3)"))
     result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
-    assert result["score"] == 0.0 and result["gate_diagnostic"] == "the grader argv exits with code 3"
+    assert result["score"] == 0.0 and result["gate_diagnostic"] == "the grader argv exits with code 3\nstdout: not json"
 
 
 @pytest.mark.ac("gh-501:AC-4")
 def test_invalid_stdout_with_stderr_keeps_the_redacted_stderr_as_the_diagnostic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     case, candidate = case_and_candidate(tmp_path, "gate", contract("import sys;sys.stderr.write('boom api_key=sk-live-ABCDEF');print('not json')"))
     result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
-    assert result["gate_diagnostic"] == "boom [redacted]"
+    assert result["gate_diagnostic"] == f"{INVALID_STDOUT}\nstdout: not json\nstderr: boom [redacted]"
 
 
 @pytest.mark.ac("gh-501:AC-4")
