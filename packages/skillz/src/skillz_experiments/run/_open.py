@@ -12,7 +12,7 @@ from typing import cast, get_args
 
 from skillz_experiments._audit import GraderKind
 from skillz_experiments._audit import identity as judge_identity
-from skillz_experiments._budget import SECONDS_PER_CALL, Budget, BudgetExhausted, ceilings
+from skillz_experiments._budget import APPROVED_CALLS, JOURNEY_CALLS, SECONDS_PER_CALL, Budget, BudgetExhausted, ceilings
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, Split, digest, mapping
 from skillz_experiments._contract import RUBRIC_GRADERS, Contract
@@ -177,7 +177,10 @@ def open_budget(record: dict[str, object], cases: list[Case], contract: Contract
 
 def _cap(budget: dict[str, object]) -> int:
     """Return the raised call cap that the run recorded, or 0 for the standard cap."""
-    return int_field(budget, "cap") if "cap" in budget else 0
+    cap = int_field(budget, "cap") if "cap" in budget else 0
+    if cap != 0 and not APPROVED_CALLS < cap <= JOURNEY_CALLS:
+        raise Stop("run-record-tampered", "the recorded budget cap lies outside the raised call cap range; create a new run", {})
+    return cap
 
 
 def verify_budget(record: dict[str, object], cases: list[Case], contract: Contract, sizing: ClaudeOptions,

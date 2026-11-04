@@ -9,7 +9,7 @@ from skillz_experiments._budget import APPROVED_CALLS, JOURNEY_CALLS
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract
 from skillz_experiments.harness import ClaudeOptions
-from skillz_experiments.run._plan import _Plan, size_plan  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.run._plan import Plan, size_plan
 from skillz_experiments.run._stop import Stop
 
 TABLE_REPEATS = (1, 2, 3)
@@ -39,7 +39,7 @@ class Sizer:
     cap: int
     repeats_given: bool
 
-    def plan(self, repeats: int) -> _Plan:
+    def plan(self, repeats: int) -> Plan:
         """Return the plan for `repeats`. A plan that does not fit stops with the smallest approval and the repeats table."""
         try:
             return size_plan(self.contract, self.cases, repeats, self.options, self.cap)

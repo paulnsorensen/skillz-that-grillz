@@ -49,7 +49,7 @@ HOLDOUT_RETRIES_PER_ARM = 1
 
 
 @dataclass(frozen=True)
-class _Plan:
+class Plan:
     metric_calls: int
     reflection_calls: int
     holdout_calls: int
@@ -91,11 +91,11 @@ def case_calls(contract: Contract, case: Case) -> int:
 
 def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int, sandbox_seconds: int = 0,
           journey: bool = False, holdout_costs: Sequence[int] | None = None,
-          headroom_costs: Sequence[int] | None = None, reproduce_costs: Sequence[int] = (), cap: int = 0) -> _Plan:
+          headroom_costs: Sequence[int] | None = None, reproduce_costs: Sequence[int] = (), cap: int = 0) -> Plan:
     """Size the run. Shrink the search share to fit the cap; stop when the fixed cost alone exceeds it.
 
     `metric` counts metric calls: one search evaluation of one case. A metric call costs `per_evaluation` model calls.
-    `_Plan.metric_calls` and `reflection_calls` keep that unit. `holdout_calls` and `sized.calls` count model calls.
+    `Plan.metric_calls` and `reflection_calls` keep that unit. `holdout_calls` and `sized.calls` count model calls.
     `holdout_calls` is the gate reserve. It holds the gate and `HOLDOUT_RETRIES_PER_ARM` retries per arm,
     because a failed holdout call stays claimed.
     `replay_calls` is one pass of the winner over the holdout cases, for the replay phase. It adds to `sized.calls`,
@@ -167,13 +167,13 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
                    + "or change --seed or the case set", {})
     sandbox_gate = math.ceil(holdout_evaluations * sandbox_seconds / MAX_CONCURRENT_CALLS)
     sized, total = size(metric), sandbox_total(metric)
-    return _Plan(metric_calls=metric, reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls=holdout_calls,
+    return Plan(metric_calls=metric, reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls=holdout_calls,
                  retry_calls=retry_calls, sized=Estimate(sized.calls, sized.seconds + total, journey, cap),
                  replay_calls=holdout_pass, sandbox_gate=sandbox_gate, sandbox_total=total, sandbox_seconds=sandbox_seconds,
                  headroom_calls=headroom, headroom_outcomes=headroom_outcomes, reproduce_calls=reproduce)
 
 
-def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions, cap: int = 0) -> _Plan:
+def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions, cap: int = 0) -> Plan:
     """Size the run from per-case call costs. `_prepare` and `_verify_budget` share this, so their estimates match.
 
     The holdout reserve sums the holdout case costs. A search metric call costs the mean over the searched runs:
@@ -288,7 +288,7 @@ def scored_kinds(contract: Contract, requested: Sequence[str] = ()) -> tuple[str
     return chosen
 
 
-def plan_estimate(plan: _Plan, repeats: int, holdout_cases: int) -> dict[str, object]:
+def plan_estimate(plan: Plan, repeats: int, holdout_cases: int) -> dict[str, object]:
     """Return the `run.json` estimate that `verify_budget` checks. `_prepare` adds the unchecked `reflection` block."""
     journey = ({"journey": {"calls": plan.sized.calls, "seconds": plan.sized.seconds,
                             "ceiling_calls": JOURNEY_CALLS, "ceiling_seconds": JOURNEY_SECONDS}}

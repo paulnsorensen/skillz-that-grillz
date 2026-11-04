@@ -68,7 +68,7 @@ def reflection_time(reflection_calls: int, chars: int, sized: Estimate, *,
     """
     seconds = reflection_calls * (ESTIMATE_SECONDS_PER_CALL + math.ceil(chars / PROMPT_CHARS_PER_SECOND))
     projected = sized.seconds - estimate(reflection_calls=reflection_calls).seconds + seconds
-    cap = ceilings(sized.journey)[1]
+    cap = ceilings(sized.journey, sized.cap)[1]
     block = {"calls": reflection_calls, "editable_chars": chars, "seconds": seconds}
     if projected <= cap:
         return block, None
