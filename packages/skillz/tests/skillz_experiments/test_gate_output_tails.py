@@ -140,7 +140,10 @@ def test_a_stderr_label_line_in_a_stdout_only_gate_stays_in_the_stdout_tail(tmp_
 @pytest.mark.ac("autoimprove-seed-signals:AC-8")
 def test_export_reports_each_outcome_gate_diagnostic_and_fault(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
-    out, _, launch = _launch(tmp_path, make_target, write_draft, approvals)
+    # The smallest draft (6 families) and a proposer that refuses every edit keep the run short: the export reads
+    # only the seed outcomes, and each record write costs an fsync on a CI runner.
+    out, state, launch = _launch(tmp_path, make_target, write_draft, approvals, families=6)
+    state.refuse = True
     assert launch()["phase"] == "complete"
     record = read(out / "run.json")
     target = next(item for item in cast(list[dict[str, object]], record["outcomes"]) if item.get("split") != "reflection")
