@@ -14,6 +14,7 @@ from skillz_experiments._redact import redact
 from skillz_experiments._records import open_record, write
 from skillz_experiments.harness import stop_kind
 from skillz_experiments.run._claims import claims
+from skillz_experiments.run._export_outcome import export_outcome
 from skillz_experiments.run._patch import build_patch
 from skillz_experiments.run._plan import case_calls
 from skillz_experiments.run._replay import STDERR_LIMIT
@@ -238,32 +239,6 @@ def zero_cases(outcomes: list[dict[str, object]]) -> list[dict[str, object]]:
     return entries
 
 
-def _export_outcome(item: dict[str, object]) -> dict[str, object]:
-    allowed = {"arm", "split", "case_id", "repeat", "score", "status", "reason", "loaded", "helper_executed", "candidate_hash",
-               "case_hash", "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
-               "false_negatives", "precision", "recall", "detection_f1", "severity_accuracy", "actionability_rate", "scores"}
-    result = {key: value for key, value in item.items() if key in allowed}
-    for key in ("usage", "task_usage", "judge_usage"):
-        if key in item:
-            value = item[key]
-            result[key] = None if value is None else {
-                name: mapping(value).get(name) for name in ("input_tokens", "cached_input_tokens", "output_tokens")}
-    criteria = item.get("criteria")
-    if isinstance(criteria, dict):
-        verdicts = cast(dict[str, object], criteria)
-        result["criteria"] = {name: _export_verdict(cast(dict[str, object], verdict))
-                              for name, verdict in verdicts.items() if isinstance(verdict, dict)}
-    return result
-
-
-def _export_verdict(verdict: dict[str, object]) -> dict[str, object]:
-    """Return the level, the redacted reason, and the stored `met` flag of one criterion verdict."""
-    exported: dict[str, object] = {"level": verdict.get("level"), "reason": redact(str(verdict.get("reason", "")))}
-    if isinstance(verdict.get("met"), bool):
-        exported["met"] = verdict["met"]
-    return exported
-
-
 def _private_file(path: Path, text: str) -> None:
     """Create the new file `path` with mode 0600 and write `text` to it. Fail when `path` exists."""
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -305,7 +280,7 @@ def export(out: Path, destination: Path) -> dict[str, object]:
     for name, text in written.items():
         _private_file(destination / name, text)
     report = summary(record, out) | patches | {"sharing": "private-local-only",
-                                          "outcomes": [_export_outcome(item) for item in record_outcomes(record)],
+                                          "outcomes": [export_outcome(item) for item in record_outcomes(record)],
                                           "criteria_flags": criteria_flags(record_outcomes(record)),
                                           "zero_cases": zero_cases(record_outcomes(record)),
                                           "cost_usd": None}

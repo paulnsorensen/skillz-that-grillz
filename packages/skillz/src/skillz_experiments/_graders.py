@@ -48,8 +48,7 @@ TRACE_FILE = "trace/events.jsonl"
 CAPTURE_FILE_LIMIT = 16
 CAPTURE_BYTES_LIMIT = 4_000_000
 CAPTURE_TOTAL_LIMIT = 16_000_000
-# The command grader keeps at most this many characters of its redacted stderr, from the end.
-DIAGNOSTIC_LIMIT = 1_000
+DIAGNOSTIC_LIMIT = 1_000  # characters kept from the end of each redacted stdout and stderr tail
 _INVALID_STDOUT = "grader stdout lacks a JSON object with a numeric score from 0 to 1"
 
 
@@ -186,23 +185,24 @@ def _grading_workspace(case: Case, files: dict[str, str] | None, name: str,
 
 
 def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, str] | None,
-            trace: list[dict[str, object]] | None = None) -> tuple[float, str]:
+            trace: list[dict[str, object]] | None = None) -> tuple[float, str, str | None]:
     """Run the grader argv in a fresh workspace that holds the fixtures and the task output.
 
     The case files stay at the workspace root. The task output goes under `output/`, so it cannot
     replace a fixture. The argv runs as given. The workspace never holds `expected` or the
     rubric. The score is 0 for a non-zero exit code or for stdout that is not a JSON object with a
-    numeric `score` from 0 to 1. The second value is the redacted stderr, cut to its last `DIAGNOSTIC_LIMIT` characters.
-    An empty stderr gives the exit code instead.
+    numeric `score` from 0 to 1. The second value is a verdict lead line plus the redacted `stdout:` and `stderr:` tails.
+    The third is the gate fault: `timeout`, `invalid-output` (exit 0, no valid score), else None.
     """
     require_sandbox(task)
     with _grading_workspace(case, files, "command", trace) as workspace:
         code, stdout, stderr = _run(task, workspace, argv)
-    tail = redact(stderr)[-DIAGNOSTIC_LIMIT:]
     score, valid = _command_score(code, stdout)
-    if tail:
-        return score, tail
-    return score, f"the grader argv exits with code {code}" if valid else _INVALID_STDOUT
+    lead = f"the grader argv exits with code {code}" if code else f"the gate scored {score:g}" if valid else _INVALID_STDOUT
+    tails = [f"{name}: {tail}" for name, text in (("stdout", stdout), ("stderr", stderr))
+             if (tail := redact(text).strip()[-DIAGNOSTIC_LIMIT:])]
+    fault = "timeout" if code == 124 else "invalid-output" if code == 0 and not valid else None
+    return score, "\n".join([lead, *tails]), fault
 
 
 def _run(task: object, workspace: Path, argv: tuple[str, ...]) -> tuple[int, str, str]:
