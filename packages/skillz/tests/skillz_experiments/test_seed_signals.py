@@ -107,6 +107,16 @@ def test_a_case_stops_only_when_every_repeat_has_a_setup_fault() -> None:
     assert both["warnings"] == []
 
 
+@pytest.mark.ac("gh-656:AC-2")
+def test_the_unscorable_cause_names_the_first_diagnostic_cut_to_200_characters() -> None:
+    case = _case("v", "validation")
+    first = _item(0.0, fault="timeout") | {"gate_diagnostic": "  the grader argv exits with code 124\n" + "d" * 400}
+    second = _item(0.0, fault="timeout") | {"gate_diagnostic": "other text"}
+    unscorable = cast(list[dict[str, object]], seed_signals([case], _found(case, first, second), {}, set(), True)["unscorable"])
+    shown = ("the grader argv exits with code 124\n" + "d" * 400)[:200]
+    assert unscorable[0]["cause"] == f"setup fault timeout ({shown})"
+
+
 @pytest.mark.ac("gh-656:AC-3")
 def test_a_seed_that_scores_0_without_a_setup_fault_warns_and_the_run_continues(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
@@ -168,6 +178,14 @@ def test_the_saturation_warning_needs_fewer_than_two_open_train_cases_and_skips_
     one = seed_signals([saturated, open_a, floor], found, {"f": {"state": "pass-to-pass"}}, {"f"}, False)
     assert len(cast(list[str], one["warnings"])) == 1 and "1 of 3 train cases" in cast(list[str], one["warnings"])[0]
     assert seed_signals([saturated, open_a, floor], found, {}, {"f"}, True)["warnings"] == []
+
+
+@pytest.mark.ac("gh-658:AC-1")
+def test_a_suspect_zero_train_case_has_headroom_and_no_saturation_warning_follows() -> None:
+    cases = [_case("x"), _case("y"), _case("z")]
+    found = _found(cases[0], _item(0.0)) | _found(cases[1], _item(0.0)) | _found(cases[2], _item(0.0))
+    warnings = cast(list[str], seed_signals(cases, found, {}, set(), False)["warnings"])
+    assert len(warnings) == 3 and all(text.startswith("suspect-zero") for text in warnings)
 
 
 @pytest.mark.ac("gh-658:AC-1")

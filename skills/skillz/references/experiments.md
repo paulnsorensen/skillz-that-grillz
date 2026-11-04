@@ -449,7 +449,7 @@ A holdout case keeps only the level of each unmet criterion, so no judge text ab
 The run summary holds the `headroom` block. Tell the user about each floor case: it does not reproduce the failure.
 The block also holds `headroom.cases.<id>`: the split, the family, the seed `scores`, and the `status` and `gate_fault` of each repeat.
 Each case has a `mark`: `saturated` when every repeat scores 1.0, and `suspect-zero` when every repeat scores 0. The block also holds `saturated` counts per family and per split, and `warnings`. A `fail-to-pass` regression case is never `suspect-zero`.
-A case that scores 0 on every repeat, each with a setup fault, stops the run with `cases-unscorable` before the search. A case that scores 0 with any repeat free of a setup fault only prints a `skillz-experiment: warning:` line. Fewer than 2 train cases with headroom also warns. Report each warning to the user.
+A case that scores 0 on every repeat, each with a setup fault, stops the run with `cases-unscorable` before the search. A case that scores 0 with any repeat free of a setup fault only prints a `skillz-experiment: warning:` line. Fewer than 2 train cases with headroom (a seed score below 1 on some repeat) also warns. Report each warning to the user.
 A single-step case can miss a failure that comes from a skipped step. To reproduce that failure, draft a journey that runs the whole skill.
 
 ## Read the gate verdict

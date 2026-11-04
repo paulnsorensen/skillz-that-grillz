@@ -2,7 +2,8 @@
 
 A case is `saturated` when every seed repeat scores exactly 1.0, and `suspect-zero` when every seed repeat scores 0.
 A suspect-zero case whose every repeat has a setup fault cannot teach the search, so the run stops. Any other
-suspect-zero case, and a train split with fewer than `REFLECTION_MINIBATCH` cases that have headroom, only warn.
+suspect-zero case only warns. A train case has headroom when it has a seed score and is not saturated, so a train split
+with fewer than `REFLECTION_MINIBATCH` such cases also warns.
 """
 from __future__ import annotations
 
@@ -87,8 +88,8 @@ def seed_signals(cases: Sequence[Case], found: Mapping[tuple[object, object, obj
             warnings.append(f"suspect-zero: the seed scores 0 on every repeat of {case.identifier} ({case.split}, "
                             + f"family {case.family}); {cause}; the case may be unsolvable or its gate wrong")
     train = [identifier for identifier, entry in entries.items() if entry["split"] == "train"]
-    open_train = [identifier for identifier in train if entries[identifier]["scores"] and entries[identifier]["mark"] is None
-                  and identifier not in floor]
+    open_train = [identifier for identifier in train if entries[identifier]["scores"]
+                  and entries[identifier]["mark"] != "saturated" and identifier not in floor]
     if len(open_train) < REFLECTION_MINIBATCH and not expects_saturation:
         warnings.append(f"saturation: {len(open_train)} of {len(train)} train cases have headroom, fewer than "
                         + f"{REFLECTION_MINIBATCH}, so the search has little to learn from; add harder train cases")
