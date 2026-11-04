@@ -48,7 +48,7 @@ def _no_git_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     """Skip the two `git` spawns of each candidate capture.
 
     No test here builds a git repository, so git reports no ignored file below a temporary target.
-    The git-ignore behavior has its own tests in the candidate suite.
+    `test_contract.py` and `test_workflow.py` test the git-ignore behavior of the capture.
     """
     def no_ignored(_root: Path) -> set[str]:
         return set()
