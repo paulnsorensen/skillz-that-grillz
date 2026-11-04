@@ -9,6 +9,19 @@ from gate_rules import always_promote, never_promote
 from skillz_experiments import _cli
 from skillz_experiments.gate import POWER_EFFECTS, Power, Verdict, simulate, simulate_cheaper, simulate_power
 
+# Each simulation is deterministic, so every test that needs a default-argument run shares one real run per argument set.
+# Tests that check determinism or the seed call the uncached functions.
+_gate = cache(simulate)
+_power = cache(simulate_power)
+_cheaper = cache(simulate_cheaper)
+
+
+@pytest.fixture(autouse=True)
+def _shared_simulations(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_cli, "simulate_gate", _gate)
+    monkeypatch.setattr(_cli, "simulate_power", _power)
+    monkeypatch.setattr(_cli, "simulate_cheaper", _cheaper)
+
 
 @pytest.mark.parametrize("effect", POWER_EFFECTS)
 def test_a_rule_that_never_promotes_has_zero_power(effect: float) -> None:
@@ -34,7 +47,7 @@ def test_the_seed_changes_the_draws() -> None:
 
 
 def test_power_grows_with_the_true_effect_and_is_not_trivial() -> None:
-    counts = [simulate_power(effect).promotions for effect in POWER_EFFECTS]
+    counts = [_power(effect).promotions for effect in POWER_EFFECTS]
     assert counts == sorted(counts)
     assert 0 < counts[0] < counts[-1] < 2000
 
@@ -63,18 +76,15 @@ def test_the_cli_reports_a_count_and_a_rate_for_each_effect() -> None:
     printed = cast(dict[str, object], _cli.self_test(simulate=True))
     for effect in POWER_EFFECTS:
         label = round(effect * 100)
-        expected = simulate_power(effect)
+        expected = _power(effect)
         assert printed[f"true_promotions_effect_{label}"] == expected.promotions
         assert printed[f"power_effect_{label}"] == expected.rate
         assert type(printed[f"true_promotions_effect_{label}"]) is int
 
 
-def test_a_selected_figure_equals_the_same_key_of_the_full_report(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Each simulation is deterministic, so the full report and the selectors share one real run per argument set.
+def test_a_selected_figure_equals_the_same_key_of_the_full_report() -> None:
+    # The full report and the selectors share one real run per argument set (see `_shared_simulations`).
     # A selector that runs the wrong simulation, field, or arguments still reads another value or type.
-    monkeypatch.setattr(_cli, "simulate_gate", cache(simulate))
-    monkeypatch.setattr(_cli, "simulate_power", cache(simulate_power))
-    monkeypatch.setattr(_cli, "simulate_cheaper", cache(simulate_cheaper))
     full = cast(dict[str, object], _cli.self_test(simulate=True))
     for metric in cast(tuple[_cli.Metric, ...], get_args(_cli.Metric)):
         selected = _cli.self_test(simulate=True, metric=metric)
@@ -103,7 +113,7 @@ def test_a_false_promotion_selector_runs_no_power_simulation(monkeypatch: pytest
         raise AssertionError(f"a false-promotion selector must not simulate power at {effect}")
 
     monkeypatch.setattr(_cli, "simulate_power", forbidden)
-    assert _cli.self_test(simulate=True, metric="rate_2se") == simulate().rate_2se
+    assert _cli.self_test(simulate=True, metric="rate_2se") == _gate().rate_2se
 
 
 def test_every_numeric_report_key_but_the_fixed_ones_is_a_metric_selector() -> None:
@@ -123,7 +133,7 @@ def test_every_numeric_report_key_but_the_fixed_ones_is_a_metric_selector() -> N
     (0.05, 1.0, 0, 0.346),  # a margin far above the loss shows what an unbounded promote-cheaper rule would do
 ])
 def test_a_cheaper_promotion_rate_is_pinned_per_loss_and_margin(loss: float, margin: float, fixed: int, rate: float) -> None:
-    result = simulate_cheaper(loss, margin, fixed=fixed)
+    result = _cheaper(loss, margin, fixed=fixed)
     assert (result.loss, result.margin, result.trials, result.cases, result.fixed) == (loss, margin, 2000, 10, fixed)
     assert result.rate == rate == result.promotions / result.trials
     if loss == 0.05 and margin == 0.05:
@@ -150,6 +160,6 @@ def test_a_cheaper_simulation_refuses_a_bad_shape_or_a_negative_loss_or_margin_o
 
 
 def test_the_cheaper_selector_returns_the_simulated_rate() -> None:
-    assert _cli.self_test(simulate=True, metric="cheaper_loss_5_margin_5") == simulate_cheaper(0.05, 0.05).rate
+    assert _cli.self_test(simulate=True, metric="cheaper_loss_5_margin_5") == _cheaper(0.05, 0.05, fixed=0).rate
     assert (_cli.self_test(simulate=True, metric="cheaper_loss_0_margin_5_fixed_1")
-            == simulate_cheaper(0.0, 0.05, fixed=1).rate)
+            == _cheaper(0.0, 0.05, fixed=1).rate)
