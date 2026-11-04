@@ -1,7 +1,4 @@
-"""gh-651: a full run scores each holdout regression case once under the reproduce arm.
-
-The resume and fault paths are in `test_reproduction_holdout_resume.py`, so each file stays under the test-time budget.
-"""
+"""gh-651: a full run scores each holdout regression case once and budgets its calls."""
 # pyright: reportAny=false
 from __future__ import annotations
 

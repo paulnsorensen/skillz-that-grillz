@@ -1,4 +1,4 @@
-"""gh-651: a resume after a holdout reproduction stops scores each holdout regression case once in total."""
+"""gh-651: a faulted holdout reproduction stops the run, and a resume scores only the unscored or failed cases."""
 # pyright: reportAny=false
 from __future__ import annotations
 
