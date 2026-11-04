@@ -9,17 +9,18 @@ To drop an entry, remove it from its file.
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 
-from skillz_experiments._cases import CodedError, loads_untrusted, read_text, relative, text_map
+from skillz_experiments._cases import CodedError, Fixture, image_type, loads_untrusted, relative, text_map
 from skillz_experiments._contract import Contract
 from skillz_experiments._evals_format import EvalEntry, parse_evals, parse_journeys
 from skillz_experiments._intake import DRAFT_LIMIT, PENDING_KINDS, DraftCase, check_helper_input, projection
-from skillz_experiments._records import share_files
+from skillz_experiments._records import read_bytes, read_text, share_files
 
 EVALS = "evals/evals.json"
 JOURNEYS = "evals/journeys.json"
@@ -70,13 +71,18 @@ def _journeys(target: Path) -> list[dict[str, object]] | None:
     return [dict(case) for case in parsed.cases]
 
 
-def _fixture(target: Path, path: str, cache: dict[str, str]) -> str:
-    """Return the text of a fixture under `evals/files/`. Read each distinct path once."""
+def _fixture(target: Path, path: str, cache: dict[str, Fixture]) -> Fixture:
+    """Return a fixture under `evals/files/`: its text, or a base64 marker for a png, jpg, webp, or gif. Read each path once."""
     if path not in cache:
         if not relative(path).startswith(FIXTURES):
             raise ValueError(f"{path} must be under {FIXTURES}")
-        cache[path] = read_text(target, path, READ_LIMIT)
-        if sum(len(text.encode("utf-8")) for text in cache.values()) > SEED_LIMIT:
+        data = read_bytes(target, path, READ_LIMIT)
+        kind = image_type(data)
+        try:
+            cache[path] = {"base64": base64.b64encode(data).decode("ascii"), "type": kind} if kind else data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise ValueError(f"{path} must be UTF-8 text or a png, jpg, webp, or gif image") from None
+        if sum(len(item.encode("utf-8")) if isinstance(item, str) else len(item["base64"]) for item in cache.values()) > SEED_LIMIT:
             raise ValueError(f"the seed is too large; its fixtures pass {SEED_LIMIT} bytes")
     return cache[path]
 
@@ -92,7 +98,7 @@ def check_unique(identifiers: Sequence[object]) -> None:
 
 def seed_document(cases: Sequence[Mapping[str, object]]) -> dict[str, object]:
     """Return the seed file: the cases, which list fixture paths, and each fixture text once under `fixtures`."""
-    fixtures: dict[str, str] = {}
+    fixtures: dict[str, Fixture] = {}
     return {"cases": share_files(cases, fixtures), "fixtures": fixtures}
 
 
@@ -108,7 +114,7 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
     if entries is None and journeys is None:
         return None
     cases: list[dict[str, object]] = []
-    cache: dict[str, str] = {}
+    cache: dict[str, Fixture] = {}
     for header in entries or []:
         case = _case(header)
         if header.kind == "task":

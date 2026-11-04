@@ -8,7 +8,7 @@ from typing import Protocol, cast, runtime_checkable
 
 from skillz_experiments import _audit, _graders
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import MET_LEVEL, Case, CodedError, digest, mapping, string
+from skillz_experiments._cases import MET_LEVEL, Case, CodedError, digest, mapping, string, text_files
 from skillz_experiments._contract import Contract, resolve
 from skillz_experiments.evaluation._scoring import executed, grade, usage, witnessed_events
 from skillz_experiments._budget import Budget
@@ -212,7 +212,7 @@ def _evaluate_audit(judge_transport: _Responder, case: Case, result: dict[str, o
     """
     result["evidence_valid"] = False
     try:
-        findings = _audit.report(answer.get("result_json"), case.files)
+        findings = _audit.report(answer.get("result_json"), text_files(case.files))
     except ValueError:
         result["status"] = "invalid-report"
         return result

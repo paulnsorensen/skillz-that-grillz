@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
 import subprocess
@@ -258,7 +259,7 @@ def stage_task(workspace: Path, candidate: Candidate | None, case: Case | None) 
         for name, content in case.files.items():
             path = workspace / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            _ = path.write_text(content)
+            _ = path.write_text(content) if isinstance(content, str) else path.write_bytes(base64.b64decode(content["base64"]))
 
 
 def snapshot_outputs(workspace: Path) -> dict[str, str]:

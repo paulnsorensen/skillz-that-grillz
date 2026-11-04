@@ -1,10 +1,9 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
-import os
 import re
-import stat
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -61,44 +60,43 @@ def relative(value: str) -> str:
     return value
 
 
-def read_text(root: Path, name: str, limit: int) -> str:
-    """Return the strict UTF-8 text of a regular file of at most `limit` bytes at `name` under `root`.
+Fixture = str | dict[str, str]
+_MAGIC = {"png": (b"\x89PNG\r\n\x1a\n",), "jpg": (b"\xff\xd8\xff",), "gif": (b"GIF87a", b"GIF89a")}
 
-    Open each path part with `O_NOFOLLOW`, so a symlink anywhere in `name` fails. Raise `ValueError` that
-    names `name` and never an absolute path.
-    """
-    parts = PurePosixPath(relative(name)).parts
-    descriptors: list[int] = []
+
+def image_type(data: bytes) -> str | None:
+    """Return png, jpg, webp, or gif when `data` starts with that magic, else None. This is the one image allowlist."""
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return next((kind for kind, heads in _MAGIC.items() if data.startswith(heads)), None)
+
+
+def fixture(value: object, name: str) -> Fixture:
+    """Return nonempty text, or a `{"base64", "type"}` marker whose decoded bytes have the magic of its image type."""
+    if not isinstance(value, dict):
+        return string(value, name)
+    item = mapping(cast(object, value))
     try:
-        here = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
-        descriptors.append(here)
-        for part in parts[:-1]:
-            here = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=here)
-            descriptors.append(here)
-        leaf = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=here)
-        with os.fdopen(leaf, "rb") as stream:
-            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
-                raise ValueError(f"{name} must be a regular file")
-            data = stream.read(limit + 1)
-    except OSError:
-        raise ValueError(f"{name} cannot be read") from None
-    finally:
-        for descriptor in descriptors:
-            os.close(descriptor)
-    if len(data) > limit:
-        raise ValueError(f"{name} is too large")
-    try:
-        return data.decode("utf-8")
-    except UnicodeDecodeError:
-        raise ValueError(f"{name} must be UTF-8 text") from None
+        data = base64.b64decode(cast(str, item["base64"]), validate=True) if set(item) == {"base64", "type"} else b""
+    except (ValueError, TypeError):
+        data = b""
+    if not data or image_type(data) != item["type"]:
+        raise ValueError(f"{name} must be text or a base64 png, jpg, webp, or gif image")
+    return cast(dict[str, str], item)
 
 
-def text_map(value: object, shared: Mapping[str, str] | None = None, *, label: str = "files") -> dict[str, str]:
+def text_files(files: Mapping[str, Fixture]) -> dict[str, str]:
+    """Return the files as text. A binary fixture shows as a placeholder, so no prompt carries its bytes."""
+    return {name: item if isinstance(item, str) else f"[{item['type']} image, {len(item['base64'])} base64 bytes, not shown]"
+            for name, item in files.items()}
+
+
+def text_map(value: object, shared: Mapping[str, Fixture] | None = None, *, label: str = "files") -> dict[str, Fixture]:
     entries = mapping(dict.fromkeys(cast(list[str], value)) if isinstance(value, list) and shared is not None
                       and all(isinstance(path, str) for path in cast(list[object], value)) else cast(object, value))
     if shared is not None and (missing := [key for key, item in entries.items() if item is None and key not in shared]):
         raise ValueError(f"{label} lists {missing[0]!r}, which is not in fixtures")
-    files = {relative(key): string(shared[key] if item is None and shared is not None else item, key) for key, item in entries.items()}
+    files = {relative(key): fixture(shared[key] if item is None and shared is not None else item, key) for key, item in entries.items()}
     forbidden = {"home", "tmp", "output", "capture", "answer.json", "response-schema.json", "AGENTS.md", "CLAUDE.md"}
     if any(PurePosixPath(key).parts[0] in forbidden or PurePosixPath(key).name == "AGENTS.md" for key in files):
         raise ValueError("fixture collides with runtime-owned paths")
@@ -345,7 +343,7 @@ class Case:
     family: str
     split: Split
     request: str
-    files: dict[str, str]
+    files: Mapping[str, Fixture]
     expected: object
     provenance: str
     provider_approved: bool
@@ -370,7 +368,7 @@ def _kind(item: dict[str, object], kinds: Mapping[str, str]) -> str:
     return kind
 
 
-def _case(value: object, kinds: Mapping[str, str], fixtures: Mapping[str, str]) -> Case:
+def _case(value: object, kinds: Mapping[str, str], fixtures: Mapping[str, Fixture]) -> Case:
     item = mapping(value)
     split = string(item.get("split"), "split")
     if split not in get_args(Split):
@@ -386,7 +384,7 @@ def _case(value: object, kinds: Mapping[str, str], fixtures: Mapping[str, str]) 
     if type(reviewed) is not bool:
         raise ValueError("labels_reviewed must be boolean")
     files = text_map(item.get("files", {}), fixtures, label=f"case {item.get('id')!r} files")
-    expected = audit_labels(item.get("expected"), files) if kinds[kind] == "audit" else item.get("expected")
+    expected = audit_labels(item.get("expected"), text_files(files)) if kinds[kind] == "audit" else item.get("expected")
     if expected is None and kinds[kind] == "command":
         raise CodedError("expected-missing", f"case {item.get('id')!r} of kind {kind!r} needs an expected value")
     return Case(string(item.get("id"), "id"), string(item.get("family"), "family"), cast(Split, split), request, files, expected,

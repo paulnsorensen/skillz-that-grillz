@@ -229,6 +229,9 @@ This keeps matching files shared when another path has different text.
 The draft is a list of cases with inline `files` maps, or an object with `fixtures` and `cases`.
 Legacy list drafts do not accept references. An unknown fixture path stops the run, and the message names the case.
 The seed bound counts each distinct fixture once, however many cases list it.
+A fixture value is text or an image marker `{"base64": str, "type": "png"|"jpg"|"webp"|"gif"}`. A marker is one value, so it shares like text.
+The seed makes a marker from a file with png, jpg, webp, or gif magic bytes. Another non-UTF-8 file stops with `evals-unreadable`.
+The judge sees an image as a placeholder, not its bytes. The task and grading workspaces hold the exact bytes.
 
 ## Repository-internal formats
 

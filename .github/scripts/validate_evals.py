@@ -49,8 +49,9 @@ from typing import cast
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "skillz" / "src"))
 
-from skillz_experiments._cases import read_text, relative  # noqa: E402
+from skillz_experiments._cases import relative  # noqa: E402
 from skillz_experiments._evals_format import FIXTURES, parse_evals, parse_journeys  # noqa: E402
+from skillz_experiments._records import read_text  # noqa: E402
 from skillz_experiments._seed import READ_LIMIT  # noqa: E402
 
 

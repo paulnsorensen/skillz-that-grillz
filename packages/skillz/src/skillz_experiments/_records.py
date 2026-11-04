@@ -4,13 +4,14 @@ import contextlib
 import hashlib
 import json
 import os
+import stat
 import tempfile
 from collections import Counter, defaultdict
 from collections.abc import Callable, Mapping, Sequence
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import cast
 
-from skillz_experiments._cases import CodedError, mapping
+from skillz_experiments._cases import CodedError, Fixture, mapping, relative
 
 SCHEMA_VERSION = 4
 
@@ -63,24 +64,62 @@ def write_cases(path: Path, value: object) -> None:
     _ = write_bytes(path, data)
 
 
-def share_files(cases: Sequence[Mapping[str, object]], fixtures: dict[str, str]) -> list[dict[str, object]]:
-    """Select fixture values by saved JSON bytes before encoding references (gh-580)."""
-    candidates: defaultdict[str, Counter[str]] = defaultdict(Counter)
+def read_bytes(root: Path, name: str, limit: int) -> bytes:
+    """Return the bytes of a regular file of at most `limit` bytes at `name` under `root`.
+
+    Open each path part with `O_NOFOLLOW`, so a symlink anywhere in `name` fails. Raise `ValueError` that
+    names `name` and never an absolute path.
+    """
+    parts = PurePosixPath(relative(name)).parts
+    descriptors: list[int] = []
+    try:
+        here = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+        descriptors.append(here)
+        for part in parts[:-1]:
+            here = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=here)
+            descriptors.append(here)
+        leaf = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=here)
+        with os.fdopen(leaf, "rb") as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError(f"{name} must be a regular file")
+            data = stream.read(limit + 1)
+    except OSError:
+        raise ValueError(f"{name} cannot be read") from None
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+    if len(data) > limit:
+        raise ValueError(f"{name} is too large")
+    return data
+
+
+def read_text(root: Path, name: str, limit: int) -> str:
+    """Return the strict UTF-8 text of the file that `read_bytes` reads."""
+    try:
+        return read_bytes(root, name, limit).decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError(f"{name} must be UTF-8 text") from None
+
+
+def share_files(cases: Sequence[Mapping[str, object]], fixtures: dict[str, Fixture]) -> list[dict[str, object]]:
+    """Select fixture values by saved JSON bytes before encoding references (gh-580). A binary marker is one value."""
+    candidates: defaultdict[str, Counter[str | tuple[tuple[str, str], ...]]] = defaultdict(Counter)
     for case in cases:
         files = case.get("files")
         if isinstance(files, dict):
-            for path, text in cast(dict[str, str], files).items():
-                candidates[path][text] += 1
+            for path, value in cast(dict[str, Fixture], files).items():
+                candidates[path][value if isinstance(value, str) else tuple(sorted(value.items()))] += 1
     for path, counts in candidates.items():
         # Each fixture adds one string; each reference replaces an inline string with null.
-        selected = max(counts, key=lambda text: ((counts[text] - 1) * len(json.dumps(text)) - 4 * counts[text], text))
-        _ = fixtures.setdefault(path, selected)
+        selected = max(counts, key=lambda key: ((counts[key] - 1) * len(json.dumps(key if isinstance(key, str) else dict(key)))
+                                                - 4 * counts[key], str(key)))
+        _ = fixtures.setdefault(path, selected if isinstance(selected, str) else dict(selected))
     shared: list[dict[str, object]] = []
     for case in cases:
         files = case.get("files")
         if isinstance(files, dict):
-            references: dict[str, str | None] = {}
-            for path, text in cast(dict[str, str], files).items():
+            references: dict[str, Fixture | None] = {}
+            for path, text in cast(dict[str, Fixture], files).items():
                 references[path] = None if fixtures.setdefault(path, text) == text else text
             case = {**case, "files": list(references) if all(text is None for text in references.values()) else references}
         shared.append(dict(case))
