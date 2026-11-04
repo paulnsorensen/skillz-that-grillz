@@ -9,7 +9,8 @@ from skillz_experiments._budget import APPROVED_CALLS, JOURNEY_CALLS
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract
 from skillz_experiments.harness import ClaudeOptions
-from skillz_experiments.run._plan import Plan, size_plan
+from skillz_experiments.run._edit_plan import ReflectionNotes
+from skillz_experiments.run._plan import Plan, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
 
 TABLE_REPEATS = (1, 2, 3)
@@ -38,6 +39,12 @@ class Sizer:
     options: ClaudeOptions
     cap: int
     repeats_given: bool
+    holdout_cases: int
+    notes: ReflectionNotes
+
+    def estimate(self, plan: Plan, repeats: int) -> dict[str, object]:
+        """Return the shown estimate of `plan`: the `plan_estimate` that `verify_budget` checks, and the reflection block."""
+        return plan_estimate(plan, repeats, self.holdout_cases) | {"reflection": self.notes.time(plan.reflection_calls, plan.sized)}
 
     def plan(self, repeats: int) -> Plan:
         """Return the plan for `repeats`. A plan that does not fit stops with the smallest approval and the repeats table."""
@@ -49,13 +56,16 @@ class Sizer:
     def stop(self, message: str, data: dict[str, object], repeats: int, *, fitting: bool = False) -> Stop:
         """Return the `budget-unapproved` stop. It adds the repeats table unless the author gave `--repeats`.
 
-        With `fitting`, it also names the smallest approved number that fits, when one up to `JOURNEY_CALLS` does.
+        With `fitting`, it also names the smallest approved number that fits, when one up to `JOURNEY_CALLS` does, and
+        shows the `estimate` of the plan at that number, so the user sees what the approval covers.
         """
         text, extra = message, dict[str, object]()
         smallest = self._smallest(repeats) if fitting else None
         if smallest is not None:
             text += f"; --approve-budget {smallest} is the smallest approved number that fits"
-            extra["smallest_approval"] = smallest
+            shown = self.estimate(size_plan(self.contract, self.cases, repeats, self.options, smallest), repeats)
+            extra |= {"smallest_approval": smallest, "estimate": shown, "approve": "call run with --approve-budget CALLS",
+                      **self.notes.warnings}
         if not self.repeats_given:
             rows = self._table()
             text += "; repeats table: " + "; ".join(_row_text(row) for row in rows)

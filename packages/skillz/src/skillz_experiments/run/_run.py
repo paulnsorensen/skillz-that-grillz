@@ -45,7 +45,7 @@ from skillz_experiments.harness import (
 from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
 from skillz_experiments.run._edit_plan import ReflectionNotes, seed_or_prose
-from skillz_experiments.run._plan import plan_estimate, scored_kinds
+from skillz_experiments.run._plan import scored_kinds
 from skillz_experiments.run._sizing import Sizer, raised_cap
 from skillz_experiments.run._resume import (
     check_resume,
@@ -156,9 +156,9 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     # An omitted --edit that still plans prose+cli here failed its prose fallback, so the warnings do not offer prose.
     notes = ReflectionNotes.size(seed_candidate, mode, offer_prose=edit is not None)
     sizer = Sizer(contract, scored, options if configuration is None else configuration.sizing_options(),
-                  raised_cap(approve_budget, scored), repeats_given)
+                  raised_cap(approve_budget, scored), repeats_given, count["holdout"], notes)
     plan = sizer.plan(repeats)
-    shown = plan_estimate(plan, repeats, count["holdout"]) | {"reflection": notes.time(plan.reflection_calls, plan.sized)}
+    shown = sizer.estimate(plan, repeats)
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
     try:
         budget = approve(plan.sized, approve_budget, reserve=plan.reserve, reserve_time=plan.reserve_seconds)

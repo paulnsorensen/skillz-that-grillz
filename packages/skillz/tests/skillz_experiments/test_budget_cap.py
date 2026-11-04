@@ -58,6 +58,9 @@ def test_a_plan_over_the_standard_cap_names_the_smallest_approval_that_fits(
     smallest = cast(int, stop.data["smallest_approval"])
     assert APPROVED_CALLS < smallest <= JOURNEY_CALLS
     assert f"--approve-budget {smallest} is the smallest approved number that fits" in str(stop)
+    estimate = cast(dict[str, object], stop.data["estimate"])
+    assert APPROVED_CALLS < cast(int, estimate["calls"]) <= smallest and estimate["repeats"] == 3
+    assert set(estimate) >= {"seconds", "search_calls", "holdout_cases", "reflection"}
     below = _refused(target, out, case_hash, repeats=3, approve_budget=smallest - 1)
     assert below.data["smallest_approval"] == smallest
 
@@ -140,12 +143,13 @@ def test_a_finished_run_records_its_unspent_reserve_and_the_summary_shows_it(
     ended = cast(dict[str, int], record["search_end"])
     spent = cast(int, record["calls"]) - ended["calls"] - (cast(int, record["preflight_calls"]) - ended["preflight_calls"])
     assert type(unspent["calls"]) is int and unspent["calls"] == reserve - spent
-    assert "search_end" not in cast(dict[str, object], summary(record)["search"])
+    assert "search_end" not in summary(record)
     assert isinstance(unspent["seconds"], (int, float)) and unspent["seconds"] >= 0
     assert summary(record)["budget"] == record["budget"]
     _ = export(out, tmp_path / "exported")
     exported = cast(dict[str, object], read(tmp_path / "exported" / "report.json")["budget"])
     assert exported["unspent"] == unspent
+    assert "search_end" not in read(tmp_path / "exported" / "report.json")
 
 
 def _finished(ended: dict[str, float | int], **extra: object) -> dict[str, object]:
