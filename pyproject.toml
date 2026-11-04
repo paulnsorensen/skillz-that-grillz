@@ -81,7 +81,7 @@ ignore_decorators = [
   "@nested.default", "@wheels.command", "@target.command",
   "@pytest.fixture", "@override",
 ]
-ignore_names = ["pytestmark", "pytest_collection_modifyitems"]
+ignore_names = ["pytestmark", "pytest_collection_modifyitems", "pytest_sessionstart"]
 
 # Coverage gate (.github/scripts/check_coverage.py): `just build` combines the pytest lane data, then checks the
 # project floor, whole-symbol dead code, and the coverage of the lines that a change adds.
