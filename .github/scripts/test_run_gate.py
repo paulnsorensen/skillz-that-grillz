@@ -164,7 +164,8 @@ class GateRunnerTest(unittest.TestCase):
             pytest_events = [event for event in events if " pytest " in event and not event.startswith("eatmydata ")]
             self.assertEqual(len(pytest_events), 5)
             self.assertEqual(sorted(wrapped), sorted(pytest_events))
-            self.assertEqual(events[2], "uv sync --locked --all-packages --all-groups --all-extras")
+            # The format steps start beside the sync, so their log order varies.
+            self.assertIn("uv sync --locked --all-packages --all-groups --all-extras", events[:3])
             self.assertIn("→ skillz-e2e-pytest (eatmydata)", result.stdout)
             self.assertIn("→ fromargs-typecheck\n", result.stdout)
 
@@ -370,17 +371,22 @@ class GateRunnerTest(unittest.TestCase):
                 self.assertFalse(any("wedge bundle" in event or " pytest " in event for event in events), events)
 
     def test_without_test_workers_the_skillz_unit_lane_gets_half_the_cpus(self) -> None:
+        # A fixed CPU count keeps the unit lane apart from the 4-worker lanes on any host, also a 4-vCPU runner.
+        pinned = ("import os, runpy, sys; os.cpu_count = lambda: 40; sys.argv = [sys.argv[1], 'check']; "
+                  "runpy.run_path(sys.argv[0], run_name='__main__')")
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env = {name: value for name, value in self._fake_env(root).items() if name != "TEST_WORKERS"}
-            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+            result = subprocess.run([sys.executable, "-c", pinned, str(RUNNER)], env=env,
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             pytest_events = [event for event in (root / "events").read_text().splitlines() if " pytest " in event]
             unit = [event for event in pytest_events if "pytest packages/skillz/tests --ignore" in event]
             self.assertEqual(len(unit), 1)
-            self.assertIn(f" -n {max(4, (os.cpu_count() or 1) // 2)} ", unit[0])
-            self.assertTrue(all(" -n 4 " in event for event in pytest_events if event not in unit))
+            self.assertIn(" -n 20 ", unit[0])
+            others = [event for event in pytest_events if event not in unit]
+            self.assertEqual(len(others), 4)
+            self.assertTrue(all(" -n 4 " in event for event in others), others)
 
     def test_unit_workers_keep_an_explicit_count_and_never_drop_below_the_base(self) -> None:
         self.assertEqual(run_gate.unit_workers(3, True, 16), 3)
