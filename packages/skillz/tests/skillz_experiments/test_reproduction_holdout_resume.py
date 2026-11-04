@@ -1,7 +1,4 @@
-"""gh-651: a resume scores a holdout regression case under the reproduce arm only when no outcome holds it yet.
-
-`test_reproduction_holdout.py` holds the first-run tests, so that each file stays under the test-time budget.
-"""
+"""gh-651: a faulted holdout reproduction stops the run, and a resume scores only the unscored or failed cases."""
 # pyright: reportAny=false
 from __future__ import annotations
 

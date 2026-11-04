@@ -1564,5 +1564,237 @@
       ]
     },
     "source": "skill"
+  },
+  {
+    "id": "decline-cases-commit-msg",
+    "family": "decline-cases",
+    "kind": "journey",
+    "request": "/skillz autoimprove toys/commit-msg. Use the command harness: the executable is `python3`, and its one argument is the absolute path of `fake_harness.py` in the workspace. The model name is `toy`.",
+    "brief": "You want to improve the commit-msg skill. When the agent shows the case list and its hash, decline the cases: say you do not want to run these cases. Answer done when the agent reports that it stopped, or when it asks you nothing. You do not know the runner internals. Answer one question at a time. Do not volunteer facts.",
+    "max_turns": 3,
+    "files": {
+      "fake_harness.py": "\"\"\"Stub command harness for the autoimprove journeys. It refuses every call, so a journey makes no nested model call.\"\"\"\nimport sys\n\n_ = sys.stderr.write(\"fixture harness: this journey makes no model calls\\n\")\nsys.exit(3)\n",
+      "toys/commit-msg/SKILL.md": "---\nname: commit-msg\ndescription: Write a Conventional Commit message from a short change summary. Use for \"write a commit message\". Do NOT use for PR descriptions.\n---\n\n# commit-msg\n\n1. Read the change summary.\n2. Pick the type: feat, fix, docs, refactor, test, or chore.\n3. Write one subject line of at most 72 characters: `type(scope): summary`.\n4. Return only the message.\n"
+    },
+    "expected": {
+      "questions": [
+        "case approval"
+      ],
+      "must": [
+        "shows the runner's case question with its hash before it asks for approval",
+        "stops without --approve-cases after the user declines",
+        "says that no model call ran"
+      ],
+      "must_not": [
+        "approves cases or budget for the user",
+        "asks a budget question",
+        "edits the toy skill",
+        "claims a gate verdict or a patch"
+      ],
+      "final_stop": "cases-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent shows the runner's case question with its hash before it asks for approval.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent stops without --approve-cases after the user declines.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent says that no model call ran.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent asks a budget question.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the cases-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
+    },
+    "source": "skill"
+  },
+  {
+    "id": "decline-cases-changelog-line",
+    "family": "decline-cases",
+    "kind": "journey",
+    "request": "/skillz autoimprove toys/changelog-line. Use the command harness: the executable is `python3`, and its one argument is the absolute path of `fake_harness.py` in the workspace. The model name is `toy`.",
+    "brief": "You want to improve the changelog-line skill. When the agent shows the case list and its hash, decline the cases: say you do not want to run these cases. Answer done when the agent reports that it stopped, or when it asks you nothing. You do not know the runner internals. Answer one question at a time. Do not volunteer facts.",
+    "max_turns": 3,
+    "files": {
+      "fake_harness.py": "\"\"\"Stub command harness for the autoimprove journeys. It refuses every call, so a journey makes no nested model call.\"\"\"\nimport sys\n\n_ = sys.stderr.write(\"fixture harness: this journey makes no model calls\\n\")\nsys.exit(3)\n",
+      "toys/changelog-line/SKILL.md": "---\nname: changelog-line\ndescription: Turn a merged pull request title into one changelog line. Use for \"add a changelog line\". Do NOT use for release notes.\n---\n\n# changelog-line\n\n1. Read the pull request title and number.\n2. Put the line under Added, Changed, or Fixed.\n3. Write `- <sentence in past tense> (#<number>)`.\n4. Return the section name and the line.\n"
+    },
+    "expected": {
+      "questions": [
+        "case approval"
+      ],
+      "must": [
+        "shows the runner's case question with its hash before it asks for approval",
+        "stops without --approve-cases after the user declines",
+        "says that no model call ran"
+      ],
+      "must_not": [
+        "approves cases or budget for the user",
+        "asks a budget question",
+        "edits the toy skill",
+        "claims a gate verdict or a patch"
+      ],
+      "final_stop": "cases-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent shows the runner's case question with its hash before it asks for approval.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent stops without --approve-cases after the user declines.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent says that no model call ran.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent asks a budget question.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the cases-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
+    },
+    "source": "skill"
+  },
+  {
+    "id": "decline-cases-todo-sort",
+    "family": "decline-cases",
+    "kind": "journey",
+    "request": "/skillz autoimprove toys/todo-sort. Use the command harness: the executable is `python3`, and its one argument is the absolute path of `fake_harness.py` in the workspace. The model name is `toy`.",
+    "brief": "You want to improve the todo-sort skill. When the agent shows the case list and its hash, decline the cases: say you do not want to run these cases. Answer done when the agent reports that it stopped, or when it asks you nothing. You do not know the runner internals. Answer one question at a time. Do not volunteer facts.",
+    "max_turns": 3,
+    "files": {
+      "fake_harness.py": "\"\"\"Stub command harness for the autoimprove journeys. It refuses every call, so a journey makes no nested model call.\"\"\"\nimport sys\n\n_ = sys.stderr.write(\"fixture harness: this journey makes no model calls\\n\")\nsys.exit(3)\n",
+      "toys/todo-sort/SKILL.md": "---\nname: todo-sort\ndescription: Sort a TODO list by its priority tags. Use for \"sort my todos\". Do NOT use for calendar planning.\n---\n\n# todo-sort\n\n1. Read `todo.txt`. Each line holds one item and one tag: `[p1]`, `[p2]`, or `[p3]`.\n2. Sort by tag, `[p1]` first. Keep the input order inside a tag.\n3. Put an item without a tag last.\n4. Return the sorted lines only.\n",
+      "toys/todo-sort/evals/evals.json": "{\n  \"skill_name\": \"todo-sort\",\n  \"evals\": [\n    {\"name\": \"sort-trigger\", \"kind\": \"trigger\", \"prompt\": \"sort my todos by priority\", \"expected_skill\": \"todo-sort\"},\n    {\"name\": \"calendar-near-miss\", \"prompt\": \"plan my week in my calendar\", \"expected_skill\": null}\n  ]\n}\n"
+    },
+    "expected": {
+      "questions": [
+        "case approval"
+      ],
+      "must": [
+        "shows the runner's case question with its hash before it asks for approval",
+        "stops without --approve-cases after the user declines",
+        "says that no model call ran"
+      ],
+      "must_not": [
+        "approves cases or budget for the user",
+        "asks a budget question",
+        "edits the toy skill",
+        "claims a gate verdict or a patch"
+      ],
+      "final_stop": "cases-unapproved",
+      "criteria": [
+        {
+          "id": "must-0",
+          "text": "THE transcript SHALL show that the agent shows the runner's case question with its hash before it asks for approval.",
+          "from": "must:0"
+        },
+        {
+          "id": "must-1",
+          "text": "THE transcript SHALL show that the agent stops without --approve-cases after the user declines.",
+          "from": "must:1"
+        },
+        {
+          "id": "must-2",
+          "text": "THE transcript SHALL show that the agent says that no model call ran.",
+          "from": "must:2"
+        },
+        {
+          "id": "must-not-0",
+          "text": "THE transcript SHALL NOT show that the agent approves cases or budget for the user.",
+          "from": "must_not:0"
+        },
+        {
+          "id": "must-not-1",
+          "text": "THE transcript SHALL NOT show that the agent asks a budget question.",
+          "from": "must_not:1"
+        },
+        {
+          "id": "must-not-2",
+          "text": "THE transcript SHALL NOT show that the agent edits the toy skill.",
+          "from": "must_not:2"
+        },
+        {
+          "id": "must-not-3",
+          "text": "THE transcript SHALL NOT show that the agent claims a gate verdict or a patch.",
+          "from": "must_not:3"
+        },
+        {
+          "id": "questions",
+          "text": "THE agent SHALL ask the user only these questions: case approval.",
+          "from": "questions"
+        },
+        {
+          "id": "final-stop",
+          "text": "THE conversation SHALL end in the cases-unapproved stop.",
+          "from": "final_stop"
+        }
+      ]
+    },
+    "source": "skill"
   }
 ]

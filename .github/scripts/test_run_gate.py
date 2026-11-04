@@ -728,8 +728,12 @@ class GateRunnerTest(unittest.TestCase):
             test = Path(directory) / "test_hang.py"
             _ = test.write_text("import time\n\n\ndef test_hang():\n    time.sleep(60)\n\n\ndef test_quick():\n    pass\n")
             started = time.monotonic()
+            # `-c os.devnull` sets confcutdir to /dev, and pytest then collects from the temp root down.
+            # On a host with a busy temp root, that walk takes longer than the subprocess limit.
+            # `--confcutdir` starts the collection at this directory.
             result = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-c", os.devnull,
-                                     "--rootdir", directory, str(test), *run_gate.timeout_args(1)],
+                                     "--rootdir", directory, "--confcutdir", directory, str(test),
+                                     *run_gate.timeout_args(1)],
                                     cwd=directory, capture_output=True, text=True, check=False, timeout=30)
             self.assertLess(time.monotonic() - started, 30)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)

@@ -30,7 +30,10 @@ REGENERATE = "skillz-experiment.pyz schema {name} > skills/skillz/references/sch
 Json = dict[str, object]
 NONEMPTY: Json = {"type": "string", "pattern": r"\S"}
 NONEMPTY_LIST: Json = {"type": "array", "items": NONEMPTY}
-TEXT_MAP: Json = {"type": "object", "additionalProperties": {"type": "string"}}
+FIXTURE: Json = {"anyOf": [{"type": "string"}, {
+    "type": "object", "required": ["base64", "type"], "additionalProperties": False,
+    "properties": {"base64": {"type": "string"}, "type": {"enum": ["png", "jpg", "webp", "gif"]}}}]}
+TEXT_MAP: Json = {"type": "object", "additionalProperties": FIXTURE}
 
 
 def regenerate_command(name: SchemaName) -> str:
@@ -134,9 +137,9 @@ def draft() -> Json:
     """Describe shared drafts and legacy lists without unresolved fixture references."""
     properties = {name: value for name, value in _journey_properties().items() if name in DRAFT_FIELDS}
     properties["kind"] = NONEMPTY | {"description": "trigger, near-miss, task, or a journey kind of the contract."}
-    properties["files"] = {"anyOf": [{"type": "object", "additionalProperties": {"type": ["string", "null"]}},
+    properties["files"] = {"anyOf": [{"type": "object", "additionalProperties": {"anyOf": [FIXTURE, {"type": "null"}]}},
                                     {"type": "array", "items": {"type": "string"}}],
-                           "description": "Path list, or path map with inline text and null references into top-level fixtures."}
+                           "description": "Path list, or path map with inline text, image markers, and null references into top-level fixtures."}
     properties["source"] = {"enum": list(SOURCES)}
     properties["expected"] = {"description": "The reference. A journey case takes the typed object. A judged task case "
                               + "takes an object with criteria, next to its expected_output and assertions.",
@@ -144,7 +147,7 @@ def draft() -> Json:
     cases: Json = {"type": "array", "minItems": 1, "items": {"type": "object", "required": sorted(DRAFT_REQUIRED),
                                                               "properties": properties, "additionalProperties": False}}
     shared: Json = {"type": "object", "required": ["cases"], "additionalProperties": False, "properties": {
-        "fixtures": TEXT_MAP | {"description": "Shared files: path to text, stored once."}, "cases": {"$ref": "#/$defs/cases"}}}
+        "fixtures": TEXT_MAP | {"description": "Shared files: path to text or an image marker, stored once."}, "cases": {"$ref": "#/$defs/cases"}}}
     legacy: Json = {"$ref": "#/$defs/cases", "items": {"properties": {
         "files": {"anyOf": [TEXT_MAP, {"const": []}]}}}}
     return _top("RUN/cases.draft.json", {"$defs": {"cases": cases}, "oneOf": [legacy, shared]})

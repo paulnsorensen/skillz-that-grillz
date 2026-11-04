@@ -250,9 +250,10 @@ def _case(tmp_path: Path) -> Case:
 def test_the_proposer_feedback_of_a_planted_rule_failure_carries_the_check_message(tmp_path: Path) -> None:
     case = _case(tmp_path)
     argv = tuple(cast(list[str], cast(dict[str, dict[str, object]], CONTRACT["kinds"])["task"]["argv"]))
-    score, diagnostic, _fault = _graders.command(_Sandboxed(), argv, case, {"entries.md": _planted(EXAMPLE)})
+    score, diagnostic, _fault, stdout_chars = _graders.command(_Sandboxed(), argv, case, {"entries.md": _planted(EXAMPLE)})
     assert score == 0
-    result: dict[str, object] = {"score": 0.0, "scores": {"command": 0.0, "judge": None}, "gate_diagnostic": diagnostic}
+    result: dict[str, object] = {"score": 0.0, "scores": {"command": 0.0, "judge": None}, "gate_diagnostic": diagnostic,
+                                 "gate_stdout_chars": stdout_chars}
     harness = HarnessText.build([], phrases=[f"${NAME}", "output/entries.md"])
     _, feedback = feedback_for(result, case, harness, Candidate({"SKILL.md": "x"}, ("SKILL.md",)))
     assert "entries.md:1: rule 1 (ticket id)" in cast(str, feedback["gate_feedback"]), feedback

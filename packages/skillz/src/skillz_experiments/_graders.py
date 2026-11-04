@@ -28,7 +28,7 @@ from typing import Protocol, cast, runtime_checkable
 from skillz_experiments import _audit
 from skillz_experiments._candidate import make_workspace, stage_task
 from skillz_experiments._cases import (
-    JOURNEY_EXPECTED_FIELDS, Audit, Case, Criterion, case_criteria, loads_untrusted, mapping, relative,
+    JOURNEY_EXPECTED_FIELDS, Audit, Case, Criterion, case_criteria, image_type, loads_untrusted, mapping, relative, text_files,
 )
 from skillz_experiments._contract import Grader
 from skillz_experiments._redact import redact
@@ -61,7 +61,7 @@ def _utf8(data: bytes) -> bool:
 
 
 CAPTURE_TYPES: dict[str, Callable[[bytes], bool]] = {
-    ".png": lambda data: data.startswith(b"\x89PNG\r\n\x1a\n"), ".txt": _utf8}
+    ".png": lambda data: image_type(data) == "png", ".txt": _utf8}
 
 
 @dataclass(frozen=True)
@@ -185,13 +185,13 @@ def _grading_workspace(case: Case, files: dict[str, str] | None, name: str,
 
 
 def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, str] | None,
-            trace: list[dict[str, object]] | None = None) -> tuple[float, str, str | None]:
+            trace: list[dict[str, object]] | None = None) -> tuple[float, str, str | None, int]:
     """Run the grader argv in a fresh workspace that holds the fixtures and the task output.
 
     The case files stay at the workspace root; the task output goes under `output/`, so it cannot replace a fixture.
     The argv runs as given. The workspace never holds `expected` or the rubric. The score is 0 for a non-zero exit
     code or for stdout that is not a JSON object with a numeric `score` from 0 to 1. The second value is a verdict lead
-    line plus the redacted `stdout:` and `stderr:` tails. The third is the gate fault: `timeout` (sandbox limit only), `invalid-output` (exit 0, no valid score), else None.
+    line plus the redacted `stdout:` and `stderr:` tails. The third is the gate fault: `timeout` (sandbox limit only), `invalid-output` (exit 0, no valid score), else None. The fourth is the stdout tail length, which marks the stream boundary.
     """
     require_sandbox(task)
     with _grading_workspace(case, files, "command", trace) as workspace:
@@ -199,10 +199,10 @@ def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
     score, valid = _command_score(code, stdout)
     scored = f"the gate scored {str(score).removesuffix('.0')}" if valid else _INVALID_STDOUT
     lead = f"the grader argv exits with code {code}" if code else scored
-    tails = [f"{name}: {tail}" for name, text in (("stdout", stdout), ("stderr", stderr))
-             if (tail := redact(text).strip()[-DIAGNOSTIC_LIMIT:])]
+    tails = {name: tail for name, text in (("stdout", stdout), ("stderr", stderr))
+             if (tail := redact(text).strip()[-DIAGNOSTIC_LIMIT:])}
     fault = "timeout" if timed_out else "invalid-output" if code == 0 and not valid else None
-    return score, "\n".join([lead, *tails]), fault
+    return score, "\n".join([lead, *(f"{name}: {tail}" for name, tail in tails.items())]), fault, len(tails.get("stdout", ""))
 
 
 def _run(task: object, workspace: Path, argv: tuple[str, ...]) -> tuple[int, str, str, bool]:
@@ -293,7 +293,7 @@ def judge(transport: object, grader: Grader, case: Case, answer: object, files: 
     criteria = case_criteria(case.expected, case.identifier)
     ids = tuple(criterion.id for criterion in criteria)
     instruction = JUDGE_INSTRUCTION
-    data: dict[str, object] = {"request": case.request, "files": case.files, "answer": answer,
+    data: dict[str, object] = {"request": case.request, "files": text_files(case.files), "answer": answer,
                                "output_files": files or {}, "reference": case.expected}
     if journey:
         data |= journey

@@ -189,7 +189,7 @@ def _nothing(target: Path) -> None:
 @pytest.mark.parametrize(("prepare", "path", "fragment"), [
     (_symlinked, "evals/files/link.md", "cannot be read"),
     (_symlinked_dir, "evals/files/dir/a.md", "cannot be read"),
-    (_binary, "evals/files/bin.md", "must be UTF-8 text"),
+    (_binary, "evals/files/bin.md", "must be UTF-8 text or a png, jpg, webp, or gif image"),
     (_nothing, "../outside.md", "unsafe relative path"),
     (_nothing, "/etc/hostname", "unsafe relative path"),
     (_nothing, "evals", "must be under evals/files/"),
@@ -312,7 +312,7 @@ def test_the_repository_skill_seeds_only_task_cases_in_three_families() -> None:
     summary = seed_summary(evals_json)
     assert summary["kinds"] == {"task": 12}
     assert len(cast(dict[str, int], summary["families"])) >= 3
-    assert seed_summary(seed)["kinds"] == {"task": 12, "journey": 18}
+    assert seed_summary(seed)["kinds"] == {"task": 12, "journey": 21}
 
 
 @pytest.mark.ac("gh-366:AC-2")

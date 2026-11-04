@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from skillz_experiments._cases import (
-    JOURNEY_FIELDS, CodedError, Journey, Split, case_criteria, journey_of, loads_untrusted, mapping, string, text_map,
+    JOURNEY_FIELDS, CodedError, Fixture, Journey, Split, case_criteria, journey_of, loads_untrusted, mapping, string, text_map,
 )
 from skillz_experiments._contract import LOCATION, RUBRIC_GRADERS, Contract, Grader, load_contract, parse
 from skillz_experiments._evals_format import EVAL_KINDS, SOURCES, regression_of
@@ -42,7 +42,7 @@ class DraftCase:
     kind: str
     request: str
     source: str
-    files: dict[str, str]
+    files: Mapping[str, Fixture]
     expected: object
     journey: Journey | None = None
     regression: bool = False
@@ -71,7 +71,7 @@ class IntakeCase(DraftCase):
         return item | ({"regression": True} if self.regression else {})
 
 
-def _case(value: object, position: int, journeys: Collection[str], fixtures: Mapping[str, str]) -> DraftCase:
+def _case(value: object, position: int, journeys: Collection[str], fixtures: Mapping[str, Fixture]) -> DraftCase:
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
         raise ValueError(f"draft case {position} must be a JSON object")
     item = cast(dict[str, object], value)
@@ -382,7 +382,7 @@ def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str
     expected = case_hash(cases, seed, statistics)
     if approved_hash != expected:
         raise CodedError("cases-unapproved", "the approved hash does not match the cases; ask for approval again")
-    fixtures: dict[str, str] = {}
+    fixtures: dict[str, Fixture] = {}
     shared = share_files([case.data() | ({"provenance": case.source, "provider_approved": True} if case.scored else {})
                           for case in cases], fixtures)
     document: dict[str, object] = {"schema_version": 1, "seed": seed, "approved_hash": expected, "fixtures": fixtures,

@@ -49,7 +49,7 @@ def test_the_checked_in_journeys_equal_the_generator_output() -> None:
     generated = cast(list[dict[str, object]], getattr(_kit(), "cases")())
     expected = json.dumps(generated, indent=2) + "\n"
     assert (SKILL / "evals/journeys.json").read_text(encoding="utf-8") == expected
-    assert len(generated) == 18 and len({case["family"] for case in generated}) == 6
+    assert len(generated) == 21 and len({case["family"] for case in generated}) == 7
 
 
 def _staged(tmp_path: Path) -> Path:
@@ -80,12 +80,12 @@ def _marks(data: dict[str, object], kind: str) -> list[str]:
 
 
 @pytest.mark.ac("gh-369:AC-7")
-def test_a_journey_only_run_on_the_staged_skill_scores_the_eighteen_journeys_and_stops_for_approval(
+def test_a_journey_only_run_on_the_staged_skill_scores_the_journeys_and_stops_for_approval(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = _staged(tmp_path)
     data = _first_stop(target, tmp_path, capsys, "--kind", "journey")
     seeded = cast(list[dict[str, object]], seed_cases(target))
-    assert _marks(data, "journey") == ["scored"] * 18
+    assert _marks(data, "journey") == ["scored"] * 21
     others = [case for case in seeded if case["kind"] != "journey"]
     assert others and _marks(data, "task") == ["not scored"] * len(others)
 
@@ -93,16 +93,16 @@ def test_a_journey_only_run_on_the_staged_skill_scores_the_eighteen_journeys_and
 def test_a_default_run_on_the_staged_skill_scores_the_journeys_with_the_tasks(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     data = _first_stop(_staged(tmp_path), tmp_path, capsys)
-    assert _marks(data, "journey") == ["scored"] * 18
+    assert _marks(data, "journey") == ["scored"] * 21
     assert "scored" in _marks(data, "task") and "not scored" not in _marks(data, "task")
 
 
-def test_a_kit_run_scores_the_eighteen_journeys_under_the_kit_contract(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_kit_run_scores_the_journeys_under_the_kit_contract(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     done = subprocess.run([sys.executable, str(KIT), "stage", "--approve-contract"], env={**os.environ, "TMPDIR": str(tmp_path)},
                           capture_output=True, text=True, timeout=60, check=True)
     target = Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])
     data = _first_stop(target, tmp_path, capsys)
-    assert _marks(data, "journey") == ["scored"] * 18 and "kinds journey" in str(data["question"])
+    assert _marks(data, "journey") == ["scored"] * 21 and "kinds journey" in str(data["question"])
 
 
 def _stop_errors(target: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str], edit: str) -> tuple[dict[str, object], dict[str, object]]:

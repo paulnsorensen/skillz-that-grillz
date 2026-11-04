@@ -172,7 +172,7 @@ def feedback_for(result: dict[str, object], case: Case, harness: HarnessText,
         feedback["edit_hint"] = _edit_hint([criterion.text for criterion, _level, _reason in unmet], candidate)
     diagnostic = result.get("gate_diagnostic")
     if isinstance(diagnostic, str):
-        feedback["gate_feedback"] = gate_feedback(diagnostic, harness)
+        feedback["gate_feedback"] = gate_feedback(diagnostic, result.get("gate_stdout_chars"), harness)
     return score, feedback
 
 

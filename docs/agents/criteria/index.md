@@ -140,6 +140,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-582](./gh-582.md) — gh-582: The doctor names the nested-sandbox fix before the AppArmor fix
 - [gh-591](./gh-591.md) — gh-591: CodeRabbit includes the source branch
 - [gh-596](./gh-596.md) — gh-596: reduce pure-Python CLI startup imports
+- [gh-649](./gh-649.md) — gh-649: a decline-cases journey family for the self-autoimprove kit
 - [gh-651](./gh-651.md) — gh-651: a regression case shows whether it reproduces the field failure on the seed
 - [gh-656](./gh-656.md) — gh-656: flag a seed that scores 0 through a setup fault, before the search
 - [gh-658](./gh-658.md) — gh-658: warn when the train split has almost no headroom
