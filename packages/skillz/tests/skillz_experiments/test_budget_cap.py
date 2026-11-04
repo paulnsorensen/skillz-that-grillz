@@ -199,18 +199,22 @@ def test_the_unspent_calls_stay_within_the_calls_the_run_may_still_make() -> Non
 
 
 @pytest.mark.ac("gh-588:AC-3")
-@pytest.mark.parametrize("ended", [None, {"calls": 11, "seconds_left": 5.0}, {"calls": -1, "seconds_left": 5.0},
+@pytest.mark.parametrize("ended", [{"calls": 11, "seconds_left": 5.0}, {"calls": -1, "seconds_left": 5.0},
                                    {"calls": 10, "seconds_left": 1001.0}, {"calls": 10, "seconds_left": -1.0},
                                    {"calls": 10, "seconds_left": float("inf")}, {"calls": 10, "seconds_left": float("nan")},
-                                   {"calls": 10.0, "seconds_left": 5.0}, {"calls": True, "seconds_left": 5.0}])
-def test_a_missing_or_out_of_range_search_end_is_a_tampered_record(ended: dict[str, object] | None) -> None:
+                                   {"calls": 10.0, "seconds_left": 5.0}, {"calls": True, "seconds_left": 5.0}, "x"])
+def test_an_out_of_range_search_end_is_a_tampered_record(ended: object) -> None:
     budget = Budget(100, 1000.0, 20, 10, approved=True)
-    record: dict[str, object] = {"budget": {"reserve_seconds": 600}}
-    if ended is not None:
-        record["search_end"] = ended
+    record: dict[str, object] = {"budget": {"reserve_seconds": 600}, "search_end": ended}
     with pytest.raises(CodedError) as stopped:
         _ = with_unspent(record, budget)
     assert stopped.value.code == "run-record-tampered"
+
+
+@pytest.mark.ac("gh-588:AC-3")
+def test_a_record_without_a_search_end_is_an_old_run_with_no_unspent() -> None:
+    budget = Budget(100, 1000.0, 20, 10, approved=True)
+    assert with_unspent({"budget": {"reserve_seconds": 600}}, budget) == {"reserve_seconds": 600}
 
 
 @pytest.mark.ac("gh-588:AC-1")

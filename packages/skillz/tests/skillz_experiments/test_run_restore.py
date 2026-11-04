@@ -744,6 +744,7 @@ def test_a_resume_in_the_searched_phase_gets_the_reserved_time_back(
     budget = cast(dict[str, object], record["budget"])
     # Less time is left than the reserve; only the gate may use it now.
     budget["seconds"] = time.time() - cast(float, record["started"]) + cast(float, budget["reserve_seconds"]) / 2
+    cast(dict[str, object], record["search_end"])["seconds_left"] = budget["seconds"]
     write(out / "run.json", record)
     assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
     assert state.holdout_calls() > 0
