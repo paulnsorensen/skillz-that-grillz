@@ -251,14 +251,18 @@ def test_a_gate_that_floods_stderr_still_scores(tmp_path: Path) -> None:
     assert _passing(target) == []
 
 
-@pytest.mark.ac("gh-657:AC-5")
-@pytest.mark.parametrize("where", ["inside", "fixtures"])
+@pytest.mark.ac("gh-657:AC-6")
+@pytest.mark.parametrize("where", ["inside", "fixtures", "side"])
 def test_a_fixture_with_a_symbolic_link_is_unsafe(tmp_path: Path, where: str) -> None:
     target = _task(tmp_path, "import json\nprint(json.dumps({'score': 1}))\n")
     _fixture(target, "pass", answer="ok")
     base = target / "evals/gates/journey.fixtures"
     if where == "inside":
         (base / "pass/output/link").symlink_to(tmp_path)
+    elif where == "side":
+        real = tmp_path / "real"
+        _ = (base / "pass").rename(real)
+        (base / "pass").symlink_to(real)
     else:
         real = tmp_path / "real"
         _ = base.rename(real)
@@ -266,13 +270,33 @@ def test_a_fixture_with_a_symbolic_link_is_unsafe(tmp_path: Path, where: str) ->
     assert [item["code"] for item in _passing(target)] == ["gate-fixture-unsafe"]
 
 
-@pytest.mark.ac("gh-657:AC-5")
+@pytest.mark.ac("gh-657:AC-6")
 def test_a_fixture_with_too_many_files_is_unsafe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_gate_files, "FIXTURE_FILES", 2)
     target = _task(tmp_path, "import json\nprint(json.dumps({'score': 1}))\n")
     _fixture(target, "pass", answer="ok")
     for number in range(3):
         _ = (target / f"evals/gates/journey.fixtures/pass/output/f{number}").write_text("x", encoding="utf-8")
+    assert [item["code"] for item in _passing(target)] == ["gate-fixture-unsafe"]
+
+
+@pytest.mark.ac("gh-657:AC-6")
+def test_a_fixture_with_a_pipe_is_unsafe_and_does_not_crash_validate(tmp_path: Path) -> None:
+    target = _task(tmp_path, "import json\nprint(json.dumps({'score': 1}))\n")
+    _fixture(target, "pass", answer="ok")
+    os.mkfifo(target / "evals/gates/journey.fixtures/pass/output/pipe")
+    assert [item["code"] for item in _passing(target)] == ["gate-fixture-unsafe"]
+
+
+@pytest.mark.ac("gh-657:AC-6")
+def test_a_fixture_probe_that_raises_is_reported_as_unsafe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise subprocess.SubprocessError("Exception occurred in preexec_fn.")
+
+    monkeypatch.setattr(_gate_files, "_limit_file_size", lambda: None)
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    target = _task(tmp_path, "import json\nprint(json.dumps({'score': 1}))\n")
+    _fixture(target, "pass", answer="ok")
     assert [item["code"] for item in _passing(target)] == ["gate-fixture-unsafe"]
 
 

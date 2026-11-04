@@ -62,6 +62,7 @@ FAMILIES = {"ask-harness", "revise-cases", "failed-run", "unsafe-out", "stale-ha
 @pytest.mark.ac("kit-harder-journeys:AC-1")
 def test_the_kit_writes_eighteen_journeys_in_six_families_with_a_six_case_holdout(tmp_path: Path) -> None:
     rules = contract(tmp_path)
+    assert (tmp_path / "evals/gates/journey.fixtures/pass/trace/events.jsonl").is_file()
     assert sorted(rules.kinds) == ["journey"] and rules.editable == ("SKILL.md", "references/experiments.md")
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
     assert len(cases) == 18 and {case.family for case in cases} == FAMILIES
@@ -132,8 +133,9 @@ def test_stage_copies_the_skill_with_the_kit_contract_the_one_gate_and_the_shipp
     shipped = KIT.parents[3] / "skills" / "skillz" / "evals"
     for name in ("journeys.json", "gates/journey.py"):
         assert (target / "evals" / name).read_bytes() == (shipped / name).read_bytes(), name
-    assert sorted(path.relative_to(target / "evals").as_posix() for path in (target / "evals").rglob("*") if path.is_file()) == [
-        "autoimprove.json", "gates/journey.py", "journeys.json"]
+    assert sorted(path.relative_to(target / "evals").as_posix() for path in (target / "evals").rglob("*")
+                  if path.is_file() and "journey.fixtures" not in path.parts) == ["autoimprove.json", "gates/journey.py", "journeys.json"]
+    assert (target / "evals/gates/journey.fixtures/pass/trace/events.jsonl").is_file()
     rules = load_contract(target)
     assert sorted(rules.kinds) == ["journey"] and rules.editable == ("SKILL.md", "references/experiments.md")
     seeded = seed_cases(target)
