@@ -333,6 +333,27 @@ def test_production_selection_ignores_different_builder_packages(tmp_path: Path,
     ]
 
 
+def test_uv_lookup_ignores_a_virtual_environment_with_the_pinned_patch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pin = ".".join(str(part) for part in sys.version_info[:3])
+    venv = tmp_path / "venv"
+    _ = subprocess.run(["uv", "venv", "-q", "--no-project", "--python", sys.executable, str(venv)], check=True)
+    managed_root = tmp_path / "managed-python"
+    managed_root.mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VIRTUAL_ENV", str(venv))
+    monkeypatch.setenv("UV_PYTHON_INSTALL_DIR", str(managed_root))
+    monkeypatch.setenv("UV_PYTHON_INSTALL_BIN", "0")
+    monkeypatch.setenv("UV_CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("UV_OFFLINE", "1")
+
+    with pytest.raises(subprocess.CalledProcessError) as error:
+        _ = _python_for_pin(pin)
+    assert cast(list[str], error.value.cmd)[1:3] == ["python", "install"]
+    assert not list(managed_root.glob("cpython-*"))
+
+
 @pytest.mark.ac("gh-581:AC-2")
 def test_offline_compiler_uses_explicit_managed_root_in_real_process(tmp_path: Path) -> None:
     pin = "3.11.18"
