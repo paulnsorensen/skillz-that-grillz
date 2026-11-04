@@ -13,6 +13,7 @@ from typing import Any, cast, final
 
 import pytest
 
+from skillz_experiments import _candidate
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments.evaluation import CheckMemo, CheckResult
@@ -40,6 +41,19 @@ from fake_provider import PASSED, FakeRunProvider, ProviderCrash
 pytestmark = pytest.mark.usefixtures("host_login")
 
 MODEL = "local-test"
+
+
+@pytest.fixture(autouse=True)
+def _no_git_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the two `git` spawns of each candidate capture.
+
+    No test here builds a git repository, so git reports no ignored file below a temporary target.
+    The git-ignore behavior has its own tests in the candidate suite.
+    """
+    def no_ignored(_root: Path) -> set[str]:
+        return set()
+
+    monkeypatch.setattr(_candidate, "ignored_files", no_ignored)
 
 
 @final
