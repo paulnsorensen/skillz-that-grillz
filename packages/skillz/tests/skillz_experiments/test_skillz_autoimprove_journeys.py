@@ -12,7 +12,7 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments._budget import ESTIMATE_SECONDS_PER_CALL, MAX_CONCURRENT_CALLS
+from skillz_experiments._budget import ESTIMATE_SECONDS_PER_CALL, JOURNEY_CALLS, JOURNEY_SECONDS, MAX_CONCURRENT_CALLS
 from skillz_experiments._cases import CodedError, load_cases
 from skillz_experiments._contract import Contract, load_contract, parse
 from skillz_experiments._gate_files import expand_gates
@@ -102,10 +102,12 @@ def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two
     assert plan.reserve == plan.holdout_calls + plan.replay_calls
     # The seconds are 994 calls at 30 seconds over 2 concurrent calls, plus the sandbox time.
     assert plan.sized.seconds == math.ceil(994 * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS) + plan.sandbox_total == 16020
-    # The call cap binds: with room for one more metric call, the plan's own fit logic grows the search.
+    # The call cap binds: one more metric call (9 model calls) does not fit, and room for it grows the search.
+    per_evaluation = 9
+    assert plan.sized.calls + per_evaluation > JOURNEY_CALLS
 
     def one_more_metric_call(_journey: bool) -> tuple[int, int]:
-        return 1000 + 10, 28800
+        return plan.sized.calls + per_evaluation, JOURNEY_SECONDS
 
     monkeypatch.setattr("skillz_experiments.run._plan.ceilings", one_more_metric_call)
     assert size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions()).metric_calls > plan.metric_calls
