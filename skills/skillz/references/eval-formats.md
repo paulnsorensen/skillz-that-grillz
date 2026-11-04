@@ -127,6 +127,7 @@ A kind object has these fields:
 | `grader` | `exact-json`, `judge`, `command`, `hybrid`, `audit`, or `journey`. |
 | `argv` | The grader command. The `command`, `hybrid`, and `journey` graders take it. |
 | `gate` | A gate file under `evals/gates/`. It stands for `argv`. Do not set both. |
+| `gate` fixtures | Optional `evals/gates/<name>.fixtures/{pass,fail}/`, each with `trace/events.jsonl` and `output/`. `validate` runs the gate on them. |
 | `rubric` | The judge rubric. The `judge`, `hybrid`, and `journey` graders need it. |
 | `capture` | A command that saves files for the judge to view. |
 

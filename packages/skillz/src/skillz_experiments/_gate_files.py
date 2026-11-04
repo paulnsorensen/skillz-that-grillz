@@ -6,16 +6,23 @@ The run freezes that argv in `run.json`, so resume and export never read the tar
 from __future__ import annotations
 
 import ast
+import json
 import os
+import shutil
+import subprocess
 import sys
+import tempfile
+from collections.abc import Collection
 from pathlib import Path, PurePosixPath
-from typing import cast
+from typing import NamedTuple, cast
 
 from skillz_experiments._cases import CodedError, read_text, relative
 
 GATE_GRADERS = ("command", "hybrid", "journey")
 SOURCE_LIMIT = 64 * 1024
 _PREFIX = ("python3", "-I", "-c")
+FIXTURE_SECONDS = 20.0
+NULL_TRACE = '{"type": "assistant", "message": {"content": []}}\n'
 _STUB = ("import sys\nimport types\n_SIBLINGS = {siblings}\n_MAIN = {main}\n"
          + "for _name, _source in _SIBLINGS:\n    _module = types.ModuleType(_name)\n    sys.modules[_name] = _module\n"
          + "    exec(compile(_source, _name + '.py', 'exec'), _module.__dict__)\n"
@@ -131,3 +138,91 @@ def expand_gates(raw: object, root: Path) -> object:
             if name in used:
                 raise CodedError("contract-gate-editable", f"editable names the gate file {name}; a candidate cannot edit its own grader")
     return document | {"kinds": expanded}
+
+
+class GateFinding(NamedTuple):
+    code: str
+    severity: str
+    gate: str
+    message: str
+    fix: str
+
+
+def fixtures_of(gate: str) -> str:
+    """Return the fixture directory that sits beside a gate file: `evals/gates/x.py` -> `evals/gates/x.fixtures`."""
+    path = PurePosixPath(gate)
+    return path.with_name(f"{path.stem}.fixtures").as_posix()
+
+
+def _score(root: Path, gate: str, fixture: Path | None, trace: str | None = None) -> float | None:
+    """Run the gate once in a fresh temporary workspace. Return its score, 0 for a failed run, None on a timeout."""
+    source, _ = _bundle(root, gate)
+    with tempfile.TemporaryDirectory() as name:
+        work = Path(name)
+        if fixture is not None:
+            for part in ("trace", "output"):
+                if (fixture / part).is_dir():
+                    _ = shutil.copytree(fixture / part, work / part, symlinks=True)
+        if trace is not None:
+            (work / "trace").mkdir()
+            _ = (work / "trace/events.jsonl").write_text(trace, encoding="utf-8")
+        try:
+            done = subprocess.run([shutil.which(_PREFIX[0]) or sys.executable, *_PREFIX[1:], source], cwd=work, capture_output=True, text=True,
+                                  timeout=FIXTURE_SECONDS, check=False)
+        except subprocess.TimeoutExpired:
+            return None
+    try:
+        score = cast(dict[str, object], json.loads(done.stdout))["score"]
+    except (ValueError, KeyError, TypeError):
+        return 0.0
+    if done.returncode != 0 or isinstance(score, bool) or not isinstance(score, (int, float)):
+        return 0.0
+    return float(score)
+
+
+def probe_gates(root: Path, raw: object, must_kinds: Collection[str]) -> list[GateFinding]:
+    """Run each gate of a raw contract on its `pass` and `fail` fixtures, and on a null trace for a journey kind with `must` items.
+
+    A fixture is `<gate stem>.fixtures/{pass,fail}/` with `trace/events.jsonl` and `output/`, in either harness encoding.
+    Fixtures are optional: a missing one is a warning. `root` is the directory that holds `evals/`.
+    """
+    kinds = cast(dict[str, object], raw).get("kinds") if isinstance(raw, dict) else None
+    gates: dict[str, list[str]] = {}
+    for kind, entry in (cast(dict[str, object], kinds).items() if isinstance(kinds, dict) else ()):
+        if isinstance(entry, dict) and isinstance(cast(dict[str, object], entry).get("gate"), str):
+            gates.setdefault(str(cast(dict[str, object], entry)["gate"]), []).append(kind)
+    found: list[GateFinding] = []
+
+    def timed_out(gate: str, what: str) -> None:
+        found.append(GateFinding("gate-fixture-timeout", "error", gate,
+                                 f"the gate {gate} did not finish on {what} within {FIXTURE_SECONDS:g} seconds",
+                                 "make the gate finish quickly; it must not wait or loop"))
+
+    for gate, names in gates.items():
+        base = root / fixtures_of(gate)
+        absent: list[str] = []
+        for side, code in (("pass", "gate-unpassable"), ("fail", "gate-permissive")):
+            fixture = base / side
+            if not fixture.is_dir() or fixture.is_symlink():
+                absent.append(side)
+                continue
+            score = _score(root, gate, fixture)
+            if score is None:
+                timed_out(gate, f"{fixtures_of(gate)}/{side}")
+            elif (score != 1) if side == "pass" else (score > 0):
+                what = "does not score 1 on its pass fixture" if side == "pass" else "scores above 0 on its fail fixture"
+                found.append(GateFinding(code, "error", gate, f"the gate {gate} {what}: score {score:g}",
+                                         "fix the gate, or the fixture if it does not show the flow it names"))
+        if absent:
+            found.append(GateFinding("gate-fixture-missing", "warning", gate,
+                                     f"the gate {gate} has no {' or '.join(absent)} fixture under {fixtures_of(gate)}",
+                                     f"add {fixtures_of(gate)}/pass and /fail, each with trace/events.jsonl and an output/ tree"))
+        if any(name in must_kinds for name in names):
+            score = _score(root, gate, None, NULL_TRACE)
+            if score is None:
+                timed_out(gate, "a null trace")
+            elif score > 0:
+                found.append(GateFinding("gate-null-trace", "warning", gate,
+                                         f"the gate {gate} scores {score:g} on a trace with one empty agent turn, yet its cases have must items",
+                                         "check the flow that the must items name, for example with RECEIPTS"))
+    return found

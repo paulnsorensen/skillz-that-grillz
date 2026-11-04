@@ -372,6 +372,14 @@ The gate checks ordered receipts. Edit two constants in `evals/gates/journey.py`
 The receipts must appear in order. Other steps may sit between them. Each receipt needs its own step, so one chained command satisfies only one receipt. A receipt that is missing scores 0 with `receipt-missing:<name>`. The gate reports only the first one.
 An `input` or `text` that is not a valid regex scores 0 with `receipt-invalid:<name>` on every trace. The gate checks the patterns before it reads the trace.
 The gate also prints each failure to stderr. The run shows stderr as the gate diagnostic, so the report and the search feedback name the receipt.
+
+Gate fixtures: put a passing and a failing run in `evals/gates/<gate>.fixtures/pass/` and `fail/`. Each holds `trace/events.jsonl` (Claude or Codex encoding) and an `output/` tree. `validate` runs the gate as `python3 -I` in a temporary directory, with a 20 s timeout, and reports these findings:
+
+- `gate-unpassable` (error): the gate does not score 1 on `pass`.
+- `gate-permissive` (error): the gate scores above 0 on `fail`.
+- `gate-fixture-timeout` (error): the gate outlives the timeout.
+- `gate-null-trace` (warning): a journey gate with `must` items scores a null trace above 0.
+- `gate-fixture-missing` (warning): the gate has no fixture for a side.
 The gate turns each Claude or Codex event into steps with `tool`, `input`, and `text`. `input` is the Bash command, the edited path, or the sorted JSON of the tool input.
 A Codex command, file change, and agent message become a `Bash` step, one `Edit` step for each path, and a text step. A Claude `Write`, `MultiEdit`, or `NotebookEdit` also becomes an `Edit` step. A Codex file change whose `status` is not `completed` gives no step.
 One list therefore works on both traces for `Bash`, `Edit`, and text receipts. Other tools differ: Claude `Read`, `Grep`, and MCP calls become their own steps, with `input` as the sorted JSON of the tool input. Codex reads files through `Bash` and gives no MCP step.

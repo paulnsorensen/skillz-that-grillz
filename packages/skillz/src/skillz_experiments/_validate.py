@@ -13,7 +13,7 @@ from typing import cast
 
 from skillz_experiments._cases import CodedError, journey_of, mapping, text_map
 from skillz_experiments._contract import LOCATION, Contract, load_contract, parse
-from skillz_experiments._gate_files import expand_gates
+from skillz_experiments._gate_files import expand_gates, probe_gates
 from skillz_experiments._intake import (
     HOLDOUT_MINIMUM, MINIMUM_FAMILIES, TRAIN_FAMILIES_MINIMUM, TRAIN_MINIMUM, DraftCase, check_helper_input,
     intake_contract, load_draft, split_cases, too_few,
@@ -104,6 +104,14 @@ def _fixture_findings(target: Path, drafted: Sequence[DraftCase], file_of: Calla
         findings.append(_failure(fixture_error(misses), file))
 
 
+def _gate_findings(target: Path, journeys: Sequence[str], drafted: Sequence[DraftCase] | None) -> list[Finding]:
+    """Run each gate file of the contract on its fixtures and on a null trace; see `probe_gates`."""
+    raw = cast(object, json.loads((target / LOCATION).read_text(encoding="utf-8")))
+    must = {case.kind for case in drafted or [] if case.kind in journeys and isinstance(case.expected, dict)
+            and cast(dict[str, object], case.expected).get("must")}
+    return [_finding(item.code, item.severity, item.gate, item.message, item.fix) for item in probe_gates(target, raw, must)]
+
+
 def validate(target: Path, draft: Path | None = None, seed: int | None = None,
              kinds: Sequence[str] = ()) -> dict[str, object]:
     """Report every problem of the target's eval files and the split that a run would build. Write nothing."""
@@ -144,6 +152,9 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
             findings.append(_failure(error, EVALS))
         else:
             _fixture_findings(target, drafted, lambda case: JOURNEYS if case.journey is not None else EVALS, findings)
+
+    if contract is not None:
+        findings.extend(_gate_findings(target, journeys, drafted))
 
     chosen: tuple[str, ...] | None = None
     if contract is not None:
