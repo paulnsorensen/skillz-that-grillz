@@ -21,6 +21,7 @@ FIXTURES = HERE / "fixtures"
 SKILL = HERE.parents[3] / "skills" / "skillz"
 TOYS = ("commit-msg", "changelog-line", "todo-sort")
 GATE = "evals/gates/journey.py"
+FIXTURES = "evals/gates/journey.fixtures"
 
 HARNESS = ("Use the command harness: the executable is `python3`, and its one argument is the absolute path of "
            + "`fake_harness.py` in the workspace. The model name is `toy`.")
@@ -182,6 +183,7 @@ def write(directory: Path, approved: bool) -> None:
     _ = (directory / "autoimprove.json").write_text(json.dumps(contract(approved), indent=2) + "\n")
     (directory / GATE).parent.mkdir(parents=True, exist_ok=True)
     _ = (directory / GATE).write_text((SKILL / GATE).read_text())
+    _ = shutil.copytree(SKILL / FIXTURES, directory / FIXTURES, dirs_exist_ok=True)
     _ = (directory / "cases.draft.json").write_text(json.dumps(cases(), indent=2) + "\n")
 
 
@@ -202,6 +204,7 @@ def stage(approved: bool) -> None:
     (target / GATE).parent.mkdir(parents=True)
     _ = (target / "evals" / "autoimprove.json").write_text(json.dumps(contract(approved), indent=2) + "\n")
     _ = shutil.copyfile(SKILL / GATE, target / GATE)
+    _ = shutil.copytree(SKILL / FIXTURES, target / FIXTURES)
     _ = shutil.copyfile(SKILL / "evals" / "journeys.json", target / "evals" / "journeys.json")
     out = Path(tempfile.mkdtemp(prefix="skillz-run-"))
     print(f"target: {target}\nout:    {out}\ncontract status: {'approved' if approved else 'draft'}\n")

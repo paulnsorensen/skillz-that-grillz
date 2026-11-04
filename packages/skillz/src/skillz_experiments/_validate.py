@@ -106,7 +106,10 @@ def _fixture_findings(target: Path, drafted: Sequence[DraftCase], file_of: Calla
 
 def _gate_findings(target: Path, journeys: Sequence[str], drafted: Sequence[DraftCase] | None) -> list[Finding]:
     """Run each gate file of the contract on its fixtures and on a null trace; see `probe_gates`."""
-    raw = cast(object, json.loads((target / LOCATION).read_text(encoding="utf-8")))
+    path = target / LOCATION
+    if not os.path.lexists(path):
+        return []
+    raw = cast(object, json.loads(path.read_text(encoding="utf-8")))
     must = {case.kind for case in drafted or [] if case.kind in journeys and isinstance(case.expected, dict)
             and cast(dict[str, object], case.expected).get("must")}
     return [_finding(item.code, item.severity, item.gate, item.message, item.fix) for item in probe_gates(target, raw, must)]

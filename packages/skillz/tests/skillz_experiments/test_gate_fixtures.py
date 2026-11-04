@@ -2,7 +2,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import signal
+import subprocess
+import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -148,7 +153,7 @@ def test_a_gate_runs_isolated_in_a_temporary_directory(tmp_path: Path) -> None:
     target = _task(tmp_path, source)
     _fixture(target, "pass", answer="ok")
     assert [item for item in _gate_findings(target) if item["severity"] == "error"] == []
-    assert not list(tmp_path.rglob("marker")) and not list(Path.cwd().glob("marker"))
+    assert not list(Path.cwd().glob("marker"))
 
 
 @pytest.mark.ac("gh-657:AC-5")
@@ -161,7 +166,117 @@ def test_a_gate_that_outlives_the_timeout_is_reported(tmp_path: Path, monkeypatc
     assert not [item for item in _gate_findings(target) if item["code"] == "gate-unpassable"]
 
 
+def _shipped_stdout(side: str, tmp_path: Path) -> str:
+    fixture = ROOT / "skills/skillz/evals/gates/journey.fixtures" / side
+    assert (fixture / "trace/events.jsonl").is_file() and (fixture / "output").is_dir()
+    for part in ("trace", "output"):
+        _ = shutil.copytree(fixture / part, tmp_path / part)
+    source, _paths = _gate_files._bundle(ROOT / "skills/skillz", "evals/gates/journey.py")  # pyright: ignore[reportPrivateUsage]
+    done = subprocess.run([sys.executable, "-I", "-c", source], cwd=tmp_path, capture_output=True, text=True, check=False)
+    return done.stdout
+
+
 @pytest.mark.ac("gh-657:AC-1")
 @pytest.mark.ac("gh-657:AC-2")
-def test_the_shipped_journey_gate_passes_and_fails_its_own_fixtures() -> None:
+def test_the_shipped_journey_gate_passes_and_fails_its_own_fixtures(tmp_path: Path) -> None:
     assert _gate_findings(ROOT / "skills/skillz") == []
+    (tmp_path / "pass").mkdir()
+    (tmp_path / "fail").mkdir()
+    assert json.loads(_shipped_stdout("pass", tmp_path / "pass"))["score"] == 1
+    failed = cast(dict[str, object], json.loads(_shipped_stdout("fail", tmp_path / "fail")))
+    assert failed["score"] == 0 and failed["failed"] == ["out-inside-target"]
+
+
+def _bare(tmp_path: Path) -> Path:
+    target = tmp_path / "bare"
+    target.mkdir()
+    _ = (target / "SKILL.md").write_text("---\nname: bare\ndescription: A bare skill.\n---\n# Bare\n", encoding="utf-8")
+    return target
+
+
+def _passing(target: Path) -> list[Finding]:
+    return [item for item in _gate_findings(target) if item["code"] != "gate-fixture-missing"]
+
+
+@pytest.mark.ac("gh-657:AC-4")
+def test_a_skill_with_no_contract_file_validates_without_a_gate_probe(tmp_path: Path) -> None:
+    report = validate(_bare(tmp_path))
+    assert cast(dict[str, object], report["contract"])["source"] == "intake"
+    assert not [item for item in cast(list[Finding], report["findings"]) if str(item["code"]).startswith("gate-")]
+
+
+@pytest.mark.ac("gh-657:AC-5")
+def test_a_secret_in_the_parent_environment_does_not_reach_the_gate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GATE_TEST_SECRET", "hunter2")
+    source = "import json\nimport os\nprint(json.dumps({'score': 0 if 'GATE_TEST_SECRET' in os.environ else 1}))\n"
+    target = _task(tmp_path, source)
+    _fixture(target, "pass", answer="ok")
+    assert _passing(target) == []
+
+
+@pytest.mark.ac("gh-657:AC-5")
+def test_a_timed_out_gate_leaves_no_surviving_child(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_gate_files, "FIXTURE_SECONDS", 0.5)
+    pid_file = tmp_path / "child.pid"
+    source = ("import pathlib\nimport subprocess\nimport time\n"
+              + f"child = subprocess.Popen(['sleep', '60'])\npathlib.Path({str(pid_file)!r}).write_text(str(child.pid))\ntime.sleep(60)\n")
+    target = _task(tmp_path, source)
+    _fixture(target, "pass", answer="ok")
+    assert [item["code"] for item in _gate_findings(target)] == ["gate-fixture-timeout", "gate-fixture-missing"]
+    pid = int(pid_file.read_text(encoding="utf-8"))
+    for _attempt in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.1)
+    os.kill(pid, signal.SIGKILL)
+    pytest.fail("the grandchild survived the gate timeout")
+
+
+@pytest.mark.ac("gh-657:AC-5")
+@pytest.mark.parametrize("source", ["import sys\nsys.stdout.buffer.write(b'\\xff\\xfe{\"score\": 1}')\n",
+                                    "import sys\nsys.stdout.write('{\"score\": 1, \"pad\": \"' + 'x' * 70000 + '\"}')\n"])
+def test_a_gate_with_undecodable_or_oversized_output_is_unpassable(tmp_path: Path, source: str) -> None:
+    target = _task(tmp_path, source)
+    _fixture(target, "pass", answer="ok")
+    assert [item["code"] for item in _passing(target)] == ["gate-unpassable"]
+
+
+@pytest.mark.ac("gh-657:AC-5")
+def test_a_gate_that_floods_stderr_still_scores(tmp_path: Path) -> None:
+    source = "import json\nimport sys\nsys.stderr.write('e' * 500000)\nprint(json.dumps({'score': 1}))\n"
+    target = _task(tmp_path, source)
+    _fixture(target, "pass", answer="ok")
+    assert _passing(target) == []
+
+
+@pytest.mark.ac("gh-657:AC-5")
+@pytest.mark.parametrize("where", ["inside", "fixtures"])
+def test_a_fixture_with_a_symbolic_link_is_unsafe(tmp_path: Path, where: str) -> None:
+    target = _task(tmp_path, "import json\nprint(json.dumps({'score': 1}))\n")
+    _fixture(target, "pass", answer="ok")
+    base = target / "evals/gates/journey.fixtures"
+    if where == "inside":
+        (base / "pass/output/link").symlink_to(tmp_path)
+    else:
+        real = tmp_path / "real"
+        _ = base.rename(real)
+        base.symlink_to(real)
+    assert [item["code"] for item in _passing(target)] == ["gate-fixture-unsafe"]
+
+
+@pytest.mark.ac("gh-657:AC-5")
+def test_a_fixture_with_too_many_files_is_unsafe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_gate_files, "FIXTURE_FILES", 2)
+    target = _task(tmp_path, "import json\nprint(json.dumps({'score': 1}))\n")
+    _fixture(target, "pass", answer="ok")
+    for number in range(3):
+        _ = (target / f"evals/gates/journey.fixtures/pass/output/f{number}").write_text("x", encoding="utf-8")
+    assert [item["code"] for item in _passing(target)] == ["gate-fixture-unsafe"]
+
+
+@pytest.mark.ac("gh-657:AC-3")
+def test_the_null_trace_is_one_finished_empty_turn() -> None:
+    events = [cast(dict[str, object], json.loads(line)) for line in _gate_files.NULL_TRACE.splitlines()]
+    assert [event["type"] for event in events] == ["assistant", "result"]
