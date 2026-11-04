@@ -71,9 +71,38 @@
               {
                 "type": "object",
                 "additionalProperties": {
-                  "type": [
-                    "string",
-                    "null"
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "object",
+                          "required": [
+                            "base64",
+                            "type"
+                          ],
+                          "additionalProperties": false,
+                          "properties": {
+                            "base64": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "enum": [
+                                "png",
+                                "jpg",
+                                "webp",
+                                "gif"
+                              ]
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
                   ]
                 }
               },
@@ -84,7 +113,7 @@
                 }
               }
             ],
-            "description": "Path list, or path map with inline text and null references into top-level fixtures."
+            "description": "Path list, or path map with inline text, image markers, and null references into top-level fixtures."
           },
           "id": {
             "type": "string",
@@ -139,7 +168,32 @@
               {
                 "type": "object",
                 "additionalProperties": {
-                  "type": "string"
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "object",
+                      "required": [
+                        "base64",
+                        "type"
+                      ],
+                      "additionalProperties": false,
+                      "properties": {
+                        "base64": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "enum": [
+                            "png",
+                            "jpg",
+                            "webp",
+                            "gif"
+                          ]
+                        }
+                      }
+                    }
+                  ]
                 }
               },
               {
@@ -160,9 +214,34 @@
         "fixtures": {
           "type": "object",
           "additionalProperties": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "base64",
+                  "type"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "base64": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "enum": [
+                      "png",
+                      "jpg",
+                      "webp",
+                      "gif"
+                    ]
+                  }
+                }
+              }
+            ]
           },
-          "description": "Shared files: path to text, stored once."
+          "description": "Shared files: path to text or an image marker, stored once."
         },
         "cases": {
           "$ref": "#/$defs/cases"

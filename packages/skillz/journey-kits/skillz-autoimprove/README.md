@@ -18,8 +18,9 @@ A nested run therefore makes no model call.
 | `unsafe-out` | Refuse a run directory inside the toy skill and use a private directory from `mktemp -d`. |
 | `stale-hash` | Catch an approval hash that differs from the shown hash, then approve the shown hash. |
 | `just-run` | Show the case list, hash, and estimate although the user says to skip the reviews. |
+| `decline-cases` | Show the case list and hash, then stop in `cases-unapproved` when the user declines, with no budget question. |
 
-Each family holds three cases, one for each toy skill. The kit holds 18 cases in 6 families.
+Each family holds three cases, one for each toy skill. The kit holds 21 cases in 7 families.
 Each case sets `expected.questions`, `expected.must`, `expected.must_not`, `expected.final_stop`, and `expected.criteria`. The runner defines these fields in `JOURNEY_EXPECTED_FIELDS`. The kit makes one criterion for each `must` item, each `must_not` item, `questions`, and `final_stop`, and records the source item in `from`.
 
 ## Grading
@@ -35,7 +36,7 @@ The judge gives each criterion in `expected.criteria` a level from 1 to 4, and c
 
 ## Shipped journeys
 
-`skills/skillz/evals/journeys.json` holds the 18 cases, and `skills/skillz/evals/autoimprove.json` has a `journey` kind for them.
+`skills/skillz/evals/journeys.json` holds the 21 cases, and `skills/skillz/evals/autoimprove.json` has a `journey` kind for them.
 Regenerate the file after a change to `journeys.py`:
 
 ```sh
@@ -63,12 +64,12 @@ Copy the `cases.seed.json` that it names to `cases.draft.json`, then follow the 
 The shipped contract lets the run edit `SKILL.md` and four references. The `write` contract edits `SKILL.md` and `references/experiments.md`.
 The exported patch uses the same paths as `skills/skillz`.
 
-Each family sets the agent turns that its flow needs: 3 for `unsafe-out` and `just-run`, 4 for the others.
+Each family sets the agent turns that its flow needs: 3 for `unsafe-out`, `just-run`, and `decline-cases`, 5 for `ask-harness`, 4 for the others.
 A journey costs at most `max_turns * 2 + 1` calls: agent turns, simulator replies, and one judge call.
-At `--repeats 2`, the estimate for the 18 journeys alone (the `write` contract) is 781 calls and about 6.7 hours.
-The estimate includes 51 search metric calls (460 calls, enough for 8 proposals), 48 replay calls, and 48 headroom calls.
+At `--repeats 2`, the estimate for the 21 journeys alone (the `write` contract) is 994 calls and about 4.5 hours.
+The estimate includes 73 search metric calls (fitted to the 1000-call cap, enough for 8 proposals), 48 replay calls, and 54 headroom calls.
 The headroom calls score the seed once on each of the 6 train cases. The run stops with `cases-too-easy` when the seed already scores 0.9 on a family.
-`test_skillz_autoimprove_journeys.py` pins the call count of 781.
+`test_skillz_autoimprove_journeys.py` pins the call count of 994 and checks that the 1000-call cap binds, so a larger search does not fit.
 
 ## Known gaps
 

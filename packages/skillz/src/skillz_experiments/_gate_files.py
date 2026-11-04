@@ -18,8 +18,9 @@ from collections.abc import Collection
 from pathlib import Path, PurePosixPath
 from typing import NamedTuple, cast
 
-from skillz_experiments._cases import CodedError, read_text, relative
+from skillz_experiments._cases import CodedError, relative
 from skillz_experiments._runtime import end_group
+from skillz_experiments._records import read_text
 
 GATE_GRADERS = ("command", "hybrid", "journey")
 SOURCE_LIMIT = 64 * 1024

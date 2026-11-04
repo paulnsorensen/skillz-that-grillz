@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import re
 import subprocess
@@ -258,13 +259,14 @@ def stage_task(workspace: Path, candidate: Candidate | None, case: Case | None) 
         for name, content in case.files.items():
             path = workspace / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            _ = path.write_text(content)
+            _ = path.write_text(content, encoding="utf-8") if isinstance(content, str) else path.write_bytes(base64.b64decode(content["base64"]))
 
 
 def snapshot_outputs(workspace: Path) -> dict[str, str]:
     """Return the text files that a task leaves in the workspace, bounded in count and size.
 
-    Symlinks, runtime-owned paths, binary files, and files over the limits are skipped.
+    Symlinks, runtime-owned paths, files that do not decode as UTF-8 (a staged image fixture), and files over the limits are skipped.
+    A file that decodes as UTF-8 stays text, even when it starts with image magic.
     A symlink above the workspace is allowed. Only the parts below the workspace count.
     """
     files: dict[str, str] = {}

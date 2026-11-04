@@ -9,7 +9,7 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments import _cases, _seed
+from skillz_experiments import _records, _seed
 from skillz_experiments._cases import CodedError
 from skillz_experiments._intake import load_draft
 from skillz_experiments._seed import READ_LIMIT, SEED_LIMIT
@@ -215,11 +215,11 @@ def test_entries_that_share_a_fixture_read_it_once(
     _shared_fixture(target, 1000, 50)
     reads: list[str] = []
 
-    def spy(root: Path, name: str, limit: int) -> str:
+    def spy(root: Path, name: str, limit: int) -> bytes:
         reads.append(name)
-        return _cases.read_text(root, name, limit)
+        return _records.read_bytes(root, name, limit)
 
-    monkeypatch.setattr(_seed, "read_text", spy)
+    monkeypatch.setattr(_seed, "read_bytes", spy)
     assert len(_seed_cases(target, tmp_path)) == 50
     assert reads.count("evals/files/shared.md") == 1
 
@@ -251,11 +251,11 @@ def test_a_fixture_that_many_entries_share_counts_once_against_the_seed_bound(
     _shared_fixture(target, SEED_LIMIT // 10, 200)
     reads: list[str] = []
 
-    def spy(root: Path, name: str, limit: int) -> str:
+    def spy(root: Path, name: str, limit: int) -> bytes:
         reads.append(name)
-        return _cases.read_text(root, name, limit)
+        return _records.read_bytes(root, name, limit)
 
-    monkeypatch.setattr(_seed, "read_text", spy)
+    monkeypatch.setattr(_seed, "read_bytes", spy)
     assert len(_seed_cases(target, tmp_path)) == 200
     assert reads.count("evals/files/shared.md") == 1
     assert (tmp_path / "run/cases.seed.json").stat().st_size < SEED_LIMIT
@@ -407,11 +407,11 @@ def test_one_entry_with_many_distinct_fixtures_stops_reading_at_the_seed_bound(
     _evals(target, [_entry("wide", assertions=["a"], files=paths)])
     reads: list[str] = []
 
-    def spy(root: Path, name: str, limit: int) -> str:
+    def spy(root: Path, name: str, limit: int) -> bytes:
         reads.append(name)
-        return _cases.read_text(root, name, limit)
+        return _records.read_bytes(root, name, limit)
 
-    monkeypatch.setattr(_seed, "read_text", spy)
+    monkeypatch.setattr(_seed, "read_bytes", spy)
     assert "seed is too large" in str(_unreadable(target, tmp_path))
     assert len([name for name in reads if name != "evals/evals.json"]) <= 11
 
@@ -428,10 +428,10 @@ def test_the_fixture_bound_counts_utf8_bytes_not_characters(
     _evals(target, [_entry("wide", assertions=["a"], files=paths)])
     reads: list[str] = []
 
-    def spy(root: Path, name: str, limit: int) -> str:
+    def spy(root: Path, name: str, limit: int) -> bytes:
         reads.append(name)
-        return _cases.read_text(root, name, limit)
+        return _records.read_bytes(root, name, limit)
 
-    monkeypatch.setattr(_seed, "read_text", spy)
+    monkeypatch.setattr(_seed, "read_bytes", spy)
     assert "seed is too large" in str(_unreadable(target, tmp_path))
     assert len([name for name in reads if name != "evals/evals.json"]) <= 11
