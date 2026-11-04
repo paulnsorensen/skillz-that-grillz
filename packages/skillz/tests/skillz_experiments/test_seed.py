@@ -312,7 +312,7 @@ def test_the_repository_skill_seeds_only_task_cases_in_three_families() -> None:
     summary = seed_summary(evals_json)
     assert summary["kinds"] == {"task": 12}
     assert len(cast(dict[str, int], summary["families"])) >= 3
-    assert seed_summary(seed)["kinds"] == {"task": 12, "journey": 18}
+    assert seed_summary(seed)["kinds"] == {"task": 12, "journey": 21}
 
 
 @pytest.mark.ac("gh-366:AC-2")

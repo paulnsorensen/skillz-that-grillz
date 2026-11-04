@@ -416,7 +416,7 @@ The file is a JSON list. Each item has the draft-case shape:
 The first `run` call seeds `RUN/cases.seed.json` from both files. The call writes the seed when either file exists.
 The coverage check also covers `journeys.json`. The draft must keep each journey with its `id`, `kind`, `request`, and `brief`.
 Otherwise the run stops with `cases-uncovered`. To drop a journey, remove it from `journeys.json`.
-The `skills/skillz` skill ships 18 journeys for `$skillz autoimprove`, and a test keeps the file equal to its generator.
+The `skills/skillz` skill ships 21 journeys for `$skillz autoimprove`, and a test keeps the file equal to its generator.
 
 ### Check the files offline
 
