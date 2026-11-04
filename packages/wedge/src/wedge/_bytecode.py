@@ -110,7 +110,8 @@ def _python_for_pin(pin: str) -> str:
         if len(matches) == 1:
             python = str(matches[0])
         else:
-            request = [uv, "python", "find", "--no-project", "--managed-python", "--no-python-downloads", pin]
+            # `--system` stops uv from returning an active virtual environment built on a host interpreter.
+            request = [uv, "python", "find", "--no-project", "--system", "--managed-python", "--no-python-downloads", pin]
             found = subprocess.run(request, capture_output=True, text=True)
             if found.returncode != 0:
                 _ = subprocess.run([uv, "python", "install", pin], check=True, capture_output=True, text=True)
