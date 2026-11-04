@@ -170,6 +170,13 @@ def test_the_saturation_warning_needs_fewer_than_two_open_train_cases_and_skips_
     assert seed_signals([saturated, open_a, floor], found, {}, {"f"}, True)["warnings"] == []
 
 
+@pytest.mark.ac("gh-658:AC-1")
+def test_a_train_case_with_no_scored_outcome_is_not_headroom() -> None:
+    saturated, unscored_a, unscored_b = _case("s"), _case("a"), _case("b")
+    found = _found(saturated, _item(1.0))
+    warnings = cast(list[str], seed_signals([saturated, unscored_a, unscored_b], found, {}, set(), False)["warnings"])
+    assert len(warnings) == 1 and "0 of 3 train cases" in warnings[0]
+
 @pytest.mark.ac("gh-658:AC-2")
 def test_the_saturated_counts_per_family_and_split_reach_the_export_with_the_warnings(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:

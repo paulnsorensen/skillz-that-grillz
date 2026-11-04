@@ -141,6 +141,8 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-591](./gh-591.md) — gh-591: CodeRabbit includes the source branch
 - [gh-596](./gh-596.md) — gh-596: reduce pure-Python CLI startup imports
 - [gh-651](./gh-651.md) — gh-651: a regression case shows whether it reproduces the field failure on the seed
+  - [gh-656](./gh-656.md) — gh-656: flag a seed that scores 0 through a setup fault, before the search
+  - [gh-658](./gh-658.md) — gh-658: warn when the train split has almost no headroom
 - [gh-663](./gh-663.md) — gh-663: a partially failing regression case stays in its family mean
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [kit-harder-journeys](./kit-harder-journeys.md) — kit-harder-journeys: harder journeys for the self-autoimprove kit
