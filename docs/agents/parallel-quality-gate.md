@@ -14,8 +14,9 @@ Do not treat this implementation as a measured speed improvement.[^2]
 
 ## Execution order
 
-The scheduler completes markdown and YAML format steps first.
-It then synchronizes all workspace packages, development groups, and extras once.
+The scheduler runs the markdown and YAML format steps at the same time as one sync of all workspace packages, development groups, and extras.
+The format steps write only root Markdown and tracked YAML, and the sync reads none of these files, because the root project is not a package.
+A failed format step stops the gate before the archive build.
 The packages share the root `.venv` and `uv.lock`.
 Concurrent uv readers use `--no-sync` after that preparation.
 With the default `GATE_JOBS` value, the first four lanes are the skillz-e2e, wedge, skillz, and fromargs pytest lanes.
@@ -30,6 +31,10 @@ The scheduler returns nonzero if any lane fails.[^4]
 Both settings default to four and require positive integers.
 These limits are separate.
 The four first pytest lanes can each start four workers at the same time.[^5]
+When `TEST_WORKERS` is unset, the `skillz-pytest` lane gets half of the host CPUs, and never fewer than four workers.
+This lane holds most of the skillz test time in `packages/skillz/.test_durations`, so it is the last lane to finish.
+A 4-vCPU CI runner keeps four workers.
+A set `TEST_WORKERS` value applies to every pytest lane.
 
 ## Shared-host limits
 
