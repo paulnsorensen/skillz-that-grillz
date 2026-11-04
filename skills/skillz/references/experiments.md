@@ -298,7 +298,7 @@ A `task` case holds the fixtures in `files`, keyed by their listed paths, and an
 The `expected` object holds `expected_output`, which defaults to an empty string, and `assertions`, which defaults to an empty list. A `task` entry needs `expected_output` or `assertions`.
 Each fixture path starts with `evals/files/`. A path outside `evals/files/` stops the seed.
 A fixture is UTF-8 text or an image. A file whose bytes start with png, jpg, webp, or gif magic enters the seed as `{"base64": str, "type": "png"|"jpg"|"webp"|"gif"}`.
-The encoded size counts once toward the seed bound. The workspace of the task and the workspace of the grader hold the exact bytes.
+A file that decodes as UTF-8 stays text, even when it starts with image magic. The encoded size counts once toward the seed bound. The workspace of the task and the workspace of the grader hold the exact bytes.
 The judge prompt and the audit prompt show an image as a placeholder, not its bytes.
 A file that is not UTF-8 text and not an allowlisted image stops the seed with `evals-unreadable`.
 The runner stages each fixture at its `evals/files/` path in the workspace, so the request must name that directory.

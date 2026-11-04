@@ -10,7 +10,8 @@ from typing import cast
 import pytest
 
 from skillz_experiments._candidate import make_workspace, stage_task
-from skillz_experiments._cases import Case, CodedError, Fixture, image_type, load_cases, text_files
+from skillz_experiments._candidate import snapshot_outputs
+from skillz_experiments._cases import Case, CodedError, Fixture, fixture, image_type, load_cases, text_files
 from skillz_experiments._contract import Grader
 from skillz_experiments._graders import _grading_workspace, judge  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments._intake import IntakeCase, case_hash
@@ -130,6 +131,25 @@ def test_a_frozen_case_file_loads_an_image_marker_and_rejects_a_forged_one(tmp_p
         with pytest.raises(ValueError, match="png, jpg, webp, or gif image"):
             _ = load_cases(manifest(forged), kinds)
 
+
+@pytest.mark.ac("gh-589:AC-1")
+@pytest.mark.parametrize("text", ["GIF89a is the GIF header", "RIFF1234WEBP notes"])
+def test_a_marker_whose_bytes_decode_as_utf8_is_refused_as_text_content(text: str) -> None:
+    kind = image_type(text.encode())
+    assert kind is not None
+    with pytest.raises(ValueError, match="that is not UTF-8 text"):
+        _ = fixture(_marker(text.encode(), kind), "p.txt")
+
+
+@pytest.mark.ac("gh-589:AC-1")
+def test_snapshot_outputs_drops_the_image_fixture_but_keeps_utf8_text_with_image_magic(tmp_path: Path) -> None:
+    case = _case({"pic.gif": _marker(HEADS["gif"] + b"\x00\xff" * 8, "gif")})
+    workspace = make_workspace(tmp_path / "task")
+    stage_task(workspace, None, case)
+    _ = (workspace / "answer.md").write_text("GIF89a is the GIF header")
+    outputs = snapshot_outputs(workspace)
+    assert "pic.gif" not in outputs
+    assert outputs["answer.md"] == "GIF89a is the GIF header"
 
 @pytest.mark.ac("gh-589:AC-2")
 @pytest.mark.parametrize("data", [b"\xff\xfe\x00bad", b"RIFF\xff\xff\xff\xffWAVEfmt ", b"\x89PNG\r\n", b"GIF90a\xff"])

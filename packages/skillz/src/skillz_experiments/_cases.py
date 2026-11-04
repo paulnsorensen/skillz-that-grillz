@@ -72,7 +72,7 @@ def image_type(data: bytes) -> str | None:
 
 
 def fixture(value: object, name: str) -> Fixture:
-    """Return nonempty text, or a `{"base64", "type"}` marker whose decoded bytes have the magic of its image type."""
+    """Return nonempty text, or a `{"base64", "type"}` marker with the magic of its type. Valid UTF-8 bytes stay text."""
     if not isinstance(value, dict):
         return string(value, name)
     item = mapping(cast(object, value))
@@ -80,10 +80,9 @@ def fixture(value: object, name: str) -> Fixture:
         data = base64.b64decode(cast(str, item["base64"]), validate=True) if set(item) == {"base64", "type"} else b""
     except (ValueError, TypeError):
         data = b""
-    if not data or image_type(data) != item["type"]:
-        raise ValueError(f"{name} must be text or a base64 png, jpg, webp, or gif image")
+    if not data or image_type(data) != item["type"] or data.decode("utf-8", "ignore").encode() == data:
+        raise ValueError(f"{name} must be text or a base64 png, jpg, webp, or gif image that is not UTF-8 text")
     return cast(dict[str, str], item)
-
 
 def text_files(files: Mapping[str, Fixture]) -> dict[str, str]:
     """Return the files as text. A binary fixture shows as a placeholder, so no prompt carries its bytes."""
