@@ -4,7 +4,7 @@ from __future__ import annotations
 import time
 from typing import cast
 
-from skillz_experiments._budget import Budget
+from skillz_experiments._budget import Budget, ceilings
 from skillz_experiments._cases import CodedError
 
 
@@ -45,12 +45,13 @@ def with_unspent(record: dict[str, object], budget: Budget) -> dict[str, object]
     `search_end` snapshot, so a search that under-spends does not count as unspent reserve: only the calls and
     seconds since the search ended count against the reserve. A resume re-runs the preflight, and its calls do not
     count. A record with no snapshot is an old run: it gets no `unspent`. Raise `run-record-tampered` when the
-    snapshot is present but out of range.
+    snapshot is present but outside the approved seconds. The seconds left now may be below the snapshot (wall time
+    passed before a resume); the unspent seconds stay within 0 and the reserve.
     """
     block = record.get("budget")
     recorded = cast("dict[str, object]", block) if isinstance(block, dict) else {}
     held = _number(recorded.get("reserve_seconds"), 0.0)
-    ended = _search_end(record, budget, _number(recorded.get("seconds"), budget.seconds))
+    ended = _search_end(record, budget, float(ceilings(budget.journey, budget.cap)[1]))
     if ended is None:
         return dict(recorded)
     calls, ended_left, preflight = ended
@@ -59,4 +60,4 @@ def with_unspent(record: dict[str, object], budget: Budget) -> dict[str, object]
     used_calls = max(0, budget.calls - calls - grown)
     used_seconds = max(0.0, ended_left - left)
     unspent_calls = max(0, min(budget.reserve - used_calls, budget.maximum - budget.calls))
-    return {**recorded, "unspent": {"calls": unspent_calls, "seconds": round(max(0.0, min(held - used_seconds, left)), 3)}}
+    return {**recorded, "unspent": {"calls": unspent_calls, "seconds": round(max(0.0, min(held - used_seconds, held, left)), 3)}}

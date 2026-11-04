@@ -200,7 +200,7 @@ def test_the_unspent_calls_stay_within_the_calls_the_run_may_still_make() -> Non
 
 @pytest.mark.ac("gh-588:AC-3")
 @pytest.mark.parametrize("ended", [{"calls": 11, "seconds_left": 5.0}, {"calls": -1, "seconds_left": 5.0},
-                                   {"calls": 10, "seconds_left": 1001.0}, {"calls": 10, "seconds_left": -1.0},
+                                   {"calls": 10, "seconds_left": 7201.0}, {"calls": 10, "seconds_left": -1.0},
                                    {"calls": 10, "seconds_left": float("inf")}, {"calls": 10, "seconds_left": float("nan")},
                                    {"calls": 10.0, "seconds_left": 5.0}, {"calls": True, "seconds_left": 5.0}, "x"])
 def test_an_out_of_range_search_end_is_a_tampered_record(ended: object) -> None:
@@ -215,6 +215,17 @@ def test_an_out_of_range_search_end_is_a_tampered_record(ended: object) -> None:
 def test_a_record_without_a_search_end_is_an_old_run_with_no_unspent() -> None:
     budget = Budget(100, 1000.0, 20, 10, approved=True)
     assert with_unspent({"budget": {"reserve_seconds": 600}}, budget) == {"reserve_seconds": 600}
+
+
+@pytest.mark.ac("gh-588:AC-3")
+def test_a_resume_with_less_time_left_than_the_snapshot_clamps_the_unspent_seconds() -> None:
+    budget = Budget(100, 1000.0, 20, 10, approved=True)
+    record: dict[str, object] = {"budget": {"reserve_seconds": 600}, "search_end": {"calls": 10, "seconds_left": 500.0}}
+    budget.started -= 900
+    unspent = _unspent(record, budget)
+    assert 0.0 <= cast(float, unspent["seconds"]) <= 100.0
+    budget.started -= 500
+    assert _unspent(record, budget)["seconds"] == 0.0
 
 
 @pytest.mark.ac("gh-588:AC-1")
