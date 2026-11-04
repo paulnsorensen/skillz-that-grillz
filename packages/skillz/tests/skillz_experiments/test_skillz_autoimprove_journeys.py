@@ -56,26 +56,36 @@ def gate(tmp_path: Path, events: list[dict[str, object]]) -> dict[str, object]:
     return cast(dict[str, object], json.loads(done.stdout))
 
 
-FAMILIES = {"ask-harness", "revise-cases", "failed-run", "unsafe-out", "stale-hash", "just-run"}
+FAMILIES = {"ask-harness", "revise-cases", "failed-run", "unsafe-out", "stale-hash", "just-run", "decline-cases"}
 
 
 @pytest.mark.ac("kit-harder-journeys:AC-1")
-def test_the_kit_writes_eighteen_journeys_in_six_families_with_a_six_case_holdout(tmp_path: Path) -> None:
+@pytest.mark.ac("gh-649:AC-1")
+def test_the_kit_writes_twenty_one_journeys_in_seven_families_with_a_six_case_holdout(tmp_path: Path) -> None:
     rules = contract(tmp_path)
     assert sorted(rules.kinds) == ["journey"] and rules.editable == ("SKILL.md", "references/experiments.md")
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
-    assert len(cases) == 18 and {case.family for case in cases} == FAMILIES
+    assert len(cases) == 21 and {case.family for case in cases} == FAMILIES
     assert all(case.journey is not None and case.journey.brief for case in cases)
     assert all("fake_harness.py" in case.files and any(name.endswith("/SKILL.md") for name in case.files) for case in cases)
     assert sum(case.split == "holdout" for case in cases) == HOLDOUT_MINIMUM == 6
+    decline = [case for case in cases if case.family == "decline-cases"]
+    assert len(decline) == 3 and all(case.journey is not None and case.journey.max_turns == 3 for case in decline)
+    raw = cast(list[dict[str, object]], json.loads((tmp_path / "cases.draft.json").read_text()))
+    expected = cast(dict[str, object], next(case["expected"] for case in raw if case["family"] == "decline-cases"))
+    assert expected["final_stop"] == "cases-unapproved" and expected["questions"] == ["case approval"]
+    must = cast(list[str], expected["must"])
+    assert "shows the runner's case question with its hash before it asks for approval" in must
+    assert "stops without --approve-cases after the user declines" in must
+    assert not any("budget" in item for item in must) and "asks a budget question" in cast(list[str], expected["must_not"])
 
 
 @pytest.mark.ac("kit-harder-journeys:AC-2")
-def test_the_seed_puts_the_hard_families_in_train_and_holds_two_families_in_each_other_split(tmp_path: Path) -> None:
+def test_the_seed_puts_two_families_in_train_two_in_holdout_and_three_in_validation(tmp_path: Path) -> None:
     _ = contract(tmp_path)
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
-    for split, families in (("train", {"revise-cases", "unsafe-out"}), ("validation", {"ask-harness", "stale-hash"}),
-                            ("holdout", {"failed-run", "just-run"})):
+    for split, families in (("train", {"ask-harness", "decline-cases"}), ("validation", {"failed-run", "just-run", "stale-hash"}),
+                            ("holdout", {"revise-cases", "unsafe-out"})):
         assert {case.family for case in cases if case.split == split} == families
 
 
@@ -87,11 +97,11 @@ def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
     # Each of the 6 validation journeys runs `VALIDATION_REPEATS` times per search candidate (gh-500).
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (999, 67, 210, 48, 258)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (994, 73, 210, 48, 258)
     assert plan.reserve == plan.holdout_calls + plan.replay_calls
-    # The 30 second plan rate (gh-571) fits a larger search under the 1000-call journey cap than the old 60 second rate did
-    # (927 calls, 60 metric calls). The seconds are 999 calls at 30 seconds over 2 concurrent calls, plus the sandbox time.
-    assert plan.sized.seconds == math.ceil(999 * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS) + plan.sandbox_total == 16035
+    # The seconds are 994 calls at 30 seconds over 2 concurrent calls, plus the sandbox time.
+    assert plan.sized.seconds == math.ceil(994 * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS) + plan.sandbox_total == 16020
+    assert plan.sized.calls <= 1000 and plan.sized.seconds <= 28800  # ADR-010 journey ceiling
 
 
 SEED_EVALUATIONS = 9
@@ -137,7 +147,7 @@ def test_stage_copies_the_skill_with_the_kit_contract_the_one_gate_and_the_shipp
     rules = load_contract(target)
     assert sorted(rules.kinds) == ["journey"] and rules.editable == ("SKILL.md", "references/experiments.md")
     seeded = seed_cases(target)
-    assert seeded is not None and len(seeded) == 18
+    assert seeded is not None and len(seeded) == 21
     drafted = subprocess.run([sys.executable, str(KIT / "journeys.py"), "stage"], env=env, capture_output=True, text=True, timeout=30, check=True)
     assert "contract status: draft" in drafted.stdout
 
@@ -474,7 +484,7 @@ def test_the_split_and_the_plan_do_not_depend_on_the_order_of_the_draft_cases(tm
     assert {case.identifier: case.split for case in cases} == base
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (999, 67, 210, 48, 16035)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (994, 73, 210, 48, 16020)
 
 
 def ask_harness_cases(tmp_path: Path) -> list[dict[str, object]]:

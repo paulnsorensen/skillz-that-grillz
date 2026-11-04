@@ -32,7 +32,7 @@ EASY_CHEESE: dict[str, object] = {
 }
 CRITERIA = [{"id": "c-0", "text": "WHEN the user asks, THE agent SHALL answer."}]
 # judge-criteria-verdicts: the kit cases gained expected.criteria, which the case hash covers, so the pin moved.
-KIT_HASH = "ec109da9f860807577623e9549f4d86205dcac6fe6ba885057d196427a9af9a5"
+KIT_HASH = "d9da15fcf3ac8bfb4ba1e23a7404aad735c124f89a00884a243c333425fb1c33"
 # gh-300: the seeded order gives train 1 of the 5 task families, so train takes 2 families and the pin moved.
 TASK_HASH = "be623b4e2092030d13056fcb7a6c9e40be3aa6d4879aaef31b4c668109cde72e"
 
