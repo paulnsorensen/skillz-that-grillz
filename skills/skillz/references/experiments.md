@@ -299,6 +299,10 @@ When an entry has no `kind`, the reader infers it. `expected_skill: null` is `ne
 A `task` case holds the fixtures in `files`, keyed by their listed paths, and an `expected` object.
 The `expected` object holds `expected_output`, which defaults to an empty string, and `assertions`, which defaults to an empty list. A `task` entry needs `expected_output` or `assertions`.
 Each fixture path starts with `evals/files/`. A path outside `evals/files/` stops the seed.
+A fixture is UTF-8 text or an image. A file whose bytes start with png, jpg, webp, or gif magic enters the seed as `{"base64": str, "type": "png"|"jpg"|"webp"|"gif"}`.
+A file that decodes as UTF-8 stays text, even when it starts with image magic. The encoded size counts once toward the seed bound. The workspace of the task and the workspace of the grader hold the exact bytes.
+The judge prompt and the audit prompt show an image as a placeholder, not its bytes.
+A file that is not UTF-8 text and not an allowlisted image stops the seed with `evals-unreadable`.
 The runner stages each fixture at its `evals/files/` path in the workspace, so the request must name that directory.
 The runner does not list the case files to the task. Name in the request each fixture that the task must read.
 A request may leave out an auxiliary file.
@@ -414,7 +418,7 @@ The file is a JSON list. Each item has the draft-case shape:
 The first `run` call seeds `RUN/cases.seed.json` from both files. The call writes the seed when either file exists.
 The coverage check also covers `journeys.json`. The draft must keep each journey with its `id`, `kind`, `request`, and `brief`.
 Otherwise the run stops with `cases-uncovered`. To drop a journey, remove it from `journeys.json`.
-The `skills/skillz` skill ships 18 journeys for `$skillz autoimprove`, and a test keeps the file equal to its generator.
+The `skills/skillz` skill ships 21 journeys for `$skillz autoimprove`, and a test keeps the file equal to its generator.
 
 ### Check the files offline
 
@@ -1087,9 +1091,15 @@ A judged outcome stores `criteria` next to its `score`. Each criterion `id` maps
 `met` is `true` only at level 4 (fully met). The run record keeps the reasons unredacted. The export redacts them.
 A contract that declares `pillars` stops with `contract-pillars-removed`. Move each pillar into case criteria.
 
-A command score below 1 records `gate_diagnostic` on the outcome: the last 1,000 characters of the redacted grader stderr.
-An empty stderr gives the exit code instead. A grader that reaches the sandbox time limit says so.
-The export leaves `gate_diagnostic` out. This field changes the scoring digest, so earlier runs are a different cohort.
+A command score below 1 records `gate_diagnostic` on the outcome. It holds a lead line, then the redacted `stdout:` tail and
+the redacted `stderr:` tail, each at most 1,000 characters from the end. The lead names the verdict: `the grader argv exits with
+code N`, `the gate scored S` for a clean exit 0, or a note that stdout holds no valid score. A grader that reaches the sandbox
+time limit says so on stderr.
+The outcome also records `gate_fault` for a gate that gives no verdict. The value is `timeout` only when the sandbox time limit
+ends the gate; a gate that exits 124 itself has a verdict and no fault. The value is `invalid-output` when the gate exits 0 with
+stdout that is not a valid score.
+Any other result, including a non-zero exit, has no `gate_fault`.
+The export shows `gate_diagnostic` (redacted) and `gate_fault` on each outcome. The `_graders.py` change alters the scoring digest, so earlier runs are a different cohort.
 
 Each scored search outcome gives GEPA a feedback record with `task_correct`, `request`, `case_id`, and `grader_scores`.
 The `request` holds `[harness]` in place of each harness token. The `unmet` texts and reasons and `gate_feedback` hold it too.

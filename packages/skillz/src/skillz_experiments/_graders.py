@@ -28,7 +28,7 @@ from typing import Protocol, cast, runtime_checkable
 from skillz_experiments import _audit
 from skillz_experiments._candidate import make_workspace, stage_task
 from skillz_experiments._cases import (
-    JOURNEY_EXPECTED_FIELDS, Audit, Case, Criterion, case_criteria, loads_untrusted, mapping, relative,
+    JOURNEY_EXPECTED_FIELDS, Audit, Case, Criterion, case_criteria, image_type, loads_untrusted, mapping, relative, text_files,
 )
 from skillz_experiments._contract import Grader
 from skillz_experiments._redact import redact
@@ -48,8 +48,7 @@ TRACE_FILE = "trace/events.jsonl"
 CAPTURE_FILE_LIMIT = 16
 CAPTURE_BYTES_LIMIT = 4_000_000
 CAPTURE_TOTAL_LIMIT = 16_000_000
-# The command grader keeps at most this many characters of its redacted stderr, from the end.
-DIAGNOSTIC_LIMIT = 1_000
+DIAGNOSTIC_LIMIT = 1_000  # characters kept from the end of each redacted stdout and stderr tail
 _INVALID_STDOUT = "grader stdout lacks a JSON object with a numeric score from 0 to 1"
 
 
@@ -62,7 +61,7 @@ def _utf8(data: bytes) -> bool:
 
 
 CAPTURE_TYPES: dict[str, Callable[[bytes], bool]] = {
-    ".png": lambda data: data.startswith(b"\x89PNG\r\n\x1a\n"), ".txt": _utf8}
+    ".png": lambda data: image_type(data) == "png", ".txt": _utf8}
 
 
 @dataclass(frozen=True)
@@ -186,31 +185,32 @@ def _grading_workspace(case: Case, files: dict[str, str] | None, name: str,
 
 
 def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, str] | None,
-            trace: list[dict[str, object]] | None = None) -> tuple[float, str]:
+            trace: list[dict[str, object]] | None = None) -> tuple[float, str, str | None, int]:
     """Run the grader argv in a fresh workspace that holds the fixtures and the task output.
 
-    The case files stay at the workspace root. The task output goes under `output/`, so it cannot
-    replace a fixture. The argv runs as given. The workspace never holds `expected` or the
-    rubric. The score is 0 for a non-zero exit code or for stdout that is not a JSON object with a
-    numeric `score` from 0 to 1. The second value is the redacted stderr, cut to its last `DIAGNOSTIC_LIMIT` characters.
-    An empty stderr gives the exit code instead.
+    The case files stay at the workspace root; the task output goes under `output/`, so it cannot replace a fixture.
+    The argv runs as given. The workspace never holds `expected` or the rubric. The score is 0 for a non-zero exit
+    code or for stdout that is not a JSON object with a numeric `score` from 0 to 1. The second value is a verdict lead
+    line plus the redacted `stdout:` and `stderr:` tails. The third is the gate fault: `timeout` (sandbox limit only), `invalid-output` (exit 0, no valid score), else None. The fourth is the stdout tail length, which marks the stream boundary.
     """
     require_sandbox(task)
     with _grading_workspace(case, files, "command", trace) as workspace:
-        code, stdout, stderr = _run(task, workspace, argv)
-    tail = redact(stderr)[-DIAGNOSTIC_LIMIT:]
+        code, stdout, stderr, timed_out = _run(task, workspace, argv)
     score, valid = _command_score(code, stdout)
-    if tail:
-        return score, tail
-    return score, f"the grader argv exits with code {code}" if valid else _INVALID_STDOUT
+    scored = f"the gate scored {str(score).removesuffix('.0')}" if valid else _INVALID_STDOUT
+    lead = f"the grader argv exits with code {code}" if code else scored
+    tails = {name: tail for name, text in (("stdout", stdout), ("stderr", stderr))
+             if (tail := redact(text).strip()[-DIAGNOSTIC_LIMIT:])}
+    fault = "timeout" if timed_out else "invalid-output" if code == 0 and not valid else None
+    return score, "\n".join([lead, *(f"{name}: {tail}" for name, tail in tails.items())]), fault, len(tails.get("stdout", ""))
 
 
-def _run(task: object, workspace: Path, argv: tuple[str, ...]) -> tuple[int, str, str]:
-    """Run a grader argv in the task sandbox. A run that reaches the sandbox time limit gives exit code 124."""
+def _run(task: object, workspace: Path, argv: tuple[str, ...]) -> tuple[int, str, str, bool]:
+    """Run a grader argv in the task sandbox. A run that reaches the sandbox time limit gives exit code 124 and True."""
     try:
-        return cast(Sandbox, task).sandbox(workspace, list(argv))
+        return (*cast(Sandbox, task).sandbox(workspace, list(argv)), False)
     except SandboxTimeout:
-        return 124, "", "the grader argv reached the sandbox time limit"
+        return 124, "", "the grader argv reached the sandbox time limit", True
 
 
 def capture(task: object, argv: tuple[str, ...], case: Case, files: dict[str, str] | None) -> dict[str, bytes]:
@@ -222,7 +222,7 @@ def capture(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
     require_sandbox(task)
     with _grading_workspace(case, files, "capture") as workspace:
         (workspace / CAPTURE_DIRECTORY).mkdir()
-        code, _stdout, _stderr = _run(task, workspace, argv)
+        code, *_ = _run(task, workspace, argv)
         if code != 0:
             raise CaptureFailed(f"the capture argv exits with code {code}")
         return _captured(workspace / CAPTURE_DIRECTORY)
@@ -293,7 +293,7 @@ def judge(transport: object, grader: Grader, case: Case, answer: object, files: 
     criteria = case_criteria(case.expected, case.identifier)
     ids = tuple(criterion.id for criterion in criteria)
     instruction = JUDGE_INSTRUCTION
-    data: dict[str, object] = {"request": case.request, "files": case.files, "answer": answer,
+    data: dict[str, object] = {"request": case.request, "files": text_files(case.files), "answer": answer,
                                "output_files": files or {}, "reference": case.expected}
     if journey:
         data |= journey

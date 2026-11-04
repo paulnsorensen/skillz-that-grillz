@@ -30,6 +30,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 <!-- HALLOUMINATE:INDEX-START -->
 - [autoimprove-authoring-headroom](./autoimprove-authoring-headroom.md) — autoimprove-authoring-headroom: stop a run when the seed already saturates a family
 - [autoimprove-live-proof](./autoimprove-live-proof.md) — autoimprove-live-proof: the autoimprove journey promotes a planted-defect fix with a suggested CLI
+- [autoimprove-seed-signals](./autoimprove-seed-signals.md) — autoimprove-seed-signals: a command gate keeps its output tails and records a gate fault
 - [autoimprove-useful-answer](./autoimprove-useful-answer.md) — autoimprove-useful-answer: a stopped baseline answers a diagnosis, and a missing fixture stops before a call
 - [fromargs-benefit-smoke](./fromargs-benefit-smoke.md) — fromargs-benefit-smoke: autoimprove writes its own eval and ships a fromargs CLI
 - [fromargs-cli-library](./fromargs-cli-library.md) — fromargs-cli-library: fromargs public contract
@@ -139,6 +140,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-582](./gh-582.md) — gh-582: The doctor names the nested-sandbox fix before the AppArmor fix
 - [gh-591](./gh-591.md) — gh-591: CodeRabbit includes the source branch
 - [gh-596](./gh-596.md) — gh-596: reduce pure-Python CLI startup imports
+- [gh-649](./gh-649.md) — gh-649: a decline-cases journey family for the self-autoimprove kit
 - [gh-651](./gh-651.md) — gh-651: a regression case shows whether it reproduces the field failure on the seed
 - [gh-663](./gh-663.md) — gh-663: a partially failing regression case stays in its family mean
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
