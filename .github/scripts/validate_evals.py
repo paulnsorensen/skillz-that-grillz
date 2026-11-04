@@ -51,12 +51,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "packages" / "skill
 
 from skillz_experiments._cases import relative  # noqa: E402
 from skillz_experiments._evals_format import FIXTURES, parse_evals, parse_journeys  # noqa: E402
-from skillz_experiments._records import read_text  # noqa: E402
+from skillz_experiments._records import fixture_from_bytes, read_bytes  # noqa: E402
 from skillz_experiments._seed import READ_LIMIT  # noqa: E402
 
 
 def _fixture_errors(skill: Path, index: int, raw: object) -> list[str]:
-    """Read each plain fixture path the way the seed does. Report a path it cannot read or that is blank."""
+    """Read each plain fixture path the way the seed does. Report a path it cannot read, a blank text file, or bytes that are neither UTF-8 text nor an image."""
     files = cast(dict[str, object], raw).get("files") if isinstance(raw, dict) else None
     if not isinstance(files, list):
         return []
@@ -65,11 +65,11 @@ def _fixture_errors(skill: Path, index: int, raw: object) -> list[str]:
         try:
             if not isinstance(name, str) or not relative(name).startswith(FIXTURES):
                 continue
-            text = read_text(skill, name, READ_LIMIT)
+            item = fixture_from_bytes(read_bytes(skill, name, READ_LIMIT), name)
         except ValueError as exc:
             errors.append(f"evals[{index}]: files: {exc}")
             continue
-        if not text.strip():
+        if isinstance(item, str) and not item.strip():
             errors.append(f"evals[{index}]: files: {name} must be nonempty text")
     return errors
 

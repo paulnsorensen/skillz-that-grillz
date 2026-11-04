@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import contextlib
 import hashlib
 import json
@@ -11,7 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import cast
 
-from skillz_experiments._cases import CodedError, Fixture, mapping, relative
+from skillz_experiments._cases import CodedError, Fixture, image_type, mapping, relative
 
 SCHEMA_VERSION = 4
 
@@ -136,3 +137,18 @@ def open_record(path: Path) -> dict[str, object]:
     if record.get("schema_version") != SCHEMA_VERSION:
         raise CodedError("run-schema-old", f"{path} uses an older run schema; start a new run with `skillz-experiment run`")
     return record
+
+
+def fixture_from_bytes(data: bytes, name: str) -> Fixture:
+    """Return a fixture file's text when it decodes as UTF-8, else a base64 marker for a png, jpg, webp, or gif.
+
+    Valid UTF-8 always stays text, so a text file that starts with `GIF89a` does not become an image.
+    """
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    kind = image_type(data)
+    if kind is None:
+        raise ValueError(f"{name} must be UTF-8 text or a png, jpg, webp, or gif image")
+    return {"base64": base64.b64encode(data).decode("ascii"), "type": kind}

@@ -165,6 +165,19 @@ class InRepoStrictnessTest(unittest.TestCase):
         self.assertTrue(any("evals/files/" in error for error in self._validate(outside, ("evals/other.md",))))
         self.assertEqual(self._validate(VALID_ENTRY | {"files": ["evals/files/ok.md"]}, ("evals/files/ok.md",)), [])
 
+    def test_accepts_an_image_fixture_and_rejects_other_binary(self) -> None:
+        png = b"\x89PNG\r\n\x1a\n" + bytes(range(256))
+        entry = VALID_ENTRY | {"files": ["evals/files/pic.png"]}
+        for data, ok in ((png, True), (b"\xff\xfe\x00bad", False)):
+            with tempfile.TemporaryDirectory(prefix="validate-evals-") as raw:
+                skill = Path(raw) / "skills" / "x"
+                (skill / "evals/files").mkdir(parents=True)
+                _ = (skill / "evals/files/pic.png").write_bytes(data)
+                path = skill / "evals" / "evals.json"
+                _ = path.write_text(json.dumps({"skill_name": "x", "evals": [entry]}), encoding="utf-8")
+                errors = validate_evals.validate_file(path)
+            self.assertEqual(errors == [], ok, errors)
+
 
 class SelfTestPassesTest(unittest.TestCase):
     """The embedded --self-test fixtures must all pass (rc 0)."""

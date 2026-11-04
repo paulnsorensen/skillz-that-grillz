@@ -9,7 +9,7 @@ from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
 
-from skillz_experiments._cases import Case, CodedError, digest, mapping, relative
+from skillz_experiments._cases import Case, CodedError, digest, image_type, mapping, relative
 from skillz_experiments._contract import LOCATION, Contract, resolve
 from skillz_experiments._records import write_bytes
 
@@ -265,7 +265,7 @@ def stage_task(workspace: Path, candidate: Candidate | None, case: Case | None) 
 def snapshot_outputs(workspace: Path) -> dict[str, str]:
     """Return the text files that a task leaves in the workspace, bounded in count and size.
 
-    Symlinks, runtime-owned paths, binary files, and files over the limits are skipped.
+    Symlinks, runtime-owned paths, binary files, image files (a staged image fixture), and files over the limits are skipped.
     A symlink above the workspace is allowed. Only the parts below the workspace count.
     """
     files: dict[str, str] = {}
@@ -280,8 +280,11 @@ def snapshot_outputs(workspace: Path) -> dict[str, str]:
         if len(files) >= OUTPUT_FILE_LIMIT or path.stat().st_size > OUTPUT_BYTES_LIMIT:
             continue
         try:
-            text = path.read_text(encoding="utf-8")
+            data = path.read_bytes()
+            text = data.decode("utf-8")
         except (OSError, UnicodeDecodeError):
+            continue
+        if image_type(data):
             continue
         total += len(text)
         if total > 1_000_000:

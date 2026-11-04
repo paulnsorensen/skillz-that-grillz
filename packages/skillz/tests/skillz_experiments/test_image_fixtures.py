@@ -51,7 +51,7 @@ def _digest(path: Path) -> str:
 @pytest.mark.parametrize("kind", sorted(HEADS))
 def test_an_image_fixture_enters_the_seed_as_a_base64_marker_with_its_type(
         tmp_path: Path, make_target: Maker, kind: str) -> None:
-    data = HEADS[kind] + b"\x00\x01\x02" * 20
+    data = HEADS[kind] + b"\x00\x01\xff" * 20
     target = _target(tmp_path, make_target, {"evals/files/pic.bin": data}, [["evals/files/pic.bin"]])
     seeded = cast(list[dict[str, object]], seed_cases(target))
     assert seeded[0]["files"] == {"evals/files/pic.bin": _marker(data, kind)}

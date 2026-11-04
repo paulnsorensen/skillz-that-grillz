@@ -9,18 +9,17 @@ To drop an entry, remove it from its file.
 """
 from __future__ import annotations
 
-import base64
 import json
 import re
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 
-from skillz_experiments._cases import CodedError, Fixture, image_type, loads_untrusted, relative, text_map
+from skillz_experiments._cases import CodedError, Fixture, loads_untrusted, relative, text_map
 from skillz_experiments._contract import Contract
 from skillz_experiments._evals_format import EvalEntry, parse_evals, parse_journeys
 from skillz_experiments._intake import DRAFT_LIMIT, PENDING_KINDS, DraftCase, check_helper_input, projection
-from skillz_experiments._records import read_bytes, read_text, share_files
+from skillz_experiments._records import fixture_from_bytes, read_bytes, read_text, share_files
 
 EVALS = "evals/evals.json"
 JOURNEYS = "evals/journeys.json"
@@ -76,12 +75,7 @@ def _fixture(target: Path, path: str, cache: dict[str, Fixture]) -> Fixture:
     if path not in cache:
         if not relative(path).startswith(FIXTURES):
             raise ValueError(f"{path} must be under {FIXTURES}")
-        data = read_bytes(target, path, READ_LIMIT)
-        kind = image_type(data)
-        try:
-            cache[path] = {"base64": base64.b64encode(data).decode("ascii"), "type": kind} if kind else data.decode("utf-8")
-        except UnicodeDecodeError:
-            raise ValueError(f"{path} must be UTF-8 text or a png, jpg, webp, or gif image") from None
+        cache[path] = fixture_from_bytes(read_bytes(target, path, READ_LIMIT), path)
         if sum(len(item.encode("utf-8")) if isinstance(item, str) else len(item["base64"]) for item in cache.values()) > SEED_LIMIT:
             raise ValueError(f"the seed is too large; its fixtures pass {SEED_LIMIT} bytes")
     return cache[path]
