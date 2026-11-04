@@ -88,23 +88,36 @@ def test_the_feedback_keeps_the_lead_line_and_a_share_of_each_tail(tmp_path: Pat
     result = harness(monkeypatch, SandboxedTask(), FakeJudge()).evaluate(candidate, case, checks=CheckMemo())
     gate = cast(str, feedback_for(result, case, HarnessText(), candidate)[1]["gate_feedback"])
     lead, stdout, stderr = gate.split("\n")
-    assert lead == "the grader argv exits with code 1" and len(gate) <= 1000
+    assert lead == "the grader argv exits with code 1" and len(gate) == DIAGNOSTIC_LIMIT
     assert stdout.startswith("stdout: o") and set(stdout[len("stdout: "):]) == {"o"}
     assert stderr.startswith("stderr: e") and set(stderr[len("stderr: "):]) == {"e"}
+    assert abs(len(stdout) - len(stderr)) <= 1
 
 
 @pytest.mark.ac("autoimprove-seed-signals:AC-7")
-@pytest.mark.parametrize("stdout, stderr, lower", [
-    ("o\nstdout: x\nstderr: y\n" * 100, "e" * 1500, 0),
-    ("abc", "e" * 1000, 600),
-], ids=["labelled-lines-in-the-output", "short-stdout-gives-its-space-to-stderr"])
-def test_the_feedback_stays_within_the_limit_and_a_short_tail_gives_its_space_away(stdout: str, stderr: str, lower: int) -> None:
-    gate = gate_feedback(f"the grader argv exits with code 1\nstdout: {stdout}\nstderr: {stderr}", HarnessText())
-    kept = gate.split("\nstderr: ")[-1]
-    assert len(gate) <= DIAGNOSTIC_LIMIT and gate.startswith("the grader argv exits with code 1\nstdout: ")
-    assert set(kept) == {"e"} and len(kept) >= lower
-    if lower:
-        assert "\nstdout: abc\n" in gate
+def test_a_label_line_inside_the_stdout_tail_does_not_end_that_tail() -> None:
+    stdout = "stdout: ran 40 checks\nstderr: warning x\n" + "l" * 1400 + "\nSUMMARY: 3 rules failed"
+    gate = gate_feedback(f"the grader argv exits with code 1\nstdout: {stdout}\nstderr: {'e' * 1500}", HarnessText())
+    lead, rest = gate.split("\n", 1)
+    shown, kept = rest.rsplit("\nstderr: ", 1)
+    assert lead == "the grader argv exits with code 1" and len(gate) == DIAGNOSTIC_LIMIT
+    assert shown.startswith("stdout: ") and shown.endswith("\nSUMMARY: 3 rules failed")
+    assert set(kept) == {"e"} and abs(len(shown) - len("stdout: ") - len(kept)) <= 1
+
+
+@pytest.mark.ac("autoimprove-seed-signals:AC-7")
+def test_a_stdout_label_line_inside_a_lone_stderr_tail_stays_in_that_tail() -> None:
+    stderr = "e" * 800 + "\nstdout: not a label\n" + "f" * 800
+    gate = gate_feedback(f"the grader argv exits with code 1\nstderr: {stderr}", HarnessText())
+    head = "the grader argv exits with code 1\nstderr: "
+    assert gate == head + stderr[len(stderr) - (DIAGNOSTIC_LIMIT - len(head)):]
+
+
+@pytest.mark.ac("autoimprove-seed-signals:AC-7")
+def test_a_short_stdout_tail_gives_its_space_to_the_stderr_tail() -> None:
+    head = "the grader argv exits with code 1\nstdout: abc\nstderr: "
+    gate = gate_feedback(f"{head}{'e' * 1000}", HarnessText())
+    assert gate == head + "e" * (DIAGNOSTIC_LIMIT - len(head))
 
 
 @pytest.mark.ac("autoimprove-seed-signals:AC-8")

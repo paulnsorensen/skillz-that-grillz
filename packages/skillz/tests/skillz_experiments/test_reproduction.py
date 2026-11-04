@@ -1,7 +1,7 @@
 """gh-651 and gh-663: the regression field and the reproduction record of one case.
 
-The tests that drive a full run are in `test_reproduction_records.py`, `test_reproduction_holdout.py`, and
-`test_reproduction_floor.py`, so that each file stays under the test-time budget.
+The tests that drive a full run are in `test_reproduction_records.py`, `test_reproduction_holdout.py`,
+`test_reproduction_holdout_resume.py`, and `test_reproduction_floor.py`, so that each file stays under the test-time budget.
 """
 from __future__ import annotations
 

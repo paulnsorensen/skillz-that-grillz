@@ -4,21 +4,25 @@ from __future__ import annotations
 from skillz_experiments._graders import DIAGNOSTIC_LIMIT
 from skillz_experiments.search import HarnessText
 
-_LABELS = ("stdout", "stderr")
+_STDOUT, _STDERR = "stdout: ", "stderr: "
 
 
 def _split(text: str) -> tuple[str, list[tuple[str, str]]]:
-    """Split at the first `stdout: ` line and the first later `stderr: ` line: the two labels `_graders.command` writes."""
-    starts: list[tuple[str, int]] = []
-    position = 0
-    for label in _LABELS:
-        found = text.find(f"\n{label}: ", position)
-        if found >= 0:
-            starts.append((label, found))
-            position = found + len(label) + 3
-    ends = [start for _, start in starts[1:]] + [len(text)]
-    return text[:starts[0][1]] if starts else text, [
-        (label, text[start + len(label) + 3:end]) for (label, start), end in zip(starts, ends)]
+    """Split the lead line from the labelled tails that `_graders.command` writes after it.
+
+    The lead is one line, so a tail label starts the second line. The stdout tail ends at the last `stderr: ` line,
+    because stdout can hold a label line and the stderr tail comes last. Text without a label gives no tails.
+    """
+    lead, _, rest = text.partition("\n")
+    if rest.startswith(_STDERR):
+        return lead, [("stderr", rest[len(_STDERR):])]
+    if not rest.startswith(_STDOUT):
+        return text, []
+    body = rest[len(_STDOUT):]
+    cut = body.rfind(f"\n{_STDERR}")
+    if cut < 0:
+        return lead, [("stdout", body)]
+    return lead, [("stdout", body[:cut]), ("stderr", body[cut + 1 + len(_STDERR):])]
 
 
 def gate_feedback(diagnostic: str, harness: HarnessText) -> str:
