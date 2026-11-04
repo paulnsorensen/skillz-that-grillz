@@ -56,6 +56,9 @@ if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
     os.replace(pid_tmp, pid_file)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     time.sleep(30)
+if pathlib.Path(sys.argv[0]).name == 'just' and args == os.environ.get('FAIL_JUST', '').split():
+    print('format failure')
+    sys.exit(1)
 if args and args[0] == 'run':
     time.sleep(.03)
 """
@@ -320,7 +323,8 @@ class GateRunnerTest(unittest.TestCase):
                                     capture_output=True, text=True, check=False, timeout=10)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
-            self.assertEqual(events[:3], [
+            # The format steps run beside the workspace sync; all three end before the archive build.
+            self.assertCountEqual(events[:3], [
                 "just lint-md-fix", "just lint-yaml-fmt-fix",
                 "uv sync --locked --all-packages --all-groups --all-extras",
             ])
@@ -351,6 +355,39 @@ class GateRunnerTest(unittest.TestCase):
             socket = bases[0].resolve() / "popen-gw0" / "test_a_sandbox_read_root_that_0" / "h" / "inner" / "s"
             self.assertLess(len(os.fsencode(socket)), 104)
             self.assertTrue(all(not path.exists() for path in caches + bases))
+
+    def test_a_failed_format_step_stops_the_gate_before_the_archive_build(self) -> None:
+        for mode, failing, step in (("fix", "lint-md-fix", "markdown"), ("check", "lint-yaml-fmt", "yaml-fmt")):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = {**self._fake_env(root), "FAIL_JUST": failing}
+                result = subprocess.run([sys.executable, str(RUNNER), mode], env=env,
+                                        capture_output=True, text=True, check=False, timeout=10)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("format failure", result.stdout)
+                self.assertIn(f"✗ {step}", result.stdout)
+                events = (root / "events").read_text().splitlines()
+                self.assertFalse(any("wedge bundle" in event or " pytest " in event for event in events), events)
+
+    def test_without_test_workers_the_skillz_unit_lane_gets_half_the_cpus(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {name: value for name, value in self._fake_env(root).items() if name != "TEST_WORKERS"}
+            result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
+                                    capture_output=True, text=True, check=False, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            pytest_events = [event for event in (root / "events").read_text().splitlines() if " pytest " in event]
+            unit = [event for event in pytest_events if "pytest packages/skillz/tests --ignore" in event]
+            self.assertEqual(len(unit), 1)
+            self.assertIn(f" -n {max(4, (os.cpu_count() or 1) // 2)} ", unit[0])
+            self.assertTrue(all(" -n 4 " in event for event in pytest_events if event not in unit))
+
+    def test_unit_workers_keep_an_explicit_count_and_never_drop_below_the_base(self) -> None:
+        self.assertEqual(run_gate.unit_workers(3, True, 16), 3)
+        self.assertEqual(run_gate.unit_workers(4, False, 4), 4)
+        self.assertEqual(run_gate.unit_workers(4, False, None), 4)
+        self.assertEqual(run_gate.unit_workers(4, False, 15), 7)
+        self.assertEqual(run_gate.unit_workers(4, False, 32), 16)
 
     def test_steps_never_see_the_live_flag(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
