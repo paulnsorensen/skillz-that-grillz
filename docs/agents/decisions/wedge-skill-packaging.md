@@ -141,7 +141,7 @@ _Source: gh-581 implementation, stack 620 review regressions, real ZIP acceptanc
 
 
 
-- **Offline compiler lookup:** Without `uv` on PATH, Wedge first honors explicit `UV_PYTHON_INSTALL_DIR`. Otherwise it infers the managed installation root from the host interpreter. An invalid explicit root fails without searching another root. Exact patch validation still applies.[^zip-offline312]
+- **Offline compiler lookup:** Without `uv` on PATH, Wedge first honors explicit `UV_PYTHON_INSTALL_DIR`. Otherwise it infers the managed installation root from the host interpreter. An invalid explicit root fails without searching another root. Exact patch validation still applies. With `uv` on PATH, the managed lookup passes `--system`. An active virtual environment never supplies a compiler, even when its host interpreter has the pinned patch.[^zip-offline312]
 
 [^zip-offline312]: `packages/wedge/src/wedge/_bytecode.py:91-123`; `packages/wedge/tests/wedge/test_bytecode.py`; PR #617 Python 3.12.16 full build, session 97767.
 

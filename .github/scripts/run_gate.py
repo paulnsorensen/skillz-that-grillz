@@ -48,6 +48,10 @@ E2E_TIMEOUT = 600
 # that waits with no deadline (a `with Popen` exit or a thread join), so the gate kills the step's process group.
 STEP_SECONDS_VARIABLE = "GATE_STEP_SECONDS"
 DEFAULT_STEP_SECONDS = 3600
+# The skillz unit lane holds most of the skillz test time (packages/skillz/.test_durations), so it ends last.
+# Without `TEST_WORKERS`, it gets half of the host CPUs and never fewer than the base count;
+# a 4-vCPU CI runner keeps the base count.
+SKILLZ_UNIT_LANE = "skillz-pytest"
 
 
 def timeout_args(seconds: int) -> list[str]:
@@ -339,7 +343,12 @@ def _covered(lane: str, data_dir: Path) -> tuple[list[str], list[str]]:
                                                    "-m", "pytest"]
 
 
-def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None) -> list[Job]:
+def unit_workers(base: int, explicit: bool, cpus: int | None) -> int:
+    """Return the worker count of the skillz unit lane: `base` if `TEST_WORKERS` is set, else at least half the CPUs."""
+    return base if explicit else max(base, (cpus or 1) // 2)
+
+
+def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None, unit: int | None = None) -> list[Job]:
     root = ["uv", "run", "--locked", "--no-sync", "--all-groups"]
     wedge = ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge"]
     skillz = ["uv", "run", "--locked", "--no-sync", "--project", "packages/skillz"]
@@ -351,7 +360,8 @@ def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None
 
     def pytest(lane: str, runner: list[str], paths: list[str], key: str, timeout: int = UNIT_TIMEOUT) -> Job:
         prefix, measured = _covered(lane, data_dir)
-        return lane, eat + prefix + runner + [*measured, *paths, "-q", "-n", str(test_workers), "--dist", "worksteal",
+        workers = unit if unit and lane == SKILLZ_UNIT_LANE else test_workers
+        return lane, eat + prefix + runner + [*measured, *paths, "-q", "-n", str(workers), "--dist", "worksteal",
                                               *timeout_args(timeout), "--basetemp", str(cache_root / key),
                                               "-o", f"cache_dir={cache_root / (key + 'c')}"]
 
@@ -451,30 +461,32 @@ def _without(jobs: list[Job], skip: frozenset[str]) -> list[Job]:
     return [job for job in jobs if job[0] not in skip]
 
 
-def _prepare() -> bool:
-    """Sync the workspace, then build the skill archives.
+def _prepare(formatters: list[Job] | None = None) -> bool:
+    """Run the format steps beside the workspace sync, then build the skill archives.
 
+    The format steps write only root Markdown and tracked YAML, and the sync reads no file that they write
+    (the root project is not a package), so the steps overlap.
     Main tracks no archive (ADR-012), and the skillz tests run the built archives, so the build runs before any reader.
     """
-    if not run_step("workspace-env", ["uv", "sync", "--locked", "--all-packages", "--all-groups", "--all-extras"]):
+    steps = [*(formatters or []), ("workspace-env", ["uv", "sync", "--locked", "--all-packages", "--all-groups",
+                                                      "--all-extras"])]
+    if not run_jobs(steps, len(steps)):
         return False
     return run_step("wedge-bundle", ["uv", "run", "--locked", "--no-sync", "--project", "packages/wedge",
                                      "wedge", "bundle", "skills/skillz"])
 
 
-def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: frozenset[str], slots: int) -> int:
-    formatters = (
+def run_gate(mode: str, workers: int, test_workers: int, temp_root: Path, skip: frozenset[str], slots: int,
+             unit: int | None = None) -> int:
+    formatters: list[Job] = (
         [("markdown", ["just", "lint-md-fix"]), ("yaml-fmt", ["just", "lint-yaml-fmt-fix"])]
         if mode == "fix" else
         [("markdown", ["just", "lint-md"]), ("yaml-fmt", ["just", "lint-yaml-fmt"])]
     )
-    for name, command in formatters:
-        if not run_step(name, command):
-            return 1
-    if not _prepare():
+    if not _prepare(formatters):
         return 1
     data_dir = coverage_dir(temp_root)
-    jobs = _without(_test_jobs(test_workers, temp_root, data_dir) + _check_jobs(), skip)
+    jobs = _without(_test_jobs(test_workers, temp_root, data_dir, unit) + _check_jobs(), skip)
     with host_slot(slots):
         passed = run_jobs(jobs, workers)
     _time_report()
@@ -506,6 +518,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         workers, test_workers = _workers("GATE_JOBS"), _workers("TEST_WORKERS")
+        unit = unit_workers(test_workers, "TEST_WORKERS" in os.environ, os.cpu_count())
         slots = _host_slots()
         _ = _step_seconds()
         skip = _skipped()
@@ -542,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args[0] in {"test", "skillz"}:
                     # These modes write the lane data but do not check it: CI's coverage job combines the shards.
                     data_dir = coverage_dir(temp_root)
-                    jobs = _test_jobs(test_workers, temp_root, data_dir)
+                    jobs = _test_jobs(test_workers, temp_root, data_dir, unit)
                     if args[0] == "skillz":
                         jobs = [job for job in jobs if job[0] in SKILLZ_LANES]
                     jobs = _without(jobs, skip)
@@ -553,7 +566,7 @@ def main(argv: list[str] | None = None) -> int:
                         return 1
                     with host_slot(slots):
                         return 0 if run_jobs(jobs, workers) else 1
-                return run_gate(args[0], workers, test_workers, temp_root, skip, slots)
+                return run_gate(args[0], workers, test_workers, temp_root, skip, slots, unit)
             except KeyboardInterrupt:
                 _stop_children()
                 print("interrupted", file=sys.stderr)
