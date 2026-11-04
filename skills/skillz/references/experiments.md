@@ -378,7 +378,7 @@ One list therefore works on both traces for `Bash`, `Edit`, and text receipts. O
 A Codex command can arrive wrapped in a shell, such as `/bin/zsh -lc 'git push'`. Do not anchor an `input` pattern with `^`.
 With no receipts and no terminal, the gate only checks `no-trace` and `no-agent-turn`.
 
-Gate fixtures: put a passing and a failing run in `evals/gates/<gate>.fixtures/pass/` and `fail/`. Each holds `trace/events.jsonl` (Claude or Codex encoding) and an `output/` tree. `validate` runs the gate as `python3 -I` in a temporary directory, with a 20 s timeout, and reports these findings:
+Gate fixtures: put a passing and a failing run in `evals/gates/<gate>.fixtures/pass/` and `fail/`. Each holds `trace/events.jsonl` (Claude or Codex encoding) and an `output/` tree. Other files of a side go to the workspace root, where a run puts the case files. `validate` runs the gate as `python3 -I` in a temporary directory, with a 20 s timeout, and reports these findings:
 
 - `gate-unpassable` (error): the gate does not score 1 on `pass`.
 - `gate-permissive` (error): the gate scores above 0 on `fail`.

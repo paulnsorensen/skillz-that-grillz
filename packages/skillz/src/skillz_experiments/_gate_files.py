@@ -207,14 +207,15 @@ def _run(source: str, work: Path, home: str) -> tuple[int, bytes] | None:
 
 
 def _score(source: str, fixture: Path | None, trace: str | None = None) -> float | None:
-    """Run the gate source once in a fresh temporary workspace. Return its score, 0 for a failed run, None on a timeout."""
+    """Run the gate source once in a fresh temporary workspace. Return its score, 0 for a failed run, None on a timeout.
+
+    The side is the workspace: `trace/`, `output/`, and other root files, where a run stages the case files.
+    """
     with tempfile.TemporaryDirectory() as name:
         work = Path(name, "work")
-        work.mkdir()
         if fixture is not None:
-            for part in ("trace", "output"):
-                if (fixture / part).is_dir():
-                    _ = shutil.copytree(fixture / part, work / part, symlinks=True)
+            _ = shutil.copytree(fixture, work, symlinks=True)
+        work.mkdir(exist_ok=True)
         if trace is not None:
             (work / "trace").mkdir()
             _ = (work / "trace/events.jsonl").write_text(trace, encoding="utf-8")
@@ -228,9 +229,9 @@ def _score(source: str, fixture: Path | None, trace: str | None = None) -> float
         score = cast(dict[str, object], json.loads(output.decode("utf-8", errors="replace")))["score"]
     except (ValueError, KeyError, TypeError):
         return 0.0
-    if isinstance(score, bool) or not isinstance(score, (int, float)):
+    if type(score) not in (int, float) or not 0 <= cast(float, score) <= 1:
         return 0.0
-    return float(score)
+    return float(cast(float, score))
 
 
 def probe_gates(root: Path, raw: object, must_kinds: Collection[str]) -> list[GateFinding]:

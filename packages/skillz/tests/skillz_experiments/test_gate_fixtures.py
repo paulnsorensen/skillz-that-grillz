@@ -1,6 +1,7 @@
 """`validate` runs each gate file on its pass and fail fixtures and on a null trace (gh-657)."""
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
@@ -96,6 +97,24 @@ def test_a_fail_fixture_with_a_score_above_zero_is_permissive(tmp_path: Path) ->
     assert not [item for item in _gate_findings(target) if item["code"] == "gate-permissive"]
 
 
+@pytest.mark.ac("gh-657:AC-2")
+def test_a_fail_fixture_score_outside_zero_to_one_is_invalid_and_not_permissive(tmp_path: Path) -> None:
+    target = _task(tmp_path, "print('{\"score\": 2}')\n")
+    _fixture(target, "fail", answer="ok")
+    assert [item["code"] for item in _gate_findings(target)] == ["gate-fixture-missing"]
+
+
+@pytest.mark.ac("gh-657:AC-1")
+def test_a_fixture_file_outside_trace_and_output_sits_at_the_workspace_root(tmp_path: Path) -> None:
+    source = ("import json\nimport pathlib\n\nfacts = pathlib.Path('facts.txt')\n"
+              + "print(json.dumps({'score': 1 if facts.is_file() and facts.read_text() == 'ok' else 0}))\n")
+    target = _task(tmp_path, source)
+    _fixture(target, "pass", answer="ok")
+    assert [item["code"] for item in _passing(target)] == ["gate-unpassable"]
+    _ = (target / "evals/gates/journey.fixtures/pass/facts.txt").write_text("ok", encoding="utf-8")
+    assert _passing(target) == []
+
+
 @pytest.mark.ac("gh-657:AC-1")
 @pytest.mark.parametrize("source", ["print('not json')\n", "import sys\nprint('{\"score\": 1}')\nsys.exit(1)\n",
                                     "print('{\"score\": true}')\n"])
@@ -153,7 +172,7 @@ def test_a_gate_runs_isolated_in_a_temporary_directory(tmp_path: Path) -> None:
     target = _task(tmp_path, source)
     _fixture(target, "pass", answer="ok")
     assert [item for item in _gate_findings(target) if item["severity"] == "error"] == []
-    assert not list(Path.cwd().glob("marker"))
+    assert not list(Path.cwd().glob("marker")) and not list(tmp_path.rglob("marker"))
 
 
 @pytest.mark.ac("gh-657:AC-5")
@@ -304,3 +323,36 @@ def test_a_fixture_probe_that_raises_is_reported_as_unsafe(tmp_path: Path, monke
 def test_the_null_trace_is_one_finished_empty_turn() -> None:
     events = [cast(dict[str, object], json.loads(line)) for line in _gate_files.NULL_TRACE.splitlines()]
     assert [event["type"] for event in events] == ["assistant", "result"]
+
+
+@pytest.mark.ac("gh-657:AC-5")
+def test_a_journey_gate_that_outlives_the_timeout_on_the_null_trace_is_reported(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_gate_files, "FIXTURE_SECONDS", 0.5)
+    found = [item for item in _gate_findings(_journey(tmp_path, gate="import time\ntime.sleep(30)\n"))
+             if item["code"] == "gate-fixture-timeout"]
+    assert len(found) == 1 and "a null trace" in str(found[0]["message"])
+
+
+@pytest.mark.ac("gh-657:AC-6")
+def test_a_null_trace_probe_that_raises_does_not_crash_validate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise OSError("no process slot")
+
+    target = _journey(tmp_path, receipts=False)
+    monkeypatch.setattr(subprocess, "Popen", refuse)
+    assert [item["code"] for item in _gate_findings(target)] == ["gate-fixture-missing"]
+
+
+@pytest.mark.ac("gh-657:AC-5")
+def test_the_file_size_limit_stops_a_write_past_the_fixture_byte_cap(tmp_path: Path) -> None:
+    script = ("import resource, signal, sys\n"
+              + "from skillz_experiments._gate_files import FIXTURE_BYTES, _limit_file_size\n"
+              + "signal.signal(signal.SIGXFSZ, signal.SIG_IGN)\n_limit_file_size()\n"
+              + "assert resource.getrlimit(resource.RLIMIT_FSIZE) == (FIXTURE_BYTES, FIXTURE_BYTES)\n"
+              + "out = open(sys.argv[1], 'wb', buffering=0)\n_ = out.write(b'x' * (FIXTURE_BYTES + 1))\n"
+              + "try:\n    _ = out.write(b'x')\n"
+              + "except OSError as error:\n    print(error.errno)\n")
+    done = subprocess.run([sys.executable, "-c", script, str(tmp_path / "big")], capture_output=True, text=True, check=False)
+    assert (done.returncode, done.stdout.strip()) == (0, str(errno.EFBIG)), done.stderr
+    assert (tmp_path / "big").stat().st_size == _gate_files.FIXTURE_BYTES
