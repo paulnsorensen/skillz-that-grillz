@@ -189,7 +189,7 @@ def _nothing(target: Path) -> None:
 @pytest.mark.parametrize(("prepare", "path", "fragment"), [
     (_symlinked, "evals/files/link.md", "cannot be read"),
     (_symlinked_dir, "evals/files/dir/a.md", "cannot be read"),
-    (_binary, "evals/files/bin.md", "must be UTF-8 text"),
+    (_binary, "evals/files/bin.md", "must be UTF-8 text or a png, jpg, webp, or gif image"),
     (_nothing, "../outside.md", "unsafe relative path"),
     (_nothing, "/etc/hostname", "unsafe relative path"),
     (_nothing, "evals", "must be under evals/files/"),

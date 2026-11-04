@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from typing import Literal, cast
 
-from skillz_experiments._cases import Audit, Case, Citation, citation, digest, loads_untrusted, mapping, severity, string
+from skillz_experiments._cases import Audit, Case, Citation, citation, digest, loads_untrusted, mapping, severity, string, text_files
 
 RUBRIC = (
     "Match findings to labels only when they describe the same defect in the original fixture. "
@@ -68,7 +68,7 @@ def prompt(case: Case, findings: tuple[Finding, ...]) -> str:
     if not isinstance(case.expected, Audit):
         raise ValueError("audit labels missing")
     return RUBRIC + "\nUNTRUSTED DATA (JSON):\n" + json.dumps({
-        "files": case.files,
+        "files": text_files(case.files),
         "labels": [{"id": label.id, "severity": label.severity, "explanation": label.explanation,
                     "evidence": [asdict(item) for item in label.evidence]} for label in case.expected.labels],
         "findings": [{"description": finding.description, "severity": finding.severity,

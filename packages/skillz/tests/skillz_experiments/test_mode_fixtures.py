@@ -245,10 +245,14 @@ def test_two_runs_give_identical_results() -> None:
 # add and improve: audit-facts and the inspector are the deterministic checker
 
 
+def _files(case: Case) -> dict[str, str]:
+    return cast(dict[str, str], dict(case.files))
+
+
 def _defects(tmp_path: Path, case: Case, output: Tree, skill: str) -> list[str]:
     root = tmp_path / "repo"
     (root / ".git").mkdir(parents=True)
-    for name, text in {**case.files, **output}.items():
+    for name, text in {**_files(case), **output}.items():
         target = root / name
         target.parent.mkdir(parents=True, exist_ok=True)
         _ = target.write_text(text, encoding="utf-8")
@@ -360,11 +364,11 @@ def _content_id(tmp_path: Path, files: dict[str, str]) -> str:
 def test_propose_cases_pin_the_package_content_id_and_the_audit_state(tmp_path: Path, name: str) -> None:
     case = PUBLISHED_CASES[name]
     expected = mapping(case.expected)
-    current = _content_id(tmp_path, case.files)
+    current = _content_id(tmp_path, _files(case))
     assert case.kind == "improve-propose" and expected["content_id"] == current
     golden = _golden(PUBLISHED, name)
     assert list(golden) == ["report.md"] and f"Content id: {current}" in golden["report.md"]
-    found = re.search(r"Content id: ([0-9a-f]{40})", case.files.get("audit.md", ""))
+    found = re.search(r"Content id: ([0-9a-f]{40})", _files(case).get("audit.md", ""))
     earlier = found[1] if found else None
     assert (earlier == current) == (expected["audit"] == "reused")
     if "stale_content_id" in expected:
@@ -374,7 +378,7 @@ def test_propose_cases_pin_the_package_content_id_and_the_audit_state(tmp_path: 
 def test_a_sidecar_edit_changes_the_content_id_and_makes_the_audit_stale(tmp_path: Path) -> None:
     case = PUBLISHED_CASES["mode-improve-stale"]
     sidecar = "skills/demo/agents/openai.yaml"
-    edited = {**case.files, sidecar: case.files[sidecar].replace("false", "true")}
+    edited = {**_files(case), sidecar: _files(case)[sidecar].replace("false", "true")}
     assert _content_id(tmp_path, edited) == mapping(case.expected)["stale_content_id"]
 
 
@@ -390,9 +394,9 @@ def test_a_deleted_package_file_fails_the_propose_grader() -> None:
 def test_propose_cases_declare_a_tool_that_only_usage_data_shows_unused(tmp_path: Path, name: str) -> None:
     case = PUBLISHED_CASES[name]
     tool = str(mapping(case.expected)["usage_finding"])
-    declared = re.search(r"^allowed-tools: (.+)$", case.files["skills/demo/SKILL.md"], re.M)
+    declared = re.search(r"^allowed-tools: (.+)$", _files(case)["skills/demo/SKILL.md"], re.M)
     assert declared is not None and tool in declared[1].split(", ")
-    evidence = case.files.get("usage-digest.md") or case.files["audit.md"]
+    evidence = _files(case).get("usage-digest.md") or _files(case)["audit.md"]
     assert re.search(rf"{tool} 0\b|0 {tool} calls", evidence)
     assert _defects(tmp_path, case, {}, "demo") == []
 
@@ -434,7 +438,7 @@ def _target_with_contract(tmp_path: Path, status: str) -> tuple[Path, dict[str, 
     case = PUBLISHED_CASES["mode-contract"]
     target = tmp_path / "demo"
     (target / "evals").mkdir(parents=True)
-    _ = (target / "SKILL.md").write_text(case.files["skills/demo/SKILL.md"], encoding="utf-8")
+    _ = (target / "SKILL.md").write_text(_files(case)["skills/demo/SKILL.md"], encoding="utf-8")
     draft = mapping(cast(object, json.loads(_golden(PUBLISHED, "mode-contract")["skills/demo/evals/autoimprove.json"])))
     document = draft | {"status": status}
     _ = (target / "evals/autoimprove.json").write_text(json.dumps(document), encoding="utf-8")
@@ -603,8 +607,8 @@ def test_every_fixture_kind_has_pinned_steps() -> None:
 
 def test_self_update_fixture_mirrors_the_real_reference_shape_and_starts_stale() -> None:
     case = SELF_UPDATE_CASES["self-update-stale-date"]
-    real, stale = LAYOUT.read_text(encoding="utf-8"), case.files["harness-layout.md"]
-    digest = mapping(cast(object, json.loads(case.files["digest.json"])))
+    real, stale = LAYOUT.read_text(encoding="utf-8"), _files(case)["harness-layout.md"]
+    digest = mapping(cast(object, json.loads(_files(case)["digest.json"])))
     for text in (real, stale):
         assert re.search(r"^Checked: \d{4}-\d{2}-\d{2}\.", text, re.M) and "\n## Sources\n" in text
         assert "\n## Rejected\n" in text

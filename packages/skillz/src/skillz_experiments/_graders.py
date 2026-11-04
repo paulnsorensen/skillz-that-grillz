@@ -28,7 +28,7 @@ from typing import Protocol, cast, runtime_checkable
 from skillz_experiments import _audit
 from skillz_experiments._candidate import make_workspace, stage_task
 from skillz_experiments._cases import (
-    JOURNEY_EXPECTED_FIELDS, Audit, Case, Criterion, case_criteria, loads_untrusted, mapping, relative,
+    JOURNEY_EXPECTED_FIELDS, Audit, Case, Criterion, case_criteria, image_type, loads_untrusted, mapping, relative, text_files,
 )
 from skillz_experiments._contract import Grader
 from skillz_experiments._redact import redact
@@ -62,7 +62,7 @@ def _utf8(data: bytes) -> bool:
 
 
 CAPTURE_TYPES: dict[str, Callable[[bytes], bool]] = {
-    ".png": lambda data: data.startswith(b"\x89PNG\r\n\x1a\n"), ".txt": _utf8}
+    ".png": lambda data: image_type(data) == "png", ".txt": _utf8}
 
 
 @dataclass(frozen=True)
@@ -293,7 +293,7 @@ def judge(transport: object, grader: Grader, case: Case, answer: object, files: 
     criteria = case_criteria(case.expected, case.identifier)
     ids = tuple(criterion.id for criterion in criteria)
     instruction = JUDGE_INSTRUCTION
-    data: dict[str, object] = {"request": case.request, "files": case.files, "answer": answer,
+    data: dict[str, object] = {"request": case.request, "files": text_files(case.files), "answer": answer,
                                "output_files": files or {}, "reference": case.expected}
     if journey:
         data |= journey

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from skillz_experiments._cases import CodedError, text_map
+from skillz_experiments._cases import CodedError, Fixture, text_map
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, share_files, write, write_bytes
 
 
@@ -74,7 +74,7 @@ def test_write_bytes_returns_true_when_the_directory_fsync_fails_after_the_repla
 ])
 def test_fixture_selection_uses_saved_serialized_bytes_not_first_value_or_frequency(values: list[str], selected: str) -> None:
     for ordered in (values, list(reversed(values))):
-        fixtures: dict[str, str] = {}
+        fixtures: dict[str, Fixture] = {}
         shared = share_files([{"files": {"input.txt": value}} for value in ordered], fixtures)
         assert fixtures == {"input.txt": selected}
         assert [text_map(case["files"], fixtures) for case in shared] == [{"input.txt": value} for value in ordered]
@@ -82,7 +82,7 @@ def test_fixture_selection_uses_saved_serialized_bytes_not_first_value_or_freque
 
 @pytest.mark.ac("gh-580:AC-2")
 def test_later_sharing_does_not_rebind_existing_fixture_references() -> None:
-    fixtures: dict[str, str] = {}
+    fixtures: dict[str, Fixture] = {}
     first = share_files([{"files": {"input.txt": "first"}}], fixtures)
     later = share_files([{"files": {"input.txt": "b" * 100}}] * 12, fixtures)
     assert fixtures == {"input.txt": "first"}
