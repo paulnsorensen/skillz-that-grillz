@@ -80,7 +80,7 @@ def _marks(data: dict[str, object], kind: str) -> list[str]:
 
 
 @pytest.mark.ac("gh-369:AC-7")
-def test_a_journey_only_run_on_the_staged_skill_scores_the_eighteen_journeys_and_stops_for_approval(
+def test_a_journey_only_run_on_the_staged_skill_scores_the_journeys_and_stops_for_approval(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = _staged(tmp_path)
     data = _first_stop(target, tmp_path, capsys, "--kind", "journey")
@@ -97,7 +97,7 @@ def test_a_default_run_on_the_staged_skill_scores_the_journeys_with_the_tasks(
     assert "scored" in _marks(data, "task") and "not scored" not in _marks(data, "task")
 
 
-def test_a_kit_run_scores_the_eighteen_journeys_under_the_kit_contract(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_a_kit_run_scores_the_journeys_under_the_kit_contract(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     done = subprocess.run([sys.executable, str(KIT), "stage", "--approve-contract"], env={**os.environ, "TMPDIR": str(tmp_path)},
                           capture_output=True, text=True, timeout=60, check=True)
     target = Path(next(line for line in done.stdout.splitlines() if line.startswith("target:")).split(maxsplit=1)[1])

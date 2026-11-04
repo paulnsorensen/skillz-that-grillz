@@ -91,17 +91,24 @@ def test_the_seed_puts_two_families_in_train_two_in_holdout_and_three_in_validat
 
 @pytest.mark.ac("kit-harder-journeys:AC-3")
 @pytest.mark.ac("gh-571-calibrate:AC-1")
-def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two_repeats(tmp_path: Path) -> None:
+def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two_repeats(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract(tmp_path)
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    # Each of the 6 validation journeys runs `VALIDATION_REPEATS` times per search candidate (gh-500).
+    # Each of the 9 validation journeys runs `VALIDATION_REPEATS` times per search candidate (gh-500).
     assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (994, 73, 210, 48, 258)
     assert plan.reserve == plan.holdout_calls + plan.replay_calls
     # The seconds are 994 calls at 30 seconds over 2 concurrent calls, plus the sandbox time.
     assert plan.sized.seconds == math.ceil(994 * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS) + plan.sandbox_total == 16020
     assert plan.sized.calls <= 1000 and plan.sized.seconds <= 28800  # ADR-010 journey ceiling
+    # The call cap binds: with room for one more metric call, the plan's own fit logic grows the search.
+
+    def one_more_metric_call(_journey: bool) -> tuple[int, int]:
+        return 1000 + 10, 28800
+
+    monkeypatch.setattr("skillz_experiments.run._plan.ceilings", one_more_metric_call)
+    assert size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions()).metric_calls > plan.metric_calls
 
 
 SEED_EVALUATIONS = 9
