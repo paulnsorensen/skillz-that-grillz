@@ -16,8 +16,6 @@ from skillz_experiments._budget import (
     Budget,
     Estimate,
     ceilings,
-    search_end,
-    with_unspent,
 )
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._records import read
@@ -25,6 +23,7 @@ from skillz_experiments.run import Stop, export, run, summary
 from skillz_experiments.run._edit_plan import reflection_time
 from skillz_experiments.run._open import _cap as recorded_cap  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.run._sizing import raised_cap
+from skillz_experiments.run._unspent import search_end, with_unspent
 from test_run_search import MODEL, Search
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -138,7 +137,10 @@ def test_a_finished_run_records_its_unspent_reserve_and_the_summary_shows_it(
     record = read(out / "run.json")
     unspent = cast(dict[str, object], cast(dict[str, object], record["budget"])["unspent"])
     reserve = cast(int, cast(dict[str, object], record["budget"])["reserve"])
-    assert type(unspent["calls"]) is int and 0 <= unspent["calls"] <= reserve
+    ended = cast(dict[str, int], record["search_end"])
+    spent = cast(int, record["calls"]) - ended["calls"] - (cast(int, record["preflight_calls"]) - ended["preflight_calls"])
+    assert type(unspent["calls"]) is int and unspent["calls"] == reserve - spent
+    assert "search_end" not in cast(dict[str, object], summary(record)["search"])
     assert isinstance(unspent["seconds"], (int, float)) and unspent["seconds"] >= 0
     assert summary(record)["budget"] == record["budget"]
     _ = export(out, tmp_path / "exported")
@@ -146,29 +148,69 @@ def test_a_finished_run_records_its_unspent_reserve_and_the_summary_shows_it(
     assert exported["unspent"] == unspent
 
 
+def _finished(ended: dict[str, float | int], **extra: object) -> dict[str, object]:
+    return {"budget": {"reserve_seconds": 600}, "search_end": ended, **extra}
+
+
+def _unspent(record: dict[str, object], budget: Budget) -> dict[str, object]:
+    return cast(dict[str, object], with_unspent(record, budget)["unspent"])
+
+
 @pytest.mark.ac("gh-588:AC-3")
 def test_a_search_that_under_spends_does_not_count_as_unspent_reserve() -> None:
     budget = Budget(100, 1000.0, 20, 10, approved=True)
-    ended = search_end(budget)
+    ended = search_end(budget, {})
     assert ended["calls"] == 10
     for _ in range(20):
         budget.claim(holdout=True)
     budget.started -= 700
-    recorded: dict[str, object] = {"reserve_seconds": 600}
-    unspent = cast(dict[str, object], with_unspent(recorded, budget, {"ended": ended})["unspent"])
-    assert unspent == {"calls": 0, "seconds": 0.0}
+    assert _unspent(_finished(ended), budget) == {"calls": 0, "seconds": 0.0}
 
 
 @pytest.mark.ac("gh-588:AC-3")
 def test_a_partly_used_reserve_reports_what_the_gate_and_replay_left() -> None:
     budget = Budget(100, 1000.0, 20, 10, approved=True)
-    ended = search_end(budget)
+    ended = search_end(budget, {})
     for _ in range(5):
         budget.claim(holdout=True)
     budget.started -= 200
-    unspent = cast(dict[str, object], with_unspent({"reserve_seconds": 600}, budget, {"ended": ended})["unspent"])
+    unspent = _unspent(_finished(ended), budget)
     assert unspent["calls"] == 15
     assert unspent["seconds"] == pytest.approx(400.0, abs=2.0)
+
+
+@pytest.mark.ac("gh-588:AC-3")
+def test_the_preflight_that_a_resume_re_runs_does_not_spend_the_reserve() -> None:
+    budget = Budget(100, 1000.0, 20, 10, approved=True)
+    ended = search_end(budget, {"preflight_calls": 2})
+    for _ in range(5):
+        budget.claim(holdout=True)
+    for _ in range(2):
+        budget.claim()
+    assert _unspent(_finished(ended, preflight_calls=4), budget)["calls"] == 15
+
+
+@pytest.mark.ac("gh-588:AC-3")
+def test_the_unspent_calls_stay_within_the_calls_the_run_may_still_make() -> None:
+    budget = Budget(25, 1000.0, 20, 10, approved=True)
+    ended = search_end(budget, {})
+    budget.calls = 20
+    assert _unspent(_finished(ended), budget)["calls"] == 5
+
+
+@pytest.mark.ac("gh-588:AC-3")
+@pytest.mark.parametrize("ended", [None, {"calls": 11, "seconds_left": 5.0}, {"calls": -1, "seconds_left": 5.0},
+                                   {"calls": 10, "seconds_left": 1001.0}, {"calls": 10, "seconds_left": -1.0},
+                                   {"calls": 10, "seconds_left": float("inf")}, {"calls": 10, "seconds_left": float("nan")},
+                                   {"calls": 10.0, "seconds_left": 5.0}, {"calls": True, "seconds_left": 5.0}])
+def test_a_missing_or_out_of_range_search_end_is_a_tampered_record(ended: dict[str, object] | None) -> None:
+    budget = Budget(100, 1000.0, 20, 10, approved=True)
+    record: dict[str, object] = {"budget": {"reserve_seconds": 600}}
+    if ended is not None:
+        record["search_end"] = ended
+    with pytest.raises(CodedError) as stopped:
+        _ = with_unspent(record, budget)
+    assert stopped.value.code == "run-record-tampered"
 
 
 @pytest.mark.ac("gh-588:AC-1")

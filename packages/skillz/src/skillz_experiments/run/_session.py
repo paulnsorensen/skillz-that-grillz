@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast, final
 
-from skillz_experiments._budget import SEARCH_ROLES, Budget, BudgetExhausted, CallTimeout, search_end, with_unspent
+from skillz_experiments._budget import SEARCH_ROLES, Budget, BudgetExhausted, CallTimeout
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
@@ -31,6 +31,7 @@ from skillz_experiments.run._replay_phase import run_replay
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import Factory, HarnessName, Provider
 from skillz_experiments.run._stop import Stop, baseline_rejected, check_timeout, preflight_timeout
+from skillz_experiments.run._unspent import search_end, with_unspent
 from skillz_experiments.search import Edit
 from skillz_experiments.search import journal as build_journal
 from skillz_experiments.search import search as pareto_search
@@ -325,22 +326,21 @@ class Session:
         with self.lock:
             rejections = {rule: len(keys) for rule, keys in sorted(searching.leak_rejections.items())}
         recorded = self.record.get("search")
-        base = cast(dict[str, object], recorded) if isinstance(recorded, dict) else {}
-        self.record["search"] = base | {
+        self.record["search"] = cast(dict[str, object], recorded if isinstance(recorded, dict) else {}) | {
             "reason": reason,
             "stop_trigger": trigger,
             "retained_seed": winner.identity == self.seed.identity,
             "leakage_rejections": rejections, **search_counts(scored),
             "proposal_over_budget": searching.over_budget(),
             "attempts": searching.attempts(),
-            "text_dropped": searching.text_dropped(), "ended": search_end(self.budget),
+            "text_dropped": searching.text_dropped(),
             "journal": build_journal(self.outcomes),
         }
         if time_stop:
             with self.lock:
                 seconds = {role: round(self.budget.seconds_by_role.get(role, 0.0), 3) for role in SEARCH_ROLES}
             cast(dict[str, object], self.record["search"])["seconds_by_role"] = seconds
-        self.record["phase"] = "searched"
+        self.record |= {"phase": "searched", "search_end": search_end(self.budget, self.record)}
         self.checkpoint()
 
     def gate(self) -> None:
@@ -352,5 +352,5 @@ class Session:
         run_replay(self, self._built, patches)
 
     def finish(self) -> None:
-        self.record |= {"phase": "complete", "budget": with_unspent(mapping(field(self.record, "budget")), self.budget, self.record.get("search"))}
+        self.record |= {"phase": "complete", "budget": with_unspent(self.record, self.budget)}
         self.checkpoint()

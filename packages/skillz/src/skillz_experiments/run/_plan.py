@@ -168,9 +168,9 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     sandbox_gate = math.ceil(holdout_evaluations * sandbox_seconds / MAX_CONCURRENT_CALLS)
     sized, total = size(metric), sandbox_total(metric)
     return Plan(metric_calls=metric, reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls=holdout_calls,
-                 retry_calls=retry_calls, sized=Estimate(sized.calls, sized.seconds + total, journey, cap),
-                 replay_calls=holdout_pass, sandbox_gate=sandbox_gate, sandbox_total=total, sandbox_seconds=sandbox_seconds,
-                 headroom_calls=headroom, headroom_outcomes=headroom_outcomes, reproduce_calls=reproduce)
+                retry_calls=retry_calls, sized=Estimate(sized.calls, sized.seconds + total, journey, cap),
+                replay_calls=holdout_pass, sandbox_gate=sandbox_gate, sandbox_total=total, sandbox_seconds=sandbox_seconds,
+                headroom_calls=headroom, headroom_outcomes=headroom_outcomes, reproduce_calls=reproduce)
 
 
 def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions, cap: int = 0) -> Plan:

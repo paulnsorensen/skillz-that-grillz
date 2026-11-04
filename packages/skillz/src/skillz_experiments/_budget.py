@@ -6,7 +6,6 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import KW_ONLY, dataclass, field
-from typing import cast
 
 from skillz_experiments._cases import CodedError
 
@@ -270,29 +269,3 @@ def approve(sized: Estimate, approved_calls: int | None, *, reserve: int, reserv
     return Budget(sized.calls, max_seconds, min(reserve, sized.calls), approved=True,
                   reserve_seconds=min(reserve_time, max_seconds), journey=sized.journey, cap=sized.cap)
 
-
-def search_end(budget: Budget) -> dict[str, float | int]:
-    """Return the calls spent and the seconds left as the search ends. `with_unspent` measures the reserve against it."""
-    return {"calls": budget.calls, "seconds_left": round(budget.seconds - (time.monotonic() - budget.started), 3)}
-
-
-def _number(value: object, default: float) -> float:
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default
-
-
-def with_unspent(recorded: dict[str, object], budget: Budget, search: object = None) -> dict[str, object]:
-    """Return the recorded budget block with `unspent`: the reserve calls and seconds that the run did not spend.
-
-    The search never spends the reserve. The gate and the replay do. `search` is the recorded search block. Its
-    `ended` entry is the `search_end` snapshot, so a search that under-spends does not count as unspent reserve:
-    only the calls and seconds since the search ended count against the reserve. A run without a snapshot counts
-    nothing as spent.
-    """
-    snapshot = cast("dict[str, object]", search).get("ended") if isinstance(search, dict) else None
-    ended = cast("dict[str, object]", snapshot) if isinstance(snapshot, dict) else {}
-    held = _number(recorded.get("reserve_seconds"), 0.0)
-    left = max(0.0, budget.seconds - (time.monotonic() - budget.started))
-    used_calls = max(0, budget.calls - int(_number(ended.get("calls"), budget.calls)))
-    used_seconds = max(0.0, max(0.0, _number(ended.get("seconds_left"), left)) - left)
-    return {**recorded, "unspent": {"calls": max(0, budget.reserve - used_calls),
-                                    "seconds": round(max(0.0, held - used_seconds), 3)}}
