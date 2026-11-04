@@ -1071,10 +1071,11 @@ A command score below 1 records `gate_diagnostic` on the outcome. It holds a lea
 the redacted `stderr:` tail, each at most 1,000 characters from the end. The lead names the verdict: `the grader argv exits with
 code N`, `the gate scored S` for a clean exit 0, or a note that stdout holds no valid score. A grader that reaches the sandbox
 time limit says so on stderr.
-The outcome also records `gate_fault` for a gate that gives no verdict. The value is `timeout` when the gate reaches the sandbox
-time limit. The value is `invalid-output` when the gate exits 0 with stdout that is not a valid score.
+The outcome also records `gate_fault` for a gate that gives no verdict. The value is `timeout` only when the sandbox time limit
+ends the gate; a gate that exits 124 itself has a verdict and no fault. The value is `invalid-output` when the gate exits 0 with
+stdout that is not a valid score.
 Any other result, including a non-zero exit, has no `gate_fault`.
-The export shows `gate_diagnostic` (redacted) and `gate_fault` on each outcome. This field changes the scoring digest, so earlier runs are a different cohort.
+The export shows `gate_diagnostic` (redacted) and `gate_fault` on each outcome. The `_graders.py` change alters the scoring digest, so earlier runs are a different cohort.
 
 Each scored search outcome gives GEPA a feedback record with `task_correct`, `request`, `case_id`, and `grader_scores`.
 The `request` holds `[harness]` in place of each harness token. The `unmet` texts and reasons and `gate_feedback` hold it too.

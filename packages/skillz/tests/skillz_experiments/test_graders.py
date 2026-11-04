@@ -307,7 +307,9 @@ def test_a_failed_command_gate_records_its_redacted_stderr_tail_and_both_feedbac
     recorded = cast(dict[str, object], read(tmp_path / "run.json")["outcome"])
     for outcome in (result, recorded):
         gate = cast(str, feedback_for(outcome, case, HarnessText(), candidate)[1]["gate_feedback"])
-        assert gate == diagnostic[-1000:] and "GATESECRET" not in gate and len(gate) <= 1000
+        assert gate.startswith("the grader argv exits with code 1\n") and "GATESECRET" not in gate and len(gate) <= 1000
+        kept = gate.split("\nstderr: ", 1)[1]
+        assert kept.endswith("x [redacted]") and stderr.endswith(kept) and 0 < len(kept) < len(stderr)
 
 
 SPLIT_SECRETS = {

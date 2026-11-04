@@ -192,25 +192,25 @@ def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
     replace a fixture. The argv runs as given. The workspace never holds `expected` or the
     rubric. The score is 0 for a non-zero exit code or for stdout that is not a JSON object with a
     numeric `score` from 0 to 1. The second value is a verdict lead line plus the redacted `stdout:` and `stderr:` tails.
-    The third is the gate fault: `timeout`, `invalid-output` (exit 0, no valid score), else None.
+    The third is the gate fault: `timeout` (the sandbox time limit only), `invalid-output` (exit 0, no valid score), else None.
     """
     require_sandbox(task)
     with _grading_workspace(case, files, "command", trace) as workspace:
-        code, stdout, stderr = _run(task, workspace, argv)
+        code, stdout, stderr, timed_out = _run(task, workspace, argv)
     score, valid = _command_score(code, stdout)
-    lead = f"the grader argv exits with code {code}" if code else f"the gate scored {score:g}" if valid else _INVALID_STDOUT
+    lead = f"the grader argv exits with code {code}" if code else f"the gate scored {str(score).removesuffix('.0')}" if valid else _INVALID_STDOUT
     tails = [f"{name}: {tail}" for name, text in (("stdout", stdout), ("stderr", stderr))
              if (tail := redact(text).strip()[-DIAGNOSTIC_LIMIT:])]
-    fault = "timeout" if code == 124 else "invalid-output" if code == 0 and not valid else None
+    fault = "timeout" if timed_out else "invalid-output" if code == 0 and not valid else None
     return score, "\n".join([lead, *tails]), fault
 
 
-def _run(task: object, workspace: Path, argv: tuple[str, ...]) -> tuple[int, str, str]:
-    """Run a grader argv in the task sandbox. A run that reaches the sandbox time limit gives exit code 124."""
+def _run(task: object, workspace: Path, argv: tuple[str, ...]) -> tuple[int, str, str, bool]:
+    """Run a grader argv in the task sandbox. A run that reaches the sandbox time limit gives exit code 124 and True."""
     try:
-        return cast(Sandbox, task).sandbox(workspace, list(argv))
+        return (*cast(Sandbox, task).sandbox(workspace, list(argv)), False)
     except SandboxTimeout:
-        return 124, "", "the grader argv reached the sandbox time limit"
+        return 124, "", "the grader argv reached the sandbox time limit", True
 
 
 def capture(task: object, argv: tuple[str, ...], case: Case, files: dict[str, str] | None) -> dict[str, bytes]:
@@ -222,7 +222,7 @@ def capture(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
     require_sandbox(task)
     with _grading_workspace(case, files, "capture") as workspace:
         (workspace / CAPTURE_DIRECTORY).mkdir()
-        code, _stdout, _stderr = _run(task, workspace, argv)
+        code, *_ = _run(task, workspace, argv)
         if code != 0:
             raise CaptureFailed(f"the capture argv exits with code {code}")
         return _captured(workspace / CAPTURE_DIRECTORY)

@@ -8,6 +8,7 @@ from skillz_experiments._redact import redact
 
 
 def export_outcome(item: dict[str, object]) -> dict[str, object]:
+    """Return the allowlist of outcome fields that leave run.json, with `gate_diagnostic` and the criteria reasons redacted."""
     allowed = {"arm", "split", "case_id", "repeat", "score", "status", "reason", "loaded", "helper_executed", "candidate_hash",
                "case_hash", "latency_seconds", "judge_latency_seconds", "evidence_valid", "matched", "false_positives",
                "false_negatives", "precision", "recall", "detection_f1", "severity_accuracy", "actionability_rate", "scores",

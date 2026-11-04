@@ -9,12 +9,12 @@ from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
 from typing import TypeVar, cast
 
 from skillz_experiments._budget import CallTimeout
-from skillz_experiments._graders import DIAGNOSTIC_LIMIT
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import MET_LEVEL, Case, CodedError, Criterion, case_criteria
 from skillz_experiments._redact import redact
 from skillz_experiments.evaluation import task_tokens
 from skillz_experiments.gate import close
+from skillz_experiments.run._gate_feedback import gate_feedback
 from skillz_experiments.search import complete_means, is_reflection, is_search_validation, unit_score, validation_complete, HarnessText
 
 # The search stops with `search-faulted` when at least this many search evaluations finished and more than half failed,
@@ -172,7 +172,7 @@ def feedback_for(result: dict[str, object], case: Case, harness: HarnessText,
         feedback["edit_hint"] = _edit_hint([criterion.text for criterion, _level, _reason in unmet], candidate)
     diagnostic = result.get("gate_diagnostic")
     if isinstance(diagnostic, str):
-        feedback["gate_feedback"] = harness.mask(diagnostic)[-DIAGNOSTIC_LIMIT:]
+        feedback["gate_feedback"] = gate_feedback(diagnostic, harness)
     return score, feedback
 
 
