@@ -8,10 +8,12 @@ from typing import cast, final
 import pytest
 from typing_extensions import override
 
+from skillz_experiments._graders import DIAGNOSTIC_LIMIT
 from skillz_experiments._records import read, write
 from skillz_experiments._runtime import SandboxTimeout
 from skillz_experiments.evaluation import CheckMemo
 from skillz_experiments.run._export import export
+from skillz_experiments.run._gate_feedback import gate_feedback
 from skillz_experiments.run._outcomes import feedback_for
 from skillz_experiments.search import HarnessText
 from test_graders import FakeJudge, SandboxedTask, case_and_candidate, contract, harness
@@ -89,6 +91,20 @@ def test_the_feedback_keeps_the_lead_line_and_a_share_of_each_tail(tmp_path: Pat
     assert lead == "the grader argv exits with code 1" and len(gate) <= 1000
     assert stdout.startswith("stdout: o") and set(stdout[len("stdout: "):]) == {"o"}
     assert stderr.startswith("stderr: e") and set(stderr[len("stderr: "):]) == {"e"}
+
+
+@pytest.mark.ac("autoimprove-seed-signals:AC-7")
+@pytest.mark.parametrize("stdout, stderr, lower", [
+    ("o\nstdout: x\nstderr: y\n" * 100, "e" * 1500, 0),
+    ("abc", "e" * 1000, 600),
+], ids=["labelled-lines-in-the-output", "short-stdout-gives-its-space-to-stderr"])
+def test_the_feedback_stays_within_the_limit_and_a_short_tail_gives_its_space_away(stdout: str, stderr: str, lower: int) -> None:
+    gate = gate_feedback(f"the grader argv exits with code 1\nstdout: {stdout}\nstderr: {stderr}", HarnessText())
+    kept = gate.split("\nstderr: ")[-1]
+    assert len(gate) <= DIAGNOSTIC_LIMIT and gate.startswith("the grader argv exits with code 1\nstdout: ")
+    assert set(kept) == {"e"} and len(kept) >= lower
+    if lower:
+        assert "\nstdout: abc\n" in gate
 
 
 @pytest.mark.ac("autoimprove-seed-signals:AC-8")

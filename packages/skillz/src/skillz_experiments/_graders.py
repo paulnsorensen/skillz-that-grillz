@@ -188,17 +188,17 @@ def command(task: object, argv: tuple[str, ...], case: Case, files: dict[str, st
             trace: list[dict[str, object]] | None = None) -> tuple[float, str, str | None]:
     """Run the grader argv in a fresh workspace that holds the fixtures and the task output.
 
-    The case files stay at the workspace root. The task output goes under `output/`, so it cannot
-    replace a fixture. The argv runs as given. The workspace never holds `expected` or the
-    rubric. The score is 0 for a non-zero exit code or for stdout that is not a JSON object with a
-    numeric `score` from 0 to 1. The second value is a verdict lead line plus the redacted `stdout:` and `stderr:` tails.
-    The third is the gate fault: `timeout` (the sandbox time limit only), `invalid-output` (exit 0, no valid score), else None.
+    The case files stay at the workspace root; the task output goes under `output/`, so it cannot replace a fixture.
+    The argv runs as given. The workspace never holds `expected` or the rubric. The score is 0 for a non-zero exit
+    code or for stdout that is not a JSON object with a numeric `score` from 0 to 1. The second value is a verdict lead
+    line plus the redacted `stdout:` and `stderr:` tails. The third is the gate fault: `timeout` (sandbox limit only), `invalid-output` (exit 0, no valid score), else None.
     """
     require_sandbox(task)
     with _grading_workspace(case, files, "command", trace) as workspace:
         code, stdout, stderr, timed_out = _run(task, workspace, argv)
     score, valid = _command_score(code, stdout)
-    lead = f"the grader argv exits with code {code}" if code else f"the gate scored {str(score).removesuffix('.0')}" if valid else _INVALID_STDOUT
+    scored = f"the gate scored {str(score).removesuffix('.0')}" if valid else _INVALID_STDOUT
+    lead = f"the grader argv exits with code {code}" if code else scored
     tails = [f"{name}: {tail}" for name, text in (("stdout", stdout), ("stderr", stderr))
              if (tail := redact(text).strip()[-DIAGNOSTIC_LIMIT:])]
     fault = "timeout" if timed_out else "invalid-output" if code == 0 and not valid else None
