@@ -124,7 +124,32 @@
       "files": {
         "type": "object",
         "additionalProperties": {
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "required": [
+                "base64",
+                "type"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "base64": {
+                  "type": "string"
+                },
+                "type": {
+                  "enum": [
+                    "png",
+                    "jpg",
+                    "webp",
+                    "gif"
+                  ]
+                }
+              }
+            }
+          ]
         },
         "description": "Inline files: path to text."
       },
