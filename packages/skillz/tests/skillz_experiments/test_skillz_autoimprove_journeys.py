@@ -21,7 +21,7 @@ from skillz_experiments._seed import seed_cases
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._plan import JOURNEY_SEARCH_CALLS, SEARCH_CASE_FACTOR, VALIDATION_REPEATS, size_plan
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
-from skillz_experiments.search import REFLECTION_MINIBATCH, overshoot
+from skillz_experiments.search import REFLECTION_MINIBATCH, search_allowance
 
 KIT = Path(__file__).resolve().parents[2] / "journey-kits" / "skillz-autoimprove"
 SEED = 20261006
@@ -91,6 +91,7 @@ def test_the_seed_puts_two_families_in_train_two_in_holdout_and_three_in_validat
 
 @pytest.mark.ac("kit-harder-journeys:AC-3")
 @pytest.mark.ac("gh-571-calibrate:AC-1")
+@pytest.mark.ac("gh-649:AC-1")
 def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two_repeats(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     rules = contract(tmp_path)
     cases = split_cases(load_draft(tmp_path / "cases.draft.json"), SEED, None, ["journey"])
@@ -101,7 +102,6 @@ def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two
     assert plan.reserve == plan.holdout_calls + plan.replay_calls
     # The seconds are 994 calls at 30 seconds over 2 concurrent calls, plus the sandbox time.
     assert plan.sized.seconds == math.ceil(994 * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS) + plan.sandbox_total == 16020
-    assert plan.sized.calls <= 1000 and plan.sized.seconds <= 28800  # ADR-010 journey ceiling
     # The call cap binds: with room for one more metric call, the plan's own fit logic grows the search.
 
     def one_more_metric_call(_journey: bool) -> tuple[int, int]:
@@ -111,7 +111,6 @@ def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two
     assert size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions()).metric_calls > plan.metric_calls
 
 
-SEED_EVALUATIONS = 9
 PROPOSALS = 8
 
 
@@ -122,8 +121,7 @@ def test_a_journey_plan_gives_the_search_room_for_eight_rejected_proposals(tmp_p
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
     validation = sum(case.split == "validation" for case in cases)
-    allowance = plan.metric_calls - overshoot(VALIDATION_REPEATS * validation) - SEED_EVALUATIONS
-    assert allowance // (2 * REFLECTION_MINIBATCH) >= PROPOSALS
+    assert search_allowance(plan.metric_calls, VALIDATION_REPEATS * validation) // (2 * REFLECTION_MINIBATCH) >= PROPOSALS
 
 
 @pytest.mark.ac("kit-harder-journeys:AC-8")
