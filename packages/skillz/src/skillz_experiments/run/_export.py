@@ -128,7 +128,7 @@ def summary(record: dict[str, object], out: Path | None = None) -> dict[str, obj
     keys = ("schema_version", "phase", "calls", "retries", "calls_by_role", "seconds_by_role", "model", "adapter", "edit",
             "codex_version", "harness", "judge",
             "gate", "search", "replay", "estimate", "contract_hash", "contract_source", "claude_options", "compatibility",
-            "statistics", "headroom")
+            "statistics", "headroom", "budget")
     result = {key: record.get(key) for key in keys}
     result["search"] = _export_search(record.get("search"))
     replay = record.get("replay")

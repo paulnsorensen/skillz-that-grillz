@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast, final
 
-from skillz_experiments._budget import SEARCH_ROLES, Budget, BudgetExhausted, CallTimeout
+from skillz_experiments._budget import SEARCH_ROLES, Budget, BudgetExhausted, CallTimeout, with_unspent
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
@@ -352,5 +352,5 @@ class Session:
         run_replay(self, self._built, patches)
 
     def finish(self) -> None:
-        self.record["phase"] = "complete"
+        self.record |= {"phase": "complete", "budget": with_unspent(mapping(field(self.record, "budget")), self.budget)}
         self.checkpoint()

@@ -13,10 +13,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import cast, get_args
 
-from skillz_experiments._budget import (
-    BudgetUnapproved,
-    approve,
-)
+from skillz_experiments._budget import BudgetUnapproved, approve
 from skillz_experiments._candidate import NEW_CLI, Candidate, store_frozen
 from skillz_experiments._cases import CodedError, Split, digest, load_cases
 from skillz_experiments._intake import (
@@ -48,7 +45,8 @@ from skillz_experiments.harness import (
 from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
 from skillz_experiments.run._edit_plan import ReflectionNotes, seed_or_prose
-from skillz_experiments.run._plan import plan_estimate, scored_kinds, size_plan
+from skillz_experiments.run._plan import plan_estimate, scored_kinds
+from skillz_experiments.run._sizing import Sizer, raised_cap
 from skillz_experiments.run._resume import (
     check_resume,
     check_statistics,
@@ -79,7 +77,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
              options: ClaudeOptions, configuration: Configuration | None = None,
              statistics_given: Mapping[str, float] | None = None, judge_model: str | None,
-             history: bool = True, requested_kinds: Sequence[str] = ()) -> Statistics:
+             repeats_given: bool = True, history: bool = True, requested_kinds: Sequence[str] = ()) -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
     The case approval covers the resolved statistics, so a changed or dropped flag stops at the case approval.
@@ -157,15 +155,16 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     mode, wedge, seed_candidate, _ = seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
     # An omitted --edit that still plans prose+cli here failed its prose fallback, so the warnings do not offer prose.
     notes = ReflectionNotes.size(seed_candidate, mode, offer_prose=edit is not None)
-    plan = size_plan(contract, scored, repeats, (options if configuration is None else configuration.sizing_options()))
+    sizer = Sizer(contract, scored, options if configuration is None else configuration.sizing_options(),
+                  raised_cap(approve_budget, scored), repeats_given)
+    plan = sizer.plan(repeats)
     shown = plan_estimate(plan, repeats, count["holdout"]) | {"reflection": notes.time(plan.reflection_calls, plan.sized)}
     shown_options = {} if configuration is not None else {"claude_options": options.data()}
     try:
         budget = approve(plan.sized, approve_budget, reserve=plan.reserve, reserve_time=plan.reserve_seconds)
     except BudgetUnapproved as error:
-        raise Stop("budget-unapproved", str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
-                                                     "statistics": resolved.data(), **shown_options,
-                                                     **notes.warnings}) from None
+        raise sizer.stop(str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
+                                      "statistics": resolved.data(), **shown_options, **notes.warnings}, repeats) from None
     offered = wedge.capable is not None
     wedge, layers = settle(wedge, out / "site")
     if offered and wedge.capable is None:
@@ -192,7 +191,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         "validation_policy": validation_policy(),
         "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
                    "reserve_seconds": budget.reserve_seconds, "approved": budget.approved,
-                   **({"journey": True} if budget.journey else {})},
+                   **({"journey": True} if budget.journey else {}), **({"cap": budget.cap} if budget.cap else {})},
         "outcomes": [], "started": time.time(), "started_monotonic": time.monotonic()})
     return resolved
 
@@ -393,7 +392,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             frozen = _prepare(target, out, model, adapter, edit, repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
                               options=requested, configuration=configuration,
-                              statistics_given=statistics_given, judge_model=judge_model,
+                              statistics_given=statistics_given, judge_model=judge_model, repeats_given=repeats is not None,
                               history=True if history is None else history, requested_kinds=kinds)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
