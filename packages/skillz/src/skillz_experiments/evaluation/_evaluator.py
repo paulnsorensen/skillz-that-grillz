@@ -235,6 +235,7 @@ def _evaluate_scored(task: _Responder, judge_transport: _Responder, rules: Contr
 
     A journey gate also sees the raw events in `trace/events.jsonl`, and its judge also sees the brief and the transcript.
     A command score below 1 and a failed capture record their redacted failure text as `gate_diagnostic`.
+    A command score below 1 also records the stdout tail length of that text as `gate_stdout_chars`.
     A gate that reaches the sandbox time limit or exits 0 with an invalid score also records `gate_fault`.
     """
     grader = rules.grader(case.kind)
@@ -245,10 +246,10 @@ def _evaluate_scored(task: _Responder, judge_transport: _Responder, rules: Contr
         return result
     if grader.type in ("command", "hybrid", "journey"):
         trace = cast(list[dict[str, object]], journey["trace"]) if journey is not None else None
-        command, diagnostic, fault = _graders.command(task, grader.argv, case, files, trace)
+        command, diagnostic, fault, stdout_chars = _graders.command(task, grader.argv, case, files, trace)
         scores["command"] = result["score"] = command
         if command < 1:
-            result["gate_diagnostic"] = diagnostic
+            result.update({"gate_diagnostic": diagnostic, "gate_stdout_chars": stdout_chars})
         if fault is not None:
             result["gate_fault"] = fault
         if grader.type in ("hybrid", "journey") and command <= 0:
