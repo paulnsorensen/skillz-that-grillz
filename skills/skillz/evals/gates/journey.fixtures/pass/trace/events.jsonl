@@ -1,0 +1,5 @@
+{"type": "assistant", "message": {"content": [{"type": "text", "text": "I run the autoimprove workflow on the toy skill."}]}}
+{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "run1", "name": "Bash", "input": {"command": "python3 skillz-experiment.pyz run --target /work/toys/echo --out /tmp/echo-run"}}]}}
+{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "run1", "content": "{\"stop\": \"cases-unapproved\", \"case_hash\": \"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"}]}}
+{"type": "assistant", "message": {"content": [{"type": "text", "text": "Please approve the cases with hash 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef."}]}}
+{"type": "result"}

@@ -6,17 +6,30 @@ The run freezes that argv in `run.json`, so resume and export never read the tar
 from __future__ import annotations
 
 import ast
+import json
 import os
+import resource
+import shutil
+import stat
+import subprocess
 import sys
+import tempfile
+from collections.abc import Collection
 from pathlib import Path, PurePosixPath
-from typing import cast
+from typing import NamedTuple, cast
 
 from skillz_experiments._cases import CodedError, relative
+from skillz_experiments._runtime import end_group
 from skillz_experiments._records import read_text
 
 GATE_GRADERS = ("command", "hybrid", "journey")
 SOURCE_LIMIT = 64 * 1024
 _PREFIX = ("python3", "-I", "-c")
+FIXTURE_SECONDS = 20.0
+OUTPUT_LIMIT = 64 * 1024
+FIXTURE_FILES = 200
+FIXTURE_BYTES = 4 * 1024 * 1024
+NULL_TRACE = '{"type": "assistant", "message": {"content": []}}\n{"type": "result"}\n'
 _STUB = ("import sys\nimport types\n_SIBLINGS = {siblings}\n_MAIN = {main}\n"
          + "for _name, _source in _SIBLINGS:\n    _module = types.ModuleType(_name)\n    sys.modules[_name] = _module\n"
          + "    exec(compile(_source, _name + '.py', 'exec'), _module.__dict__)\n"
@@ -132,3 +145,156 @@ def expand_gates(raw: object, root: Path) -> object:
             if name in used:
                 raise CodedError("contract-gate-editable", f"editable names the gate file {name}; a candidate cannot edit its own grader")
     return document | {"kinds": expanded}
+
+
+class GateFinding(NamedTuple):
+    code: str
+    severity: str
+    gate: str
+    message: str
+    fix: str
+
+
+def fixtures_of(gate: str) -> str:
+    """Return the fixture directory that sits beside a gate file: `evals/gates/x.py` -> `evals/gates/x.fixtures`."""
+    path = PurePosixPath(gate)
+    return path.with_name(f"{path.stem}.fixtures").as_posix()
+
+
+def _unsafe(root: Path, fixture: Path) -> str | None:
+    """Return why a fixture directory is unsafe to copy, or None. A symlink anywhere on its path or in its tree is unsafe."""
+    here = root
+    for part in fixture.relative_to(root).parts:
+        here = here / part
+        if here.is_symlink():
+            return f"{here.relative_to(root).as_posix()} is a symbolic link"
+    files = size = 0
+    for folder, names, leaves in os.walk(fixture):
+        for name in (*names, *leaves):
+            path = Path(folder, name)
+            mode = path.lstat().st_mode
+            if not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+                return f"{path.relative_to(root).as_posix()} is a symbolic link or not a regular file"
+        files += len(leaves)
+        size += sum(Path(folder, name).stat().st_size for name in leaves)
+        if files > FIXTURE_FILES or size > FIXTURE_BYTES:
+            return f"it holds more than {FIXTURE_FILES} files or {FIXTURE_BYTES} bytes"
+    return None
+
+
+def _limit_file_size() -> None:
+    _ = resource.setrlimit(resource.RLIMIT_FSIZE, (FIXTURE_BYTES, FIXTURE_BYTES))
+
+
+def _run(source: str, work: Path, home: str) -> tuple[int, bytes] | None:
+    # `preexec_fn` is unsafe with threads, so `validate` must stay single-threaded.
+    """Run the gate source in `work` with a minimal environment. Return its exit code and the first bytes of stdout, None on a timeout.
+
+    The child leads its own process group, and every exit path ends that group, so no descendant outlives the run.
+    """
+    command = [shutil.which(_PREFIX[0]) or sys.executable, *_PREFIX[1:], source]
+    environment = {"PATH": os.defpath, "LC_ALL": "C.UTF-8", "HOME": home}
+    with tempfile.TemporaryFile() as out:
+        with subprocess.Popen(command, cwd=work, env=environment, text=True, stdin=subprocess.DEVNULL, stdout=out,
+                              stderr=subprocess.DEVNULL, start_new_session=True, preexec_fn=_limit_file_size) as child:
+            try:
+                _ = child.wait(timeout=FIXTURE_SECONDS)
+            except subprocess.TimeoutExpired:
+                return None
+            finally:
+                end_group(child)
+        _ = out.seek(0)
+        return child.returncode, out.read(OUTPUT_LIMIT + 1)
+
+
+def _score(source: str, fixture: Path | None, trace: str | None = None) -> float | None:
+    """Run the gate source once in a fresh temporary workspace. Return its score, 0 for a failed run, None on a timeout.
+
+    The side is the workspace: `trace/`, `output/`, and other root files, where a run stages the case files.
+    """
+    with tempfile.TemporaryDirectory() as name:
+        work = Path(name, "work")
+        if fixture is not None:
+            _ = shutil.copytree(fixture, work, symlinks=True)
+        work.mkdir(exist_ok=True)
+        if trace is not None:
+            (work / "trace").mkdir()
+            _ = (work / "trace/events.jsonl").write_text(trace, encoding="utf-8")
+        done = _run(source, work, name)
+    if done is None:
+        return None
+    code, output = done
+    if code != 0 or len(output) > OUTPUT_LIMIT:
+        return 0.0
+    try:
+        score = cast(dict[str, object], json.loads(output.decode("utf-8", errors="replace")))["score"]
+    except (ValueError, KeyError, TypeError):
+        return 0.0
+    if type(score) not in (int, float) or not 0 <= cast(float, score) <= 1:
+        return 0.0
+    return float(cast(float, score))
+
+
+def probe_gates(root: Path, raw: object, must_kinds: Collection[str]) -> list[GateFinding]:
+    """Run each gate of a raw contract on its `pass` and `fail` fixtures, and on a null trace for a journey kind with `must` items.
+
+    A fixture is `<gate stem>.fixtures/{pass,fail}/` with `trace/events.jsonl` and `output/`, in either harness encoding.
+    Fixtures are optional: a missing one is a warning. A fixture with a symbolic link or too many files is an error.
+    `root` is the directory that holds `evals/`.
+    """
+    kinds = cast(dict[str, object], raw).get("kinds") if isinstance(raw, dict) else None
+    gates: dict[str, list[str]] = {}
+    for kind, entry in (cast(dict[str, object], kinds).items() if isinstance(kinds, dict) else ()):
+        if isinstance(entry, dict) and isinstance(cast(dict[str, object], entry).get("gate"), str):
+            gates.setdefault(str(cast(dict[str, object], entry)["gate"]), []).append(kind)
+    found: list[GateFinding] = []
+
+    def timed_out(gate: str, what: str) -> None:
+        found.append(GateFinding("gate-fixture-timeout", "error", gate,
+                                 f"the gate {gate} did not finish on {what} within {FIXTURE_SECONDS:g} seconds",
+                                 "make the gate finish quickly; it must not wait or loop"))
+
+    def unsafe(gate: str, side: str, why: str) -> None:
+        found.append(GateFinding("gate-fixture-unsafe", "error", gate,
+                                 f"the fixture {fixtures_of(gate)}/{side} is not safe to run: {why}",
+                                 "use plain files only, and keep the fixture small"))
+
+    for gate, names in gates.items():
+        source, _ = _bundle(root, gate)
+        base = root / fixtures_of(gate)
+        absent: list[str] = []
+        for side, code in (("pass", "gate-unpassable"), ("fail", "gate-permissive")):
+            fixture = base / side
+            if not (fixture.is_dir() or fixture.is_symlink()):
+                absent.append(side)
+                continue
+            try:
+                problem = _unsafe(root, fixture)
+                score = _score(source, fixture) if problem is None else None
+            except (OSError, subprocess.SubprocessError) as error:
+                unsafe(gate, side, f"the probe failed: {type(error).__name__}")
+                continue
+            if problem is not None:
+                unsafe(gate, side, problem)
+            elif score is None:
+                timed_out(gate, f"{fixtures_of(gate)}/{side}")
+            elif (score != 1) if side == "pass" else (score > 0):
+                what = "does not score 1 on its pass fixture" if side == "pass" else "scores above 0 on its fail fixture"
+                found.append(GateFinding(code, "error", gate, f"the gate {gate} {what}: score {score:g}",
+                                         "fix the gate, or the fixture if it does not show the flow it names"))
+        if absent:
+            found.append(GateFinding("gate-fixture-missing", "warning", gate,
+                                     f"the gate {gate} has no {' or '.join(absent)} fixture under {fixtures_of(gate)}",
+                                     f"add {fixtures_of(gate)}/pass and /fail, each with trace/events.jsonl and an output/ tree"))
+        if any(name in must_kinds for name in names):
+            try:
+                score = _score(source, None, NULL_TRACE)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            if score is None:
+                timed_out(gate, "a null trace")
+            elif score > 0:
+                found.append(GateFinding("gate-null-trace", "warning", gate,
+                                         f"the gate {gate} scores {score:g} on a trace with one empty agent turn, yet its cases have must items",
+                                         "check the flow that the must items name, for example with RECEIPTS"))
+    return found

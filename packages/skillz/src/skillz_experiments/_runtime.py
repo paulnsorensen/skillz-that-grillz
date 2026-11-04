@@ -79,7 +79,7 @@ def reset_call_slots() -> None:
     _CHILDREN.reset()
 
 
-def _end(child: subprocess.Popen[str]) -> None:
+def end_group(child: subprocess.Popen[str]) -> None:
     """Send SIGTERM to the child's group, wait `TERM_GRACE_SECONDS`, then SIGKILL whatever remains.
 
     After the SIGKILL, wait for the child itself and do not read its pipes to the end. A descendant that left the
@@ -120,10 +120,10 @@ def _spawn(command: list[str], cwd: Path, timeout: float, environment: dict[str,
         try:
             stdout, stderr = child.communicate(input_text, timeout=timeout)
         except subprocess.TimeoutExpired:
-            _end(child)
+            end_group(child)
             raise BudgetExhausted("process group terminated at deadline") from None
         except BaseException:
-            _end(child)
+            end_group(child)
             raise
         return subprocess.CompletedProcess(command, child.returncode, stdout, stderr)
 
