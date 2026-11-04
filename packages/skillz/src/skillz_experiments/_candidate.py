@@ -259,7 +259,7 @@ def stage_task(workspace: Path, candidate: Candidate | None, case: Case | None) 
         for name, content in case.files.items():
             path = workspace / name
             path.parent.mkdir(parents=True, exist_ok=True)
-            _ = path.write_text(content) if isinstance(content, str) else path.write_bytes(base64.b64decode(content["base64"]))
+            _ = path.write_text(content, encoding="utf-8") if isinstance(content, str) else path.write_bytes(base64.b64decode(content["base64"]))
 
 
 def snapshot_outputs(workspace: Path) -> dict[str, str]:
@@ -281,8 +281,7 @@ def snapshot_outputs(workspace: Path) -> dict[str, str]:
         if len(files) >= OUTPUT_FILE_LIMIT or path.stat().st_size > OUTPUT_BYTES_LIMIT:
             continue
         try:
-            data = path.read_bytes()
-            text = data.decode("utf-8")
+            text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
             continue
         total += len(text)

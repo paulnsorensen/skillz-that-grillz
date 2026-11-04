@@ -113,7 +113,7 @@
                 }
               }
             ],
-            "description": "Path list, or path map with inline text and null references into top-level fixtures."
+            "description": "Path list, or path map with inline text, image markers, and null references into top-level fixtures."
           },
           "id": {
             "type": "string",
@@ -241,7 +241,7 @@
               }
             ]
           },
-          "description": "Shared files: path to text, stored once."
+          "description": "Shared files: path to text or an image marker, stored once."
         },
         "cases": {
           "$ref": "#/$defs/cases"

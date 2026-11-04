@@ -151,6 +151,13 @@ def test_snapshot_outputs_drops_the_image_fixture_but_keeps_utf8_text_with_image
     assert "pic.gif" not in outputs
     assert outputs["answer.md"] == "GIF89a is the GIF header"
 
+
+def test_snapshot_outputs_keeps_the_universal_newline_reading_of_a_crlf_output(tmp_path: Path) -> None:
+    workspace = make_workspace(tmp_path / "task")
+    _ = (workspace / "out.csv").write_bytes(b"a,b\r\n1,2\r\n")
+    assert snapshot_outputs(workspace)["out.csv"] == "a,b\n1,2\n"
+
+
 @pytest.mark.ac("gh-589:AC-2")
 @pytest.mark.parametrize("data", [b"\xff\xfe\x00bad", b"RIFF\xff\xff\xff\xffWAVEfmt ", b"\x89PNG\r\n", b"GIF90a\xff"])
 def test_a_binary_fixture_outside_the_allowlist_is_refused_with_a_coded_error(
