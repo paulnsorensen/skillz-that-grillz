@@ -2,7 +2,7 @@
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from skillz_experiments._budget import APPROVED_CALLS, JOURNEY_CALLS
@@ -32,7 +32,10 @@ def raised_cap(approve_budget: int | None, cases: Sequence[Case]) -> int:
 
 @dataclass(frozen=True)
 class Sizer:
-    """Call `size_plan` against one cap, and turn a failed plan into a `budget-unapproved` stop that shows what would fit."""
+    """Call `size_plan` against one cap, and turn a failed plan into a `budget-unapproved` stop that shows what would fit.
+
+    `shown` holds the fields that every `budget-unapproved` stop carries, such as `statistics`.
+    """
 
     contract: Contract
     cases: Sequence[Case]
@@ -41,6 +44,7 @@ class Sizer:
     repeats_given: bool
     holdout_cases: int
     notes: ReflectionNotes
+    shown: Mapping[str, object]
 
     def estimate(self, plan: Plan, repeats: int) -> dict[str, object]:
         """Return the shown estimate of `plan`: the `plan_estimate` that `verify_budget` checks, and the reflection block."""
@@ -70,7 +74,7 @@ class Sizer:
             rows = self._table()
             text += "; repeats table: " + "; ".join(_row_text(row) for row in rows)
             extra["repeats_table"] = rows
-        return Stop("budget-unapproved", text, data | extra)
+        return Stop("budget-unapproved", text, dict(self.shown) | data | extra)
 
     def _table(self) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []

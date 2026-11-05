@@ -156,15 +156,15 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     # An omitted --edit that still plans prose+cli here failed its prose fallback, so the warnings do not offer prose.
     notes = ReflectionNotes.size(seed_candidate, mode, offer_prose=edit is not None)
     sizer = Sizer(contract, scored, options if configuration is None else configuration.sizing_options(),
-                  raised_cap(approve_budget, scored), repeats_given, count["holdout"], notes)
+                  raised_cap(approve_budget, scored), repeats_given, count["holdout"], notes,
+                  {"statistics": resolved.data(), **({} if configuration is not None else {"claude_options": options.data()})})
     plan = sizer.plan(repeats)
     shown = sizer.estimate(plan, repeats)
-    shown_options = {} if configuration is not None else {"claude_options": options.data()}
     try:
         budget = approve(plan.sized, approve_budget, reserve=plan.reserve, reserve_time=plan.reserve_seconds)
     except BudgetUnapproved as error:
         raise sizer.stop(str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
-                                      "statistics": resolved.data(), **shown_options, **notes.warnings}, repeats) from None
+                                      **notes.warnings}, repeats) from None
     offered = wedge.capable is not None
     wedge, layers = settle(wedge, out / "site")
     if offered and wedge.capable is None:

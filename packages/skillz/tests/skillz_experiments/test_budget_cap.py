@@ -63,6 +63,7 @@ def test_a_plan_over_the_standard_cap_names_the_smallest_approval_that_fits(
     assert set(estimate) >= {"seconds", "search_calls", "holdout_cases", "reflection"}
     below = _refused(target, out, case_hash, repeats=3, approve_budget=smallest - 1)
     assert below.data["smallest_approval"] == smallest
+    assert "statistics" in stop.data and "statistics" in below.data
 
 
 @pytest.mark.ac("gh-588:AC-1")
