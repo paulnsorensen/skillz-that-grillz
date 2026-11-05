@@ -1,9 +1,9 @@
 """Per-case seed signals of the headroom pass: the case record, the two marks, the unscorable stop, and the warnings.
 
 A case is `saturated` when every seed repeat scores exactly 1.0, and `suspect-zero` when every seed repeat scores 0.
-A suspect-zero case whose every repeat has a setup fault cannot teach the search, so the run stops. Any other
-suspect-zero case only warns. A train case has headroom when it has a seed score and is not saturated, so a train split
-with fewer than `REFLECTION_MINIBATCH` such cases also warns.
+A case whose every repeat scores 0 with a setup fault cannot teach the search, so the run stops, even for a
+`fail-to-pass` regression case. Any other suspect-zero case only warns. A train case has headroom when it has a seed
+score and is not saturated, so a train split with fewer than `REFLECTION_MINIBATCH` such cases also warns.
 """
 from __future__ import annotations
 
@@ -68,7 +68,8 @@ def seed_signals(cases: Sequence[Case], found: Mapping[tuple[object, object, obj
     """Return the `cases`, `saturated`, `unscorable`, and `warnings` entries of the headroom block.
 
     `found` holds the scored seed outcome of each (split, case, repeat). A `fail-to-pass` regression case is never
-    suspect-zero. A run that expects saturated cases (`min_token_saving`) gets no saturation warning.
+    suspect-zero, but it is unscorable when a setup fault zeroes every repeat. A run that expects saturated cases
+    (`min_token_saving`) gets no saturation warning.
     """
     entries: dict[str, dict[str, object]] = {}
     unscorable: list[dict[str, object]] = []
@@ -78,13 +79,14 @@ def seed_signals(cases: Sequence[Case], found: Mapping[tuple[object, object, obj
                  if (key := (case.split, case.identifier, repeat)) in found]
         entry = _entry(case, items, reproduction.get(case.identifier, {}).get("state"))
         entries[case.identifier] = entry
-        if entry["mark"] != "suspect-zero":
+        scores = cast(list[float], entry["scores"])
+        if not scores or any(score != 0.0 for score in scores):
             continue
         faults = _faults(entry)
         cause = _cause(faults, items)
         if all(fault is not None for fault in faults):
             unscorable.append({"case_id": case.identifier, "split": case.split, "family": case.family, "cause": cause})
-        else:
+        elif entry["mark"] == "suspect-zero":
             warnings.append(f"suspect-zero: the seed scores 0 on every repeat of {case.identifier} ({case.split}, "
                             + f"family {case.family}); {cause}; the case may be unsolvable or its gate wrong")
     train = [identifier for identifier, entry in entries.items() if entry["split"] == "train"]

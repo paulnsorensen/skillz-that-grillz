@@ -147,11 +147,23 @@ def test_one_repeat_without_a_setup_fault_makes_the_zero_a_warning_that_names_th
 @pytest.mark.ac("gh-656:AC-4")
 def test_a_fail_to_pass_regression_case_is_never_suspect_zero_and_a_plain_case_is() -> None:
     regression, plain = _case("r"), _case("p")
-    found = _found(regression, _item(0.0, fault="timeout")) | _found(plain, _item(0.0, fault="timeout"))
+    found = _found(regression, _item(0.0)) | _found(plain, _item(0.0))
     signals = seed_signals([regression, plain], found, {"r": {"state": "fail-to-pass"}}, set(), True)
     entries = cast(dict[str, dict[str, object]], signals["cases"])
     assert entries["r"]["mark"] is None and entries["p"]["mark"] == "suspect-zero"
-    assert [item["case_id"] for item in cast(list[dict[str, object]], signals["unscorable"])] == ["p"]
+    warnings = cast(list[str], signals["warnings"])
+    assert len(warnings) == 1 and "of p (" in warnings[0] and signals["unscorable"] == []
+
+
+@pytest.mark.ac("gh-656:AC-2")
+def test_a_setup_fault_on_every_repeat_of_a_fail_to_pass_case_still_stops() -> None:
+    regression = _case("r", "validation")
+    found = _found(regression, _item(0.0, fault="timeout"), _item(0.0, status="capture-failed"))
+    signals = seed_signals([regression], found, {"r": {"state": "fail-to-pass"}}, set(), True)
+    assert cast(dict[str, dict[str, object]], signals["cases"])["r"]["mark"] is None and signals["warnings"] == []
+    unscorable = cast(list[dict[str, object]], signals["unscorable"])
+    assert [item["case_id"] for item in unscorable] == ["r"]
+    assert unscorable[0]["cause"] == "setup fault capture-failed, timeout"
 
 
 @pytest.mark.ac("gh-658:AC-1")
