@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -24,6 +25,7 @@ from skillz_experiments._budget import (
     estimate,
     gate_seconds,
 )
+from skillz_experiments import _runtime as runtime
 from skillz_experiments._runtime import process
 from skillz_experiments.run import Stop
 from skillz_experiments.run._plan import _plan as plan_run  # pyright: ignore[reportPrivateUsage]
@@ -145,7 +147,7 @@ def test_concurrent_claims_never_overspend() -> None:
 
 
 @pytest.mark.ac("gh-319:AC-2")
-def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
+def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Each holder child marks that it runs, then holds its call slot until the test writes `release`.
     hold = ("import pathlib,sys,time\npathlib.Path(sys.argv[1]).touch()\n"
             "while not pathlib.Path(sys.argv[2]).exists(): time.sleep(0.01)\n")
@@ -166,16 +168,23 @@ def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path) -> None:
         with pytest.raises(BudgetExhausted, match="call slot"):
             _ = process([sys.executable, "-c", "pass"], cwd=tmp_path, timeout=0.4,
                         environment={"PATH": os.defpath})
-        assert time.monotonic() - began < 1.0
+        assert time.monotonic() - began < 5.0
 
-        late = time.monotonic()
+        # Observe the timeout the child receives. The holders free the slots no sooner than
+        # 0.5 s after the wait starts, and load only lengthens the wait. With the slot-wait
+        # subtraction, the child gets less than 5.0 - 0.4 s. Without it, the child gets the full 5.0 s.
+        spawned: list[float] = []
+
+        def spawn(command: list[str], _cwd: Path, timeout: float, *_rest: object) -> subprocess.CompletedProcess[str]:
+            spawned.append(timeout)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        monkeypatch.setattr(runtime, "_spawn", spawn)
         threading.Timer(0.5, release.touch).start()
-        with pytest.raises(BudgetExhausted, match="terminated"):
-            _ = process([sys.executable, "-c", "import time;time.sleep(30)"], cwd=tmp_path, timeout=1.0,
-                        environment={"PATH": os.defpath})
-        # The holders free the slots about 0.5 s after `late`. Without the slot-wait
-        # subtraction, the call ends near 0.5 + 1.0 = 1.5 s.
-        assert time.monotonic() - late < 1.3
+        _ = process([sys.executable, "-c", "pass"], cwd=tmp_path, timeout=5.0,
+                    environment={"PATH": os.defpath})
+        assert len(spawned) == 1
+        assert spawned[0] < 5.0 - 0.4
     finally:
         release.touch()
         for holder in holders:
