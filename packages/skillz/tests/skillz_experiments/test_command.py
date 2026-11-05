@@ -19,6 +19,7 @@ from skillz_experiments.harness import Configuration, has_claude_sandbox
 from skillz_experiments.harness._command import Command
 from skillz_experiments.harness._roles import adapter_class
 from skillz_experiments.run import run
+from skillz_experiments.run._stop import Stop
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget, BudgetExhausted
 
@@ -174,7 +175,13 @@ def test_selected_judge_model_reaches_the_judge_calls_of_an_intake_run(tmp_path:
     _ = config.write_text(json.dumps(document))
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = (target / "evals/autoimprove.json").unlink()
-    _ = approved_run(target, out, model="task-model", configuration=Configuration.load(config, "task-model"))
+    configuration = Configuration.load(config, "task-model")
+    if mode == "no-trace":
+        with pytest.raises(Stop) as unscorable:
+            _ = approved_run(target, out, model="task-model", configuration=configuration)
+        assert unscorable.value.code == "cases-unscorable"
+    else:
+        _ = approved_run(target, out, model="task-model", configuration=configuration)
     record = read(out / "run.json")
     assert record["judge_model"] == "judge-model"
     inferred = {str(item["model"]) for item in requests(log) if item["operation"] == "infer"}

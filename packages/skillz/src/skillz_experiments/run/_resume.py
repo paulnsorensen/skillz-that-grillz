@@ -15,6 +15,7 @@ from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics
 from skillz_experiments.harness import CONFIGURED_SELECTIONS, NONO_REMOVED, ClaudeOptions, stop_kind
 from skillz_experiments.run._baseline import too_easy_stop
 from skillz_experiments.run._record_fields import judge_flag, text_field
+from skillz_experiments.run._signals import unscorable_stop
 from skillz_experiments.run._state import HarnessName
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Edit
@@ -78,14 +79,19 @@ def refuse_terminated(record: dict[str, object]) -> None:
 
 
 def refuse_too_easy(record: dict[str, object], out: Path) -> None:
-    """Raise the `cases-too-easy` stop of the headroom pass again from the record. The stop makes no model call.
+    """Raise the `cases-too-easy` or `cases-unscorable` stop of the headroom pass again from the record. No model call runs.
 
     The text and the baseline report come from the record, not from `failure`, so a run that died before it recorded
     `failure` still resumes with the same stop.
     """
     headroom = record.get("headroom")
-    if isinstance(headroom, dict) and cast(dict[str, object], headroom).get("verdict") == "too-easy":
+    if not isinstance(headroom, dict):
+        return
+    block = cast(dict[str, object], headroom)
+    if block.get("verdict") == "too-easy":
         raise too_easy_stop(record, out)
+    if block.get("verdict") == "unscorable":
+        raise unscorable_stop(block)
 
 
 def open_lock(out: Path) -> TextIO:
