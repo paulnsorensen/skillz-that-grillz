@@ -16,6 +16,7 @@ from skillz_experiments.run._reproduce import (
     floor_cases, reproduce_outcomes, reproductions, score_holdout_regressions, stop_if_unreproduced,
 )
 from skillz_experiments.run._search_phase import SearchPhase
+from skillz_experiments.run._signals import seed_signals, unscorable_stop, warn
 from skillz_experiments.run._state import RunState
 from skillz_experiments.search import unit_score
 
@@ -35,6 +36,8 @@ def run_headroom(state: RunState, search: SearchPhase) -> None:
     state, and the unmet criteria. Each holdout regression case scores once under the `reproduce` arm. A floor case,
     one that the seed scores 1.0 on every repeat, stays out of its family mean; a partial case stays in it.
     A run whose statistics set `min_token_saving` expects saturated cases: it records the scores and does not stop.
+    The block also records each case with its marks, the saturated counts, and the warnings (`run/_signals.py`). A case
+    that scores 0 on every repeat through a setup fault stops the run with `cases-unscorable`.
     """
     if isinstance(state.record.get("headroom"), dict):
         return
@@ -81,11 +84,17 @@ def run_headroom(state: RunState, search: SearchPhase) -> None:
     means = {name: sum(scores) / len(scores) for name, scores in sorted(by_family.items())}
     families = {name: {"split": splits[name], "mean": means[name], "cases": len(by_family[name])} for name in means}
     easy = {name: mean for name, mean in means.items() if mean >= HEADROOM_CEILING or close(mean, HEADROOM_CEILING)}
-    stop = bool(easy) and state.statistics.min_token_saving is None
-    block: dict[str, object] = {"ceiling": HEADROOM_CEILING, "families": families, "verdict": "too-easy" if stop else "ok"}
+    signals = seed_signals(cases, found, reproduction, floor, state.statistics.min_token_saving is not None)
+    unscorable = bool(signals["unscorable"])
+    stop = bool(easy) and state.statistics.min_token_saving is None and not unscorable
+    verdict = "unscorable" if unscorable else "too-easy" if stop else "ok"
+    block: dict[str, object] = {"ceiling": HEADROOM_CEILING, "families": families, "verdict": verdict} | signals
     if reproduction:
         block["reproduction"] = reproduction
     state.record["headroom"] = block
     state.checkpoint()
+    warn(cast(list[str], signals["warnings"]))
+    if unscorable:
+        raise unscorable_stop(block)
     if stop:
         raise too_easy_stop(state.record, state.out)
