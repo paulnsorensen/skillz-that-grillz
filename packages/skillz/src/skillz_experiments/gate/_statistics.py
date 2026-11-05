@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import math
 import statistics
 from collections.abc import Callable, Mapping, Sequence
@@ -180,7 +181,16 @@ class HoldoutDeltas:
 
 def _repeat_se(scores: Sequence[float]) -> float:
     """Return the standard error of the repeat mean. One repeat gives 0."""
-    return statistics.stdev(scores) / math.sqrt(len(scores)) if len(scores) > 1 else 0.0
+    return _stdev_se(tuple(scores)) if len(scores) > 1 else 0.0
+
+
+@functools.lru_cache(maxsize=4096)
+def _stdev_se(scores: tuple[float, ...]) -> float:
+    """Return `stdev(scores) / sqrt(n)`. The cache keeps the exact result.
+
+    `statistics.stdev` uses exact fraction arithmetic and is slow. Repeat scores are few and repeat often.
+    """
+    return statistics.stdev(scores) / math.sqrt(len(scores))
 
 
 def _floor_guard(baseline: Mapping[str, Sequence[float]], winner: Mapping[str, Sequence[float]],

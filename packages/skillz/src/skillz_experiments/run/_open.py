@@ -12,7 +12,7 @@ from typing import cast, get_args
 
 from skillz_experiments._audit import GraderKind
 from skillz_experiments._audit import identity as judge_identity
-from skillz_experiments._budget import SECONDS_PER_CALL, Budget, BudgetExhausted, ceilings
+from skillz_experiments._budget import APPROVED_CALLS, JOURNEY_CALLS, SECONDS_PER_CALL, Budget, BudgetExhausted, ceilings
 from skillz_experiments._candidate import Candidate
 from skillz_experiments._cases import Case, CodedError, Split, digest, mapping
 from skillz_experiments._contract import RUBRIC_GRADERS, Contract
@@ -162,17 +162,25 @@ def open_budget(record: dict[str, object], cases: list[Case], contract: Contract
     monotonic = time.monotonic() - number_field(record, "started_monotonic")
     elapsed = max(wall, monotonic, 0.0)
     seconds = number_field(budget, "seconds")
-    approved, journey = budget.get("approved") is True, budget.get("journey") is True
+    approved, journey, cap = budget.get("approved") is True, budget.get("journey") is True, _cap(budget)
     if seconds - elapsed <= 0:
         if phase(record) not in POST_GATE_PHASES:
             raise BudgetExhausted("global deadline exhausted")
         # A gated or replayed run makes no model call without a deadline check, so the replay ends on its own.
         return Budget.expired(int_field(budget, "maximum"), reserve=int_field(budget, "reserve"), calls=calls,
-                              approved=approved, journey=journey, calls_by_role=by_role,
+                              approved=approved, journey=journey, calls_by_role=by_role, cap=cap,
                               seconds_by_role=seconds_by_role, retries=retries, call_seconds=call_seconds)
     return Budget(int_field(budget, "maximum"), seconds - elapsed, reserve=int_field(budget, "reserve"),
-                  calls=calls, approved=approved, journey=journey, calls_by_role=by_role,
+                  calls=calls, approved=approved, journey=journey, calls_by_role=by_role, cap=cap,
                   seconds_by_role=seconds_by_role, retries=retries, call_seconds=call_seconds)
+
+
+def _cap(budget: dict[str, object]) -> int:
+    """Return the raised call cap that the run recorded, or 0 for the standard cap."""
+    cap = int_field(budget, "cap") if "cap" in budget else 0
+    if cap != 0 and not APPROVED_CALLS < cap <= JOURNEY_CALLS:
+        raise Stop("run-record-tampered", "the recorded budget cap lies outside the raised call cap range; create a new run", {})
+    return cap
 
 
 def verify_budget(record: dict[str, object], cases: list[Case], contract: Contract, sizing: ClaudeOptions,
@@ -183,7 +191,8 @@ def verify_budget(record: dict[str, object], cases: list[Case], contract: Contra
     """
     count = {split: sum(case.split == split for case in cases) for split in cast(tuple[str, ...], get_args(Split))}
     repeats = int_field(record, "repeats")
-    plan = size_plan(contract, cases, repeats, sizing)
+    cap = _cap(budget)
+    plan = size_plan(contract, cases, repeats, sizing, cap)
     expected = plan_estimate(plan, repeats, count["holdout"])
     recorded = mapping(field(record, "estimate"))
     maximum = max(plan.sized.calls, 1)
@@ -200,6 +209,6 @@ def verify_budget(record: dict[str, object], cases: list[Case], contract: Contra
             or differs(budget.get("reserve"), min(plan.reserve, maximum))
             or differs(budget.get("reserve_seconds"), plan.reserve_seconds)
             or (budget.get("journey") is True) != plan.sized.journey
-            or not 0 < seconds <= ceilings(plan.sized.journey)[1]):
+            or not 0 < seconds <= ceilings(plan.sized.journey, cap)[1]):
         raise Stop("run-record-tampered", "the recorded budget differs from the plan of the frozen run; create a new run", {})
     return plan.sandbox_seconds

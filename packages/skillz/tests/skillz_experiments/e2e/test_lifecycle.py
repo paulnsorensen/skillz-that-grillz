@@ -147,9 +147,11 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
 
     result = cast(dict[str, object], json.loads(output))
     assert result["phase"] == after["phase"] == "complete"
-    for key in ("cases_hash", "seed_hash", "best_validated",
-                "budget", "started", "started_monotonic"):
+    for key in ("cases_hash", "seed_hash", "best_validated", "started", "started_monotonic"):
         assert after[key] == before[key], key
+    final = cast(dict[str, object], after["budget"])
+    assert "unspent" in final and "unspent" not in cast(dict[str, object], before["budget"])
+    assert {key: value for key, value in final.items() if key != "unspent"} == before["budget"]
     assert after["winner_hash"] == cast(dict[str, object], before["best_validated"])["identity"]
     assert first_calls <= cast(int, after["calls"]) <= calls
     held = [item for item in cast(list[dict[str, object]], after["outcomes"])
