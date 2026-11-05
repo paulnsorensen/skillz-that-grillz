@@ -10,6 +10,7 @@ from typing import cast
 import pytest
 
 from skillz_experiments._budget import (
+    APPROVED_CALLS,
     APPROVED_SECONDS,
     ESTIMATE_SECONDS_PER_CALL,
     JOURNEY_SECONDS,
@@ -228,7 +229,9 @@ def test_a_sizing_stop_still_follows_the_size_warning_on_stderr(
         _ = run(target, out, MODEL, live=True, edit="prose+cli", repeats=50,
                 approve_cases=cast(str, cases.value.data["case_hash"]))
     assert sized.value.code == "budget-unapproved" and "lower --repeats" in str(sized.value)
-    assert "estimate" not in sized.value.data
+    # The stop shows the estimate of the plan at the smallest approval that fits, not of a plan under the 200 cap (gh-588).
+    smallest = cast(int, sized.value.data["smallest_approval"])
+    assert APPROVED_CALLS < cast(int, cast(dict[str, object], sized.value.data["estimate"])["calls"]) <= smallest
     assert "more than the reflection limit" in capsys.readouterr().err
 
 

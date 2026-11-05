@@ -31,6 +31,7 @@ from skillz_experiments.run._replay_phase import run_replay
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import Factory, HarnessName, Provider
 from skillz_experiments.run._stop import Stop, baseline_rejected, check_timeout, preflight_timeout
+from skillz_experiments.run._unspent import search_end, with_unspent
 from skillz_experiments.search import Edit
 from skillz_experiments.search import journal as build_journal
 from skillz_experiments.search import search as pareto_search
@@ -325,8 +326,7 @@ class Session:
         with self.lock:
             rejections = {rule: len(keys) for rule, keys in sorted(searching.leak_rejections.items())}
         recorded = self.record.get("search")
-        base = cast(dict[str, object], recorded) if isinstance(recorded, dict) else {}
-        self.record["search"] = base | {
+        self.record["search"] = cast(dict[str, object], recorded if isinstance(recorded, dict) else {}) | {
             "reason": reason,
             "stop_trigger": trigger,
             "retained_seed": winner.identity == self.seed.identity,
@@ -340,7 +340,7 @@ class Session:
             with self.lock:
                 seconds = {role: round(self.budget.seconds_by_role.get(role, 0.0), 3) for role in SEARCH_ROLES}
             cast(dict[str, object], self.record["search"])["seconds_by_role"] = seconds
-        self.record["phase"] = "searched"
+        self.record |= {"phase": "searched", "search_end": search_end(self.budget, self.record)}
         self.checkpoint()
 
     def gate(self) -> None:
@@ -352,5 +352,5 @@ class Session:
         run_replay(self, self._built, patches)
 
     def finish(self) -> None:
-        self.record["phase"] = "complete"
+        self.record |= {"phase": "complete", "budget": with_unspent(self.record, self.budget)}
         self.checkpoint()

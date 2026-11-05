@@ -107,7 +107,7 @@ def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two
     per_evaluation = 9
     assert plan.sized.calls + per_evaluation > JOURNEY_CALLS
 
-    def one_more_metric_call(_journey: bool) -> tuple[int, int]:
+    def one_more_metric_call(_journey: bool, _cap: int = 0) -> tuple[int, int]:
         return plan.sized.calls + per_evaluation, JOURNEY_SECONDS
 
     monkeypatch.setattr("skillz_experiments.run._plan.ceilings", one_more_metric_call)

@@ -54,23 +54,38 @@ class BudgetUnapproved(CodedError):
         super().__init__("budget-unapproved", message)
 
 
-def ceilings(journey: bool) -> tuple[int, int]:
-    """Return the approved call and second caps. A run with journey cases gets the journey ceiling."""
-    return (JOURNEY_CALLS, JOURNEY_SECONDS) if journey else (APPROVED_CALLS, APPROVED_SECONDS)
+def ceilings(journey: bool, cap: int = 0) -> tuple[int, int]:
+    """Return the approved call and second caps. A run with journey cases gets the journey ceiling.
+
+    A task run may pass `cap`, the approved number above `APPROVED_CALLS` up to `JOURNEY_CALLS`. The seconds scale
+    with it at the standard rate, never above `JOURNEY_SECONDS`. A `cap` of 0 keeps the standard caps.
+    Any other `cap` raises `ValueError`.
+    """
+    if journey:
+        return JOURNEY_CALLS, JOURNEY_SECONDS
+    if cap == 0:
+        return APPROVED_CALLS, APPROVED_SECONDS
+    if not APPROVED_CALLS < cap <= JOURNEY_CALLS:
+        raise ValueError(f"a raised call cap lies above {APPROVED_CALLS} and at most {JOURNEY_CALLS} calls")
+    return cap, min(JOURNEY_SECONDS, cap * APPROVED_SECONDS // APPROVED_CALLS)
 
 
 @dataclass(frozen=True)
 class Estimate:
-    """The size of a run. `journey` is True when the run holds journey cases and so uses the journey ceiling."""
+    """The size of a run. `journey` is True when the run holds journey cases and so uses the journey ceiling.
+
+    `cap` is the raised call cap of a task run, or 0 for the standard cap.
+    """
 
     calls: int
     seconds: int
     journey: bool = False
+    cap: int = 0
 
 
 def estimate(*, preflight_calls: int = 0, train: int = 0, validation: int = 0, holdout: int = 0,
-             calls_per_evaluation: int = 1, repeats: int = 1, search_calls: int = 0,
-             reflection_calls: int = 0, retry_calls: int = 0, replay_calls: int = 0, journey: bool = False) -> Estimate:
+             calls_per_evaluation: int = 1, repeats: int = 1, search_calls: int = 0, reflection_calls: int = 0,
+             retry_calls: int = 0, replay_calls: int = 0, journey: bool = False, cap: int = 0) -> Estimate:
     """Size a run before any model call.
 
     `train`, `validation`, and `holdout` are case counts per split.
@@ -85,7 +100,7 @@ def estimate(*, preflight_calls: int = 0, train: int = 0, validation: int = 0, h
     cases = train + validation + holdout
     calls = (preflight_calls + cases * calls_per_evaluation * repeats + search_calls + reflection_calls + retry_calls
              + replay_calls)
-    return Estimate(calls, _seconds(calls), journey)
+    return Estimate(calls, _seconds(calls), journey, cap)
 
 
 def _seconds(calls: int, per_call: int = ESTIMATE_SECONDS_PER_CALL) -> int:
@@ -119,6 +134,7 @@ class Budget:
     approved: bool = False
     reserve_seconds: float = 0.0
     journey: bool = False
+    cap: int = 0
     retries: int = 0
     call_seconds: float = SECONDS_PER_CALL
     calls_by_role: dict[str, int] = field(default_factory=dict[str, int])
@@ -135,19 +151,19 @@ class Budget:
 
     @classmethod
     def expired(cls, maximum: int, *, reserve: int, calls: int, approved: bool, journey: bool, calls_by_role: dict[str, int],
-                seconds_by_role: dict[str, float], retries: int, call_seconds: float) -> Budget:
+                seconds_by_role: dict[str, float], retries: int, call_seconds: float, cap: int = 0) -> Budget:
         """Return a budget whose deadline has passed and that keeps the spent calls, retries, and role maps.
 
         A resumed run in the gated or replayed phase uses it, so every model call stops at its deadline check
         and the recorded counts stay whole: `calls` equals the sum of `calls_by_role`.
         """
-        return cls(maximum, 1.0, reserve, calls, time.monotonic() - 1.0, approved=approved, journey=journey,
+        return cls(maximum, 1.0, reserve, calls, time.monotonic() - 1.0, approved=approved, journey=journey, cap=cap,
                    retries=retries, call_seconds=call_seconds, calls_by_role=calls_by_role, seconds_by_role=seconds_by_role)
 
     def _caps(self) -> tuple[int, int]:
         if not self.approved:
             return UNAPPROVED_CALLS, UNAPPROVED_SECONDS
-        return ceilings(self.journey)
+        return ceilings(self.journey, self.cap)
 
     def remaining(self) -> float:
         """Return the seconds left before the deadline, less any time that the holdout gate still holds."""
@@ -244,11 +260,12 @@ def approve(sized: Estimate, approved_calls: int | None, *, reserve: int, reserv
     """
     if sized.calls < 1:
         raise ValueError("an approved run needs at least 1 call")
-    max_calls, max_seconds = ceilings(sized.journey)
+    max_calls, max_seconds = ceilings(sized.journey, sized.cap)
     if sized.calls > max_calls or sized.seconds > max_seconds:
         cap = f"{max_calls} calls and {max_seconds} seconds"
         raise BudgetUnapproved(f"estimate of {sized.calls} calls and {sized.seconds} seconds exceeds the cap of {cap}")
     if approved_calls is None or approved_calls < sized.calls:
         raise BudgetUnapproved(f"approve {sized.calls} calls (about {sized.seconds} seconds) before any model call")
     return Budget(sized.calls, max_seconds, min(reserve, sized.calls), approved=True,
-                  reserve_seconds=min(reserve_time, max_seconds), journey=sized.journey)
+                  reserve_seconds=min(reserve_time, max_seconds), journey=sized.journey, cap=sized.cap)
+
