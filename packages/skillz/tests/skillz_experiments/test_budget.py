@@ -170,17 +170,29 @@ def test_slot_wait_counts_against_the_call_timeout(tmp_path: Path, monkeypatch: 
                         environment={"PATH": os.defpath})
         assert time.monotonic() - began < 5.0
 
-        # Observe the timeout the child receives. The holders free the slots no sooner than
-        # 0.5 s after the wait starts, and load only lengthens the wait. With the slot-wait
+        # Observe the timeout the child receives. The holders free the slots 0.5 s after the call
+        # starts to wait for a slot, and load only lengthens the wait. With the slot-wait
         # subtraction, the child gets less than 5.0 - 0.4 s. Without it, the child gets the full 5.0 s.
         spawned: list[float] = []
+        waiting = threading.Event()
+        acquire = runtime._CHILDREN.acquire  # pyright: ignore[reportPrivateUsage]
 
         def spawn(command: list[str], _cwd: Path, timeout: float, *_rest: object) -> subprocess.CompletedProcess[str]:
             spawned.append(timeout)
             return subprocess.CompletedProcess(command, 0, "", "")
 
+        def signalled(timeout: float) -> bool:
+            waiting.set()
+            return acquire(timeout)
+
+        def release_after_the_wait_starts() -> None:
+            _ = waiting.wait(10)
+            time.sleep(0.5)
+            release.touch()
+
         monkeypatch.setattr(runtime, "_spawn", spawn)
-        threading.Timer(0.5, release.touch).start()
+        monkeypatch.setattr(runtime._CHILDREN, "acquire", signalled)  # pyright: ignore[reportPrivateUsage]
+        threading.Thread(target=release_after_the_wait_starts, daemon=True).start()
         _ = process([sys.executable, "-c", "pass"], cwd=tmp_path, timeout=5.0,
                     environment={"PATH": os.defpath})
         assert len(spawned) == 1
