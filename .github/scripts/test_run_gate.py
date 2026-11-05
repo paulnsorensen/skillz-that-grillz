@@ -22,6 +22,8 @@ import merge_durations  # noqa: E402
 import run_gate  # noqa: E402
 
 RUNNER = Path(run_gate.__file__).resolve()
+# A hang guard, not a speed check: a starved host can take far longer than 10 s to start a child.
+HANG_GUARD = 120
 FAKE_TOOL = """#!/usr/bin/env python3
 import os, pathlib, signal, subprocess, sys, time
 args = sys.argv[1:]
@@ -51,7 +53,8 @@ if os.environ.get('COMPILER_ENV_LOG'):
             log.write('child ' + probe.stdout)
 if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
     pid_file = pathlib.Path(os.environ['CHILD_PID'])
-    pid_tmp = pid_file.with_name(pid_file.name + '.tmp')
+    # Parallel steps each run a fake `just`, so each writes its own temporary file.
+    pid_tmp = pid_file.with_name(pid_file.name + '.' + str(os.getpid()) + '.tmp')
     pid_tmp.write_text(str(os.getpid()))
     os.replace(pid_tmp, pid_file)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -113,7 +116,7 @@ class GateRunnerTest(unittest.TestCase):
                             expected = root / configured
                     expected = expected.resolve()
                     result = subprocess.run([sys.executable, str(RUNNER), mode], env=env,
-                                            capture_output=True, text=True, check=False, timeout=10)
+                                            capture_output=True, text=True, check=False, timeout=HANG_GUARD)
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     events = (root / "events").read_text().splitlines()
                     self.assertEqual(events.count("uv python dir"), 0 if configured else 1)
@@ -140,7 +143,7 @@ class GateRunnerTest(unittest.TestCase):
                 env = {**self._fake_env(root), "UV_PYTHON_INSTALL_DIR": "",
                        "FAKE_PYTHON_DIR_STATUS": status, "FAKE_PYTHON_DIR": output}
                 result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
-                                        capture_output=True, text=True, check=False, timeout=10)
+                                        capture_output=True, text=True, check=False, timeout=HANG_GUARD)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn(diagnostic, result.stdout + result.stderr)
                 commands = [event for event in (root / "events").read_text().splitlines()
@@ -153,7 +156,7 @@ class GateRunnerTest(unittest.TestCase):
             self._fake_eatmydata(root)
             env = {name: value for name, value in self._fake_env(root).items() if name != "GATE_EATMYDATA"}
             result = subprocess.run([sys.executable, str(RUNNER), "fix"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             # Each pytest lane runs as `eatmydata env COVERAGE_FILE=<lane data> uv run ...`.
@@ -174,7 +177,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             self._fake_eatmydata(root)
             result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=self._fake_env(root),
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             self.assertEqual(sum(" pytest " in event for event in events), 2)
@@ -242,7 +245,7 @@ class GateRunnerTest(unittest.TestCase):
                 gate = subprocess.Popen([sys.executable, str(RUNNER), "skillz"], env=env,
                                         stdout=stdout, stderr=subprocess.STDOUT)
             try:
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + HANG_GUARD
                 while "waiting for a host gate slot" not in log.read_text() and time.monotonic() < deadline:
                     time.sleep(.02)
                 self.assertIn("… waiting for a host gate slot (1 busy; GATE_HOST_SLOTS sets the count)", log.read_text())
@@ -252,7 +255,7 @@ class GateRunnerTest(unittest.TestCase):
                 self.assertTrue(events[0].startswith("uv sync "), events)
                 self.assertFalse(any(" pytest " in event for event in events))
                 held.close()
-                self.assertEqual(gate.wait(timeout=10), 0, log.read_text())
+                self.assertEqual(gate.wait(timeout=HANG_GUARD), 0, log.read_text())
                 self.assertIn("✓ host gate slot", log.read_text())
                 self.assertEqual(sum(" pytest " in event for event in (root / "events").read_text().splitlines()), 2)
             finally:
@@ -270,7 +273,7 @@ class GateRunnerTest(unittest.TestCase):
             assert held is not None
             try:
                 result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
-                                        capture_output=True, text=True, check=False, timeout=10)
+                                        capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             finally:
                 held.close()
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -321,7 +324,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = self._fake_env(root)
             result = subprocess.run([sys.executable, str(RUNNER), "fix"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             # The format steps run beside the workspace sync; all three end before the archive build.
@@ -363,7 +366,7 @@ class GateRunnerTest(unittest.TestCase):
                 root = Path(directory)
                 env = {**self._fake_env(root), "FAIL_JUST": failing}
                 result = subprocess.run([sys.executable, str(RUNNER), mode], env=env,
-                                        capture_output=True, text=True, check=False, timeout=10)
+                                        capture_output=True, text=True, check=False, timeout=HANG_GUARD)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
                 self.assertIn("format failure", result.stdout)
                 self.assertIn(f"✗ {step}", result.stdout)
@@ -378,7 +381,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = {name: value for name, value in self._fake_env(root).items() if name != "TEST_WORKERS"}
             result = subprocess.run([sys.executable, "-c", pinned, str(RUNNER)], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             pytest_events = [event for event in (root / "events").read_text().splitlines() if " pytest " in event]
             unit = [event for event in pytest_events if "pytest packages/skillz/tests --ignore" in event]
@@ -400,7 +403,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = {**self._fake_env(root), "SKILLZ_LIVE": "1"}
             result = subprocess.run([sys.executable, str(RUNNER), "fix"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             self.assertTrue(any("packages/skillz/tests" in event for event in events))
@@ -411,7 +414,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = self._fake_env(root)
             result = subprocess.run([sys.executable, str(RUNNER), "fromargs", "3.11"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             event = (root / "events").read_text().strip()
             self.assertIn("uv run --locked --python 3.11 --project packages/fromargs pytest", event)
@@ -427,7 +430,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = self._fake_env(root)
             result = subprocess.run([sys.executable, str(RUNNER), "agent-session-analytics", "3.11"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             event = (root / "events").read_text().strip()
             self.assertIn("--project packages/agent-session-analytics pytest packages/agent-session-analytics/tests", event)
@@ -438,7 +441,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = {**self._fake_env(root), "GATE_SKIP": " skillz-e2e-pytest, skillz-pytest ,"}
             result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             self.assertFalse(any("packages/skillz/tests" in event for event in events))
@@ -454,7 +457,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = {**self._fake_env(root), "GATE_SKIP": "skillz-pytest,skilz-e2e-pytest"}
             result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 2)
             self.assertIn("GATE_SKIP names unknown lanes: skilz-e2e-pytest", result.stderr)
             self.assertFalse((root / "events").exists())
@@ -464,7 +467,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = self._fake_env(root)
             result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = [event for event in (root / "events").read_text().splitlines()
                       if not event.startswith("coverage-file ")]
@@ -484,7 +487,7 @@ class GateRunnerTest(unittest.TestCase):
             data = root / "data"
             env = {**self._fake_env(root), "GATE_SHARD": "2/4", "GATE_COVERAGE_DIR": str(data)}
             result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             pytest_events = [event for event in events if " pytest " in event]
@@ -507,7 +510,7 @@ class GateRunnerTest(unittest.TestCase):
                 _ = (durations / stale).write_text("<testsuites />")
             env = {**env, "GATE_SKIP": "skillz-e2e-pytest"}
             result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual([path.name for path in durations.iterdir()], ["skillz-pytest.2of4.json"])
 
@@ -520,7 +523,7 @@ class GateRunnerTest(unittest.TestCase):
                                  "    print('breach: tests/test_slow.py')", "    sys.exit(1)", ""])
             _ = (root / "uv").write_text(FAKE_TOOL + failing)
             result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("• test-time-report (report only)\nbreach: tests/test_slow.py\n", result.stdout)
             events = (root / "events").read_text().splitlines()
@@ -539,7 +542,7 @@ class GateRunnerTest(unittest.TestCase):
                 _ = (data / name).write_text("")
             env = {**self._fake_env(root), "GATE_COVERAGE_DIR": str(data)}
             result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             files = [event.removeprefix("coverage-file ") for event in events if event.startswith("coverage-file ")]
@@ -564,14 +567,14 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = {**self._fake_env(root), "GATE_SKIP": "skillz-pytest"}
             result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("- coverage (needs skillz-pytest)", result.stdout)
             self.assertFalse(any(" .github/scripts/check_coverage.py " in event
                                  for event in (root / "events").read_text().splitlines()))
             env = {**self._fake_env(root), "GATE_SKIP": "coverage"}
             result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("- coverage (skipped by GATE_SKIP)", result.stdout)
 
@@ -582,7 +585,7 @@ class GateRunnerTest(unittest.TestCase):
             env = self._fake_env(root)
             _ = tool.write_text(FAKE_TOOL + "if args == ['lint-yaml']:\n    sys.exit(3)\n")
             result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
             self.assertNotIn("coverage", result.stdout.replace("coverage-tests", ""))
             # A failed lane still prints the report-only time step.
@@ -593,7 +596,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             env = {**self._fake_env(root), "GATE_SHARD": "2/6", "GATE_COVERAGE_DIR": str(root / "data")}
             result = subprocess.run([sys.executable, str(RUNNER), "skillz"], env=env,
-                                    capture_output=True, text=True, check=False, timeout=10)
+                                    capture_output=True, text=True, check=False, timeout=HANG_GUARD)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             files = sorted(Path(event.split(" ", 1)[1]).name for event in events if event.startswith("coverage-file "))
@@ -608,7 +611,7 @@ class GateRunnerTest(unittest.TestCase):
             for mode, value in cases:
                 with self.subTest(mode=mode, value=value):
                     result = subprocess.run([sys.executable, str(RUNNER), mode], env={**env, "GATE_SHARD": value},
-                                            capture_output=True, text=True, check=False, timeout=10)
+                                            capture_output=True, text=True, check=False, timeout=HANG_GUARD)
                     self.assertEqual(result.returncode, 2)
                     self.assertIn("GATE_SHARD", result.stderr)
                     self.assertFalse((root / "events").exists())
@@ -672,7 +675,7 @@ class GateRunnerTest(unittest.TestCase):
             runner = subprocess.Popen([sys.executable, str(RUNNER), "fix"], env=env,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + HANG_GUARD
                 while not (root / "pid").exists() and time.monotonic() < deadline:
                     time.sleep(.02)
                 self.assertTrue((root / "pid").exists())
@@ -707,7 +710,7 @@ class GateRunnerTest(unittest.TestCase):
             root = Path(directory)
             for mode in ("check", "fromargs"):
                 result = subprocess.run([sys.executable, str(RUNNER), mode], env=self._fake_env(root),
-                                        capture_output=True, text=True, check=False, timeout=10)
+                                        capture_output=True, text=True, check=False, timeout=HANG_GUARD)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             events = (root / "events").read_text().splitlines()
             # One `<test tree> <limit>` pair per pytest lane: `coverage run -m pytest <tree>` or `pytest <tree>`.
