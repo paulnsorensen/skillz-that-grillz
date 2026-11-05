@@ -53,7 +53,8 @@ if os.environ.get('COMPILER_ENV_LOG'):
             log.write('child ' + probe.stdout)
 if os.environ.get('HANG_JUST') and pathlib.Path(sys.argv[0]).name == 'just':
     pid_file = pathlib.Path(os.environ['CHILD_PID'])
-    pid_tmp = pid_file.with_name(pid_file.name + '.tmp')
+    # Parallel steps each run a fake `just`, so each writes its own temporary file.
+    pid_tmp = pid_file.with_name(pid_file.name + '.' + str(os.getpid()) + '.tmp')
     pid_tmp.write_text(str(os.getpid()))
     os.replace(pid_tmp, pid_file)
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
@@ -244,7 +245,7 @@ class GateRunnerTest(unittest.TestCase):
                 gate = subprocess.Popen([sys.executable, str(RUNNER), "skillz"], env=env,
                                         stdout=stdout, stderr=subprocess.STDOUT)
             try:
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + HANG_GUARD
                 while "waiting for a host gate slot" not in log.read_text() and time.monotonic() < deadline:
                     time.sleep(.02)
                 self.assertIn("… waiting for a host gate slot (1 busy; GATE_HOST_SLOTS sets the count)", log.read_text())
@@ -674,7 +675,7 @@ class GateRunnerTest(unittest.TestCase):
             runner = subprocess.Popen([sys.executable, str(RUNNER), "fix"], env=env,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
             try:
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + HANG_GUARD
                 while not (root / "pid").exists() and time.monotonic() < deadline:
                     time.sleep(.02)
                 self.assertTrue((root / "pid").exists())
