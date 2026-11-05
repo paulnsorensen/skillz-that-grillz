@@ -676,8 +676,18 @@ The runner adds the sources of an own target in this order:
 1. The target whose `.pyz` the contract helper names.
 2. Each other target for which `SKILL.md` names `scripts/NAME.pyz`, in `wedge.toml` order.
 
-A target joins only while the text total stays within the 1,000,000-character limit.
-The first target that does not fit stays frozen, and so does every later target.
+A target joins whole while the text total stays within the 1,000,000-character limit and its sources fit the wedge edit limit.
+A target that does not fit whole stays editable in part. The part holds these sources, in this order:
+
+1. The sources that an earlier editable target already offers.
+2. The own package: the sources in a directory named after the skill directory, such as `src/pkg/skills/cook` for `skills/cook`.
+3. Each other source that `SKILL.md` or a contract path names, by a path such as `shared/x.py` or a module such as `pkg.shared.x`.
+
+The part stops at the first source that does not fit.
+Every other source of the target stays a fixed file, and each rebuild stages it from the seed.
+Shared code is editable only when the skill names it. An edit to it changes the archives of other skills, and the holdout gate scores only this skill.
+The run record `own_targets.partial` says why a target is editable only in part. `own_targets.fixed` lists its fixed files.
+A target with no part that fits stays frozen, and so does every later target.
 A target also stays frozen when one source file is binary, is not UTF-8, or is over 262144 bytes.
 The files `wedge.toml`, `uv.lock`, and every `.pyz` are never editable.
 A contract helper path may name an own `.pyz`. The path then does not stop with `helper-file-missing`.
@@ -1381,7 +1391,8 @@ A foreign `.pyz` bundle is a `.pyz` file below the skill that no own target buil
 A `.pyz` that a lower `wedge.toml` builds is own when that directory has no sibling `SKILL.md`. A nested skill has one.
 The wedge edit limit counts characters with the same rule as the run planner.
 The check tests each own target alone, because a run's combined budget depends on the targets it offers.
-An own target is frozen for the planner reasons in `### Editable sources`. Examples are a source file over 262144 bytes and sources over the wedge edit limit.
+The check reads no SKILL.md or contract names. So it reports an oversized target with no own package as frozen, even when a run can edit the files that SKILL.md names.
+An own target is frozen for the planner reasons in `### Editable sources`. Examples are a source file over 262144 bytes and an own package over the wedge edit limit.
 The `wedge.own-targets` detail marks each frozen target. This is not a failure.
 A `prose+cli` run cannot edit a frozen target. Use these checks to decide whether to wedge a skill before a run.
 A reference listed nowhere in `## References` reports `not-applicable` for `references.read-trigger`.
