@@ -168,6 +168,7 @@ max_seconds = 20
 "tests/skillz_experiments/test_ac_marker.py" = { max_seconds = 43, reason = "Slowest of CI runs 41417007579 and 41419094652: 17.1 s, before the prune PR." }
 "tests/skillz_experiments/test_analytics_packs.py" = { max_seconds = 45, reason = "Slowest of CI runs 41417007579 and 41419094652: 17.9 s, before the prune PR." }
 "tests/skillz_experiments/test_autoimprove_claims.py" = { max_seconds = 557, reason = "Slowest of CI runs 41417007579 and 41419094652: 222.5 s, before the prune PR." }
+"tests/skillz_experiments/test_budget_cap_run.py" = { max_seconds = 34, reason = "CI run 42105553664 (PR #683): 13.4 s for its one full 28-family search test. Approved by the owner on 2026-11-05." }
 "tests/skillz_experiments/test_bundle.py" = { max_seconds = 83, reason = "Slowest of CI runs 41417007579 and 41419094652: 33.2 s, before the prune PR." }
 "tests/skillz_experiments/test_call_timeout.py" = { max_seconds = 73, reason = "Slowest of CI runs 41417007579 and 41419094652: 28.9 s, before the prune PR." }
 "tests/skillz_experiments/test_check_timeouts.py" = { max_seconds = 54, reason = "Slowest of CI runs 41417007579 and 41419094652: 21.5 s, before the prune PR." }
