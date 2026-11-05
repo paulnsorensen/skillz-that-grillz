@@ -5,15 +5,17 @@
 # version stay with a human. A new push to the PR checks the policy again and
 # disables auto-merge when the bump no longer fits it.
 #
-# Only main is a merge target. Dependabot security PRs open against dist, the
-# default branch, and the retarget job owns them (AGENTS.md, branch targets).
+# pull_request_target runs this file from main, not from the PR. A Dependabot
+# PR that bumps dependabot/fetch-metadata thus cannot run the new action with
+# the write token before a human reviews it. The job never checks out or runs
+# PR code.
 #
 # A merge that auto-merge does with GITHUB_TOKEN does not start push
 # workflows on the base branch. The next human merge starts them.
 name: dependabot auto-merge
 
 on:
-  pull_request:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] no checkout; reads PR metadata only
     branches: [main]
     types: [opened, reopened, synchronize]
 
