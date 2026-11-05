@@ -1391,6 +1391,7 @@ A foreign `.pyz` bundle is a `.pyz` file below the skill that no own target buil
 A `.pyz` that a lower `wedge.toml` builds is own when that directory has no sibling `SKILL.md`. A nested skill has one.
 The wedge edit limit counts characters with the same rule as the run planner.
 The check tests each own target alone, because a run's combined budget depends on the targets it offers.
+The check reads no SKILL.md or contract names. So it reports an oversized target with no own package as frozen, even when a run can edit the files that SKILL.md names.
 An own target is frozen for the planner reasons in `### Editable sources`. Examples are a source file over 262144 bytes and an own package over the wedge edit limit.
 The `wedge.own-targets` detail marks each frozen target. This is not a failure.
 A `prose+cli` run cannot edit a frozen target. Use these checks to decide whether to wedge a skill before a run.
