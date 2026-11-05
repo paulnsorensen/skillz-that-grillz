@@ -1202,7 +1202,7 @@ A run with any journey case shows a separate journey estimate line, with `calls`
 The runner asks for approval once. It stops with `budget-exhausted` at 1000 calls or 28800 seconds.
 The plan charges 30 seconds for each call, or 15 seconds with 2 calls at once. The call cap therefore binds first, at 1000 calls.
 The estimate records `seconds_per_call`. A run prepared with the earlier 60-second rate stops on resume: create a new run.
-A run without a journey case keeps the limits of 200 calls and 7200 seconds.
+A run without a journey case keeps the limits of 200 calls and 7200 seconds. `--approve-budget N` above 200 raises its call cap to N, at most 1000, with 36 seconds for each call, at most 28800 seconds.
 
 ## Isolation and records
 
@@ -1222,7 +1222,7 @@ The harness reference that `SKILL.md` lists defines its preflight and login hand
 The runner rejects failed probes or missing discovery before inference.
 
 The preflight, the search, the reflection calls, and the holdout gate share one persisted call budget.
-Approval sets the limit: up to 200 calls and 7200 seconds. At most two model calls run at once.
+Approval sets the limit: up to 200 calls and 7200 seconds, or up to N calls with `--approve-budget N` above 200. At most two model calls run at once.
 A run with a journey case uses the larger journey limit. See "Journeys".
 The deadline spans the whole run, including pauses between `run` commands.
 Process-group cancellation enforces the deadline. The runner does not retry automatically.
