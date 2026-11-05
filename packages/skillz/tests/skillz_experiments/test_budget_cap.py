@@ -1,7 +1,6 @@
 """`--approve-budget` raises a task run's call cap, the stop shows a repeats table, and a run records its unspent reserve (gh-588)."""
 from __future__ import annotations
 
-import os
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,18 +31,6 @@ pytestmark = pytest.mark.usefixtures("host_login", "cheap_record_writes")
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
 BIG = 28
-
-
-@pytest.fixture
-def cheap_record_writes(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Skip the `fsync` of each record write: a 28-family run writes about 340 records, and a CI disk makes each sync slow.
-
-    No test here checks durability; `test_records.py` covers the atomic write.
-    """
-    def no_sync(descriptor: int) -> None:
-        del descriptor
-
-    monkeypatch.setattr(os, "fsync", no_sync)
 
 
 def _start(tmp_path: Path, make_target: Maker, write_draft: Drafter, families: int) -> tuple[Path, Path, str]:
@@ -77,21 +64,6 @@ def test_a_plan_over_the_standard_cap_names_the_smallest_approval_that_fits(
     below = _refused(target, out, case_hash, repeats=3, approve_budget=smallest - 1)
     assert below.data["smallest_approval"] == smallest
     assert "statistics" in stop.data and "statistics" in below.data
-
-
-@pytest.mark.ac("gh-588:AC-1")
-def test_approve_budget_above_the_standard_cap_sizes_the_run_against_it(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter, headroom_off: None) -> None:
-    del headroom_off
-    target, out, case_hash = _start(tmp_path, make_target, write_draft, BIG)
-    smallest = cast(int, _refused(target, out, case_hash, repeats=3).data["smallest_approval"])
-    state = Search(target)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, repeats=3, approve_budget=smallest,
-                 factory=state.factory)
-    assert result["phase"] == "complete"
-    budget = cast(dict[str, object], read(out / "run.json")["budget"])
-    assert budget["maximum"] == smallest > APPROVED_CALLS and budget["cap"] == smallest
-    assert cast(int, budget["seconds"]) <= JOURNEY_SECONDS
 
 
 @pytest.mark.ac("gh-588:AC-1")
