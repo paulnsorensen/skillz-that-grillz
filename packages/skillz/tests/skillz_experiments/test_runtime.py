@@ -94,7 +94,7 @@ def test_a_second_interrupt_during_the_grace_wait_still_kills_a_child_that_ignor
         timer.start()
         try:
             with pytest.raises(KeyboardInterrupt):
-                _runtime._end(child)  # pyright: ignore[reportPrivateUsage]
+                _runtime.end_group(child)
         finally:
             timer.cancel()
         assert child.poll() is not None
