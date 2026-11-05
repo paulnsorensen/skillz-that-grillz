@@ -430,8 +430,9 @@ class _Driver:
         code = main(['run', '--target', str(self.target), '--out', str(self.out), '--model', 'offline', '--edit', 'prose', *self.harness,
                      '--live', *extra])
         captured = self.capsys.readouterr()
+        errors = ''.join(line for line in captured.err.splitlines(keepends=True) if not line.startswith('skillz-experiment: warning:'))
         return (code, cast(dict[str, object], json.loads(captured.out)) if captured.out else {},
-                cast(dict[str, object], json.loads(captured.err)) if captured.err else {})
+                cast(dict[str, object], json.loads(errors)) if errors else {})
 
     def finish(self) -> tuple[int, dict[str, object], dict[str, object]]:
         _, cases, _ = self.call()
