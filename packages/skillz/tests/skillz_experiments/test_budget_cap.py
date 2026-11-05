@@ -1,6 +1,7 @@
 """`--approve-budget` raises a task run's call cap, the stop shows a repeats table, and a run records its unspent reserve (gh-588)."""
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,11 +27,23 @@ from skillz_experiments.run._sizing import raised_cap
 from skillz_experiments.run._unspent import search_end, with_unspent
 from test_run_search import MODEL, Search
 
-pytestmark = pytest.mark.usefixtures("host_login")
+pytestmark = pytest.mark.usefixtures("host_login", "cheap_record_writes")
 
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
 BIG = 28
+
+
+@pytest.fixture
+def cheap_record_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the `fsync` of each record write: a 28-family run writes about 340 records, and a CI disk makes each sync slow.
+
+    No test here checks durability; `test_records.py` covers the atomic write.
+    """
+    def no_sync(descriptor: int) -> None:
+        del descriptor
+
+    monkeypatch.setattr(os, "fsync", no_sync)
 
 
 def _start(tmp_path: Path, make_target: Maker, write_draft: Drafter, families: int) -> tuple[Path, Path, str]:
