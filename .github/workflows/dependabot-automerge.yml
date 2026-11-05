@@ -1,8 +1,12 @@
-# Enable GitHub auto-merge on a Dependabot patch or minor bump when the PR
-# opens. GitHub then merges the PR only after the required status checks of
-# the base branch pass. The policy matches bin/dep-harvest-scan in
-# octopus-peach-sink-zero/routines: a major bump, a minor bump from 0.x, a
-# language toolchain bump, and an unknown version stay with a human.
+# Enable GitHub auto-merge on a Dependabot patch or minor bump to main. GitHub
+# then merges the PR only after the required status checks of main pass. The
+# policy matches bin/dep-harvest-scan in octopus-peach-sink-zero/routines: a
+# major bump, a minor bump from 0.x, a language toolchain bump, and an unknown
+# version stay with a human. A new push to the PR checks the policy again and
+# disables auto-merge when the bump no longer fits it.
+#
+# Only main is a merge target. Dependabot security PRs open against dist, the
+# default branch, and the retarget job owns them (AGENTS.md, branch targets).
 #
 # A merge that auto-merge does with GITHUB_TOKEN does not start push
 # workflows on the base branch. The next human merge starts them.
@@ -10,7 +14,8 @@ name: dependabot auto-merge
 
 on:
   pull_request:
-    types: [opened, reopened]
+    branches: [main]
+    types: [opened, reopened, synchronize]
 
 permissions: {}
 
@@ -24,6 +29,7 @@ jobs:
     if: >-
       github.event.pull_request.user.login == 'dependabot[bot]'
       && github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.base.ref == 'main'
     runs-on: ubuntu-latest
     permissions:
       contents: write # auto-merge squashes the PR into the base branch
@@ -58,3 +64,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: gh pr merge --auto --squash "$PR_URL"
+
+      - name: Disable auto-merge
+        if: steps.policy.outputs.arm != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |-
+          armed=$(gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null')
+          if [[ $armed == true ]]; then
+            gh pr merge --disable-auto "$PR_URL"
+          fi
