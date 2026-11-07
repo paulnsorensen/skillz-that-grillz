@@ -10,6 +10,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments.harness import EnvironmentDiffers
 from skillz_experiments.run._session import Session
 from skillz_experiments.run._state import Provider
+from skillz_experiments.run._telemetry import Telemetry
 
 
 @final
@@ -30,6 +31,7 @@ def _session(recorded: dict[str, object], observed: dict[str, object]) -> Sessio
     session.lock = threading.RLock()
     session.record = {"preflight": recorded, "environment_hash": recorded["environment_hash"]}
     session.provider = cast(Provider, cast(object, _Observing(observed)))
+    session.telemetry = Telemetry(None, session.record)
     return session
 
 

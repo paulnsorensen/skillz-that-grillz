@@ -16,6 +16,7 @@ from skillz_experiments.harness._claude import (NOTICE_CODES, TERMINAL_CODES, Cl
                                               resolve_read_roots)
 from skillz_experiments.harness._roles import (BUILTIN_ADAPTERS, ROLES, Role, adapter_class, command_paths, has_claude_sandbox,
                                                parse_role, unsupported_surface)
+from skillz_experiments.harness._steps import journey_steps
 from skillz_experiments.harness._transport import Transport
 
 
@@ -225,7 +226,8 @@ class Harness:
                  checks: CheckMemo) -> dict[str, object]:
         self._unchanged()
         return evaluate(self.transports["task"], self.transports["judge"], candidate, case, holdout=holdout,
-                        simulator=self.transports.get("simulator"), checks=checks)
+                        simulator=self.transports.get("simulator"), checks=checks,
+                        steps=journey_steps(self.configuration.roles["task"].adapter))
 
     def invoke(self, prompt: str, candidate: Candidate | None = None, case: Case | None = None,
                *, holdout: bool = False, schema: dict[str, object] | None = None) -> dict[str, object]:

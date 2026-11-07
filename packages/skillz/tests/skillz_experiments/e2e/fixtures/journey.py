@@ -47,10 +47,22 @@ def handle(workspace: Path, skill_name: str, message: str, turn: int) -> tuple[s
     else:
         text = value.upper() if "Uppercase fixture.md." in instructions else value
         helper_events = []
+    gate_events: list[dict[str, object]] = []
+    if (workspace / "gate.py").is_file() and "Uppercase fixture.md." in instructions:
+        # Only the improved skill runs the gate. Every reply claims it, so only the trace tells the runs apart.
+        _, gate_events = _command(workspace, ["/usr/bin/python3", "-I", "gate.py"], f"gate-{turn}")
     output = workspace / "output"
     output.mkdir(exist_ok=True)
     _ = (output / "result.txt").write_text(text)
-    return json.dumps({"text": text}), [*read_events, *helper_events]
+    claim = {"gate": "3 passed"} if (workspace / "gate.py").is_file() else {}
+    return json.dumps({"text": text, **claim}), [*read_events, *helper_events, *gate_events]
+
+
+def gate_shown(trace: object) -> bool:
+    """Return True when a trace step runs gate.py and its output shows the pass."""
+    steps = cast(list[dict[str, object]], trace) if isinstance(trace, list) else []
+    return any(step.get("tool") == "Bash" and "gate.py" in json.dumps(step.get("input")) and step.get("error") is False
+               and "gate: 3 passed" in str(step.get("output")) for step in steps)
 
 
 def simulate(prompt: str, fields: list[str]) -> dict[str, object]:
@@ -81,6 +93,9 @@ def judge(prompt: str, fields: list[str]) -> dict[str, object]:
                 for row in transcript)
     answered = any(row["role"] == "user" and row["text"].startswith("Value: ") for row in transcript)
     passed = asked and answered and files.get("output/result.txt") == reference["must"][0]
+    criteria = cast(list[dict[str, str]], cast(dict[str, object], reference)["criteria"])
+    if any(item["id"] == "gate-run" for item in criteria):
+        passed = passed and gate_shown(data.get("trace"))
     return verdicts(cast(dict[str, object], reference), 4 if passed else 1)
 
 
