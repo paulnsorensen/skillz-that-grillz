@@ -295,8 +295,8 @@ def judge(transport: object, grader: Grader, case: Case, answer: object, files: 
     instruction = JUDGE_INSTRUCTION
     data: dict[str, object] = {"request": case.request, "files": text_files(case.files), "answer": answer,
                                "output_files": files or {}, "reference": case.expected}
-    if journey:
-        data |= journey
+    data |= journey or {}
+    instruction += _audit.TRACE_INSTRUCTION if "trace" in data else ""
     if attachments:
         instruction += CAPTURE_INSTRUCTION
         data["capture_files"] = sorted(attachments)

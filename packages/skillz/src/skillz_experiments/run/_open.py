@@ -27,7 +27,9 @@ from skillz_experiments.run._stop import Stop
 CLOCK_TOLERANCE = 5.0
 
 # The modules whose source decides a score, next to every file in `gate/`. Follow a module when a later wave moves it into a slice.
-SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "_graders.py", "_audit.py", "_contract.py")
+# `evaluation/_trace.py` and `harness/_steps.py` shape the task trace that the journey judge sees.
+SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "evaluation/_trace.py",
+                 "harness/_steps.py", "_graders.py", "_audit.py", "_contract.py")
 
 
 def _source_files(root: Traversable, prefix: str = "") -> Iterator[tuple[str, str]]:
@@ -53,7 +55,8 @@ def leakage_digest(package: Traversable) -> str:
 def scoring_digest(package: Traversable) -> str:
     """Digest the source of the scoring modules under `package`: every file in `gate/`, then `SCORING_FILES`.
 
-    A scoring change gives a new digest. An edit to `search/`, `run/`, or `harness/` keeps it.
+    A scoring change gives a new digest. An edit to `search/`, `run/`, or `harness/` keeps it, except to the trace
+    renderer `harness/_steps.py`.
     """
     sources = dict(_source_files(package.joinpath("gate"), "gate/"))
     sources.update({name: package.joinpath(name).read_text(encoding="utf-8") for name in SCORING_FILES})

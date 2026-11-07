@@ -1189,7 +1189,13 @@ Any kind that uses the `journey` grader is a journey kind, and its name is free 
 The `journey` grader runs a command gate first.
 The gate sees the case fixtures at the root, the agent files under `output/`, and the raw events in `trace/events.jsonl`.
 A gate score of 0 or less skips the judge and records `gate-failed`.
-Otherwise the judge sees the request, the brief, the transcript, the output files, and the reference.
+Otherwise the judge sees the request, the brief, the transcript, the output files, the reference, and the task trace.
+On the `claude` and `codex` harnesses, the `trace` field lists the task's messages and tool calls in order, each with its `turn`.
+A tool call shows its input, its output, and whether it failed; a Codex command also shows its `exit_code` and a file change shows its diff.
+The judge counts a step as done only when the trace, the transcript, or the output files show it. A claim in a reply is not evidence.
+The runner redacts credentials in the trace. It keeps the first 1000 and the last 3000 characters of a longer value.
+Past 48000 characters, it keeps the first and the last steps and marks the gap with `omitted_steps`.
+The simulator never sees the trace. A `command` harness journey has no trace.
 
 The `simulator` role answers from the brief with `{reply, done}`.
 It uses the judge role unless the harness configuration sets it.
@@ -1246,7 +1252,7 @@ Each run freezes a compatibility fingerprint in `run.json` as `compatibility`. `
 The fingerprint is the digest of `compatibility.fields`. The fields hold no case text.
 The fields are `contract_hash`, `skill`, `adapter`, `task_model`, `judge_model`, `claude_options`, `edit`, `repeats`, `statistics`, `split_digest`, `scoring_digest`, and `leakage_digest`.
 `judge_model` is `null` when no case kind is judged.
-`scoring_digest` covers the source of the scoring modules. An edit to the search, run, or harness code keeps it.
+`scoring_digest` covers the source of the scoring modules and of the judge trace renderer. Another edit to the search, run, or harness code keeps it.
 `leakage_digest` covers the source of the leakage check. A change to a rule or a threshold starts a new cohort.
 `run.compare(a, b)` names each field that differs between two run records.
 It returns `("missing-fingerprint",)` when either record has no fingerprint.

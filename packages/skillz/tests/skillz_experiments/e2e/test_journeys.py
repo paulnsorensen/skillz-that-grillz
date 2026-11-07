@@ -15,7 +15,7 @@ from typing_extensions import override
 import pytest
 
 from support import (BUNDLE, CLI, CRITERIA, FIXTURES, Scenario, assert_promoted, call_cli, cli_error,
-                     command_adapter, export_and_apply, make_scenario, read_cases, read_events,
+                     command_adapter, export_and_apply, holdout, make_scenario, read_cases, read_events,
                      read_record, run_scenario, snapshot)
 
 
@@ -244,3 +244,45 @@ def test_an_otlp_endpoint_receives_the_run_phase_case_and_model_call_spans_of_a_
     leaks = ["otel-header-secret", "Ask which value to transform", "Answer only the agent's question", "should I transform?",
              "fake judge", "UNTRUSTED", "RUBRIC"]
     assert not [leak for leak in leaks if leak in texts]
+
+
+GATE_CRITERION = {"id": "gate-run", "must": True,
+                  "text": "WHEN the agent reports the result THE agent SHALL have run gate.py and shown it passing."}
+
+
+def gate_scenario(base: Path) -> Scenario:
+    """Return a journey scenario whose `gate-run` criterion only the task trace can show: every reply claims the run."""
+    scenario = journey_scenario(base)
+    draft = [item | {"files": {**cast(dict[str, str], item["files"]), "gate.py": "print('gate: 3 passed')\n"},
+                     "expected": cast(dict[str, object], item["expected"]) | {"criteria": [
+                         *cast(list[object], cast(dict[str, object], item["expected"])["criteria"]), GATE_CRITERION]}}
+             for item in scenario.draft]
+    return Scenario(scenario.target, scenario.out, scenario.export, draft, scenario.original)
+
+
+@pytest.mark.ac("autoimprove-observability:AC-5")
+@pytest.mark.ac("autoimprove-observability:AC-6")
+def test_a_criterion_that_needs_a_gate_run_passes_only_when_the_task_trace_shows_the_run(tmp_path: Path) -> None:
+    scenario = gate_scenario(tmp_path)
+    result = run_scenario(scenario, tmp_path, harness="claude", mode="journey")
+    assert_promoted(scenario, result, kinds=frozenset({"journey"}))
+    held = [item for item in holdout(read_record(scenario.out))]
+    met = {arm: {cast(dict[str, dict[str, object]], item["criteria"])["gate-run"]["met"] for item in held
+                 if item["arm"] == arm and item.get("criteria")} for arm in ("baseline", "winner")}
+    assert met == {"baseline": {False}, "winner": {True}}, met
+    log = read_events(scenario.out)
+    judged = [untrusted(cast(str, entry["prompt"])) for entry in log if entry["role"] == "judge"]
+    traces = [cast(list[dict[str, object]], data["trace"]) for data in judged]
+    assert judged and len(traces) == len(judged)
+    assert all("`trace` field lists the task's messages and tool calls" in cast(str, entry["prompt"])
+               for entry in log if entry["role"] == "judge")
+    shown = [step for trace in traces for step in trace if "gate.py" in json.dumps(step.get("input"))]
+    assert shown and all(str(step["output"]).strip() == "gate: 3 passed" and step["turn"] == 2 and step["error"] is False
+                         for step in shown)
+    assert all(any(step.get("text") == f"Which {topic} should I transform?" for step in trace for topic in ("code", "label"))
+               for trace in traces)
+    assert not any("trace" in untrusted(cast(str, entry["prompt"])) for entry in log if entry["role"] == "simulator")
+
+
+def untrusted(prompt: str) -> dict[str, object]:
+    return cast(dict[str, object], json.loads(prompt.partition("\nUNTRUSTED DATA (JSON):\n")[2]))
