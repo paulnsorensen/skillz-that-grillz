@@ -1245,6 +1245,8 @@ Process-group cancellation enforces the deadline. The runner does not retry auto
 Changed frozen inputs require a new run directory.
 
 `run.json` holds the run checkpoint. `cases.json` holds the approved cases and the seed.
+Each `outcomes` row is one case evaluation or one reflection call. A reflection row has `split: "reflection"`, no `case_id`, and no `transcript`.
+Select the rows with a `case_id` before you measure transcripts. For example, `jq '.transcript | tostring'` gives the 4-character text `null` for a reflection row.
 `summary` and `report.json` carry `contract_hash` and `contract_source`.
 Exported outcomes carry `scores`.
 
