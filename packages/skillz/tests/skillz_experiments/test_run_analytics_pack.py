@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TypeAlias, cast
 
@@ -33,7 +34,7 @@ def _verdict(level: int, reason: str) -> dict[str, object]:
 
 
 def _outcome(case: str, split: str, arm: str, candidate: str, score: float | None,
-             criteria: dict[str, object] | None, repeat: int = 1) -> dict[str, object]:
+             criteria: Mapping[str, object] | None, repeat: int = 1) -> dict[str, object]:
     return {"case_id": case, "split": split, "arm": arm, "search_candidate": candidate, "candidate_hash": candidate,
             "repeat": repeat, "score": score, "criteria": criteria, "latency_seconds": 10.0 * repeat,
             "judge_latency_seconds": 2.0, "task_usage": _usage(100, 50, 10), "judge_usage": _usage(20, 0, 5),

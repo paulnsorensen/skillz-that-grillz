@@ -1,8 +1,25 @@
 # Run analytics
 
-Use these DuckDB queries to see how an `autoimprove` run goes.
-They read `<out>/run.json`, which the runner rewrites after each case evaluation.
-You can run them while the run works, or after it completes.
+Use the `watch` page or these DuckDB queries to see how an `autoimprove` run goes.
+Both read `<out>/run.json`, which the runner rewrites after each case evaluation.
+You can use them while the run works, or after it completes.
+
+## Watch a run
+
+When the user wants to follow a run, start the page in the background:
+
+```bash
+python3 scripts/skillz-experiment.pyz watch <out>
+```
+
+The first stdout line is JSON with the page `url`. Give that URL to the user.
+The page shows the phase, the calls and seconds against their caps, each role, and the leaderboard.
+It also shows each case with the judge reason of each unmet criterion, the reflections, and the newest outcomes.
+It reloads the data every 2 seconds. Stop it with Ctrl-C when the user is done.
+
+The page listens only on 127.0.0.1, answers only GET requests, and writes no file.
+It shows no transcript and no candidate file. `--port N` sets the port; the default 0 picks a free port.
+The page does not need DuckDB.
 
 ## Inputs
 
