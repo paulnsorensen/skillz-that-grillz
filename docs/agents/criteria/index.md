@@ -30,6 +30,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 <!-- HALLOUMINATE:INDEX-START -->
 - [autoimprove-authoring-headroom](./autoimprove-authoring-headroom.md) — autoimprove-authoring-headroom: stop a run when the seed already saturates a family
 - [autoimprove-live-proof](./autoimprove-live-proof.md) — autoimprove-live-proof: the autoimprove journey promotes a planted-defect fix with a suggested CLI
+- [autoimprove-observability](./autoimprove-observability.md) — autoimprove-observability: trace a run, and let the judge see the task's evidence
 - [autoimprove-seed-signals](./autoimprove-seed-signals.md) — autoimprove-seed-signals: a command gate keeps its output tails and records a gate fault
 - [autoimprove-useful-answer](./autoimprove-useful-answer.md) — autoimprove-useful-answer: a stopped baseline answers a diagnosis, and a missing fixture stops before a call
 - [fromargs-benefit-smoke](./fromargs-benefit-smoke.md) — fromargs-benefit-smoke: autoimprove writes its own eval and ships a fromargs CLI
