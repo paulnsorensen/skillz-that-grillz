@@ -70,8 +70,8 @@ def test_configuration_grants_only_the_task_tmpdir(tmp_path: Path) -> None:
     arguments = configuration(workspace, executable, [])
     tmpdir = tmp_path / "tmp"
     filesystem = {":root": "deny", ":minimal": "read", ":slash_tmp": "deny", str(workspace): "write",
-                  str(workspace / ".agents"): "read", str(tmpdir): "write", str(tmpdir / ".git"): "write",
-                  str(executable): "read"}
+                  str(workspace / ".agents"): "read", str(workspace / ".git"): "write", str(tmpdir): "write",
+                  str(tmpdir / ".git"): "write", str(executable): "read"}
     inline = "{" + ",".join(f"{json.dumps(key)}={json.dumps(value)}" for key, value in filesystem.items()) + "}"
     assert 'permissions.skillz={extends=":workspace",filesystem=' + inline + ",network={enabled=false}}" in arguments
     policy = next(item for item in arguments if item.startswith("shell_environment_policy.set="))
@@ -80,6 +80,15 @@ def test_configuration_grants_only_the_task_tmpdir(tmp_path: Path) -> None:
     assert json.dumps(str(tmp_path)) + '="write"' not in joined
     assert json.dumps(str(workspace / "tmp")) not in joined
     assert '"/TASK/tmp"="write"' in " ".join(configuration(Path("/TASK/workspace"), executable, []))
+
+
+@pytest.mark.ac("gh-305:AC-2")
+def test_configuration_grants_workspace_git_write_and_keeps_agents_read_only(tmp_path: Path) -> None:
+    workspace = tmp_path / "task" / "workspace"
+    joined = " ".join(configuration(workspace, Path("/usr/bin/codex"), []))
+    assert json.dumps(str(workspace / ".git")) + '="write"' in joined
+    assert json.dumps(str(workspace / ".agents")) + '="read"' in joined
+    assert json.dumps(str(workspace / ".agents")) + '="write"' not in joined
 
 
 @pytest.mark.ac("gh-305:AC-3")
