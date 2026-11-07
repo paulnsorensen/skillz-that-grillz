@@ -153,7 +153,7 @@ def private_task_tmpdir(workspace: Path) -> Path:
 def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> list[str]:
     tmpdir = task_tmpdir(workspace)
     filesystem = {":root": "deny", ":minimal": "read", ":slash_tmp": "deny",
-                  str(workspace): "write", str(workspace / ".agents"): "read",
+                  str(workspace): "write", str(workspace / ".agents"): "read", str(workspace / ".git"): "write",
                   str(tmpdir): "write", str(tmpdir / ".git"): "write", str(executable): "read"}
     environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                    "TMPDIR": str(tmpdir), "LANG": "C.UTF-8"}
