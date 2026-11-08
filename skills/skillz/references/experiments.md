@@ -1158,6 +1158,9 @@ A criteria run from before this label is a different cohort. Start a new run dir
 A journey case tests a skill that asks the user questions across several turns.
 A simulator role plays the user. The task role runs one conversation per journey.
 
+Each turn adds one assistant entry to the transcript. On Claude Code and on Codex, that entry holds every assistant text of the turn, in order, joined with a newline.
+The judge and the simulator therefore see a contract text that the agent writes before its final summary.
+
 A journey case has a kind that uses the `journey` grader. It also needs `expected`. Unlike a task case, it may omit `files`.
 It has these extra fields:
 

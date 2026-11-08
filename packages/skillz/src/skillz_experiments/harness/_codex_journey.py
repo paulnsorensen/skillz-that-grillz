@@ -101,7 +101,7 @@ def _turn(server: AppServer, thread: str, identifier: int, prompt: str, deadline
     started = server.reply(identifier, deadline)
     turn = string(mapping(started.get("turn")).get("id"), "Codex turn id")
     events: list[dict[str, object]] = []
-    answer = ""
+    texts: list[str] = []
     total = previous_total
     tokens: dict[str, int] | None = None
     while True:
@@ -121,6 +121,7 @@ def _turn(server: AppServer, thread: str, identifier: int, prompt: str, deadline
             completed = mapping(params.get("turn"))
             if completed.get("id") != turn or completed.get("status") != "completed":
                 raise RuntimeError(f"Codex app-server turn failed: {completed.get('status')!r}")
+            answer = "\n".join(texts)
             if not answer:
                 raise RuntimeError("Codex app-server turn has no assistant message")
             if tokens is not None:
@@ -137,7 +138,7 @@ def _turn(server: AppServer, thread: str, identifier: int, prompt: str, deadline
             if normalized is not None:
                 events.append(normalized)
             if item.get("type") == "agentMessage":
-                answer = string(item.get("text"), "Codex assistant text")
+                texts.append(string(item.get("text"), "Codex assistant text"))
         elif method == "thread/tokenUsage/updated":
             snapshot = mapping(mapping(params.get("tokenUsage")).get("total"))
             fields = (("input_tokens", "inputTokens"), ("cached_input_tokens", "cachedInputTokens"),
