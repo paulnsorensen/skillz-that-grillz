@@ -75,7 +75,7 @@ from skillz_experiments.harness._claude._journey import Exit, NO_INIT, TurnRunne
 from skillz_experiments.harness._claude._late import LateBuiltins
 from skillz_experiments.harness._claude._memory import UserMemory
 from skillz_experiments.harness._claude._preflight import Preflight, probe_sandbox
-from skillz_experiments.harness._claude._settings import declared_names, Inventory, settings
+from skillz_experiments.harness._claude._settings import declared_names, Inventory, settings, with_file_tools
 
 
 TOOLS = "Bash,Read,Skill"
@@ -176,7 +176,7 @@ class ClaudeCode:
         # Linux uses a fresh temp config directory that `denyRead: ["/"]` and the config-prefix rule already cover;
         # its random path would change the environment key on every run.
         config = self.config_dir if sys.platform == "darwin" else None
-        floor = settings(workspace, self.out, config=config, overrides=overrides, unix_sockets=self.unix_sockets())
+        floor = with_file_tools(settings(workspace, self.out, config=config, overrides=overrides, unix_sockets=self.unix_sockets()), workspace, self.surface.tools if self.surface else ())
         if self.declared.servers:
             permissions = cast(dict[str, object], floor["permissions"])
             floor["permissions"] = permissions | {"allow": [*cast(list[str], permissions["allow"]),
