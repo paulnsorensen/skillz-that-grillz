@@ -340,6 +340,15 @@ Each case has these fields:
   A suffix does not clear a hidden part, so store a file such as `.env` under a name without the leading dot.
   The runner writes fixtures verbatim, so the request must tell the task to rename the file.
   When the contract declares a helper, each `task` case must list the contract helper input in `files`.
+  A fixture that rebuilds a Git repository runs under the Claude Code sandbox, and the sandbox has limits:
+  - Claude Code binds `/dev/null` over the workspace root names `.gitconfig`, `.gitmodules`, `.bashrc`, `.bash_profile`, `.zshrc`, `.zprofile`, `.profile`, `.ripgreprc`, `.vscode`, `.idea`, and `.mcp.json`.
+    `git add -A` fails on a device entry. The runner lists these names in the global Git exclude file of the task `HOME`, so `git add -A` skips them.
+    The runner does not hide `.agents` and `.claude`. Use `git add -A` for case files only; stage a path by name when you need an exact set.
+  - Claude Code binds `.git/config` and `.git/hooks` read-only in each Bash command that starts after the repository exists. The runner cannot lift this.
+    `git config user.email` (repository-local) fails with `Device or resource busy` in such a command. It works only in the same Bash command as `git init`.
+  - Set the identity with `git config --global user.email ...` and `git config --global user.name ...`. The task `HOME` is the workspace `home` directory, and it is writable.
+    Do not write `home/.config/git/config`: Claude Code binds `home/.config` read-only. The forms `git -c user.email=... commit` and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*` variables also work.
+  - A hook cannot go into `.git/hooks`. Keep the hook in a visible directory such as `githooks/` and set `core.hooksPath` with `git config --global`.
 - `expected`: the reference answer as JSON. A `task` case needs it.
   A scored case whose kind uses a `judge`, `hybrid`, or `journey` grader also needs `expected.criteria`. Draft them with the criteria drafting reference that `SKILL.md` lists.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
