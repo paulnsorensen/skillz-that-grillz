@@ -4,6 +4,7 @@ Read this reference when the user selects the `claude` adapter, runs their own c
 `run --harness` accepts `claude`, `codex`, or `command`.
 `run --harness-config PATH` loads a role file. `run --harness command --command ARGV...` builds a one-role command configuration for all three roles.
 `self-test --preflight-only --harness-config` checks the same configuration without a run.
+There, `--model` is optional when each role in the file names its model. It sets the model of each role that names none.
 Under `run`, the judge uses `--judge-model`, else `--model`.
 `--judge-model` applies only to `--harness claude` or `codex`. A role file or a command sets the judge model itself.
 
@@ -83,6 +84,7 @@ These combinations stop with the code `usage` before any work:
 - `--harness-config` with `--harness` or `--command`.
 - `--command` without `--harness command`.
 - `--harness command` without `--command`.
+- `self-test --preflight-only` without `--model`, when no role file is given or a role in the file names no model. The message names each such role.
 
 The runner skips the `doctor` host checks for a command role. Built-in `claude` and `codex` roles in a file still get them.
 Before any task call, the runner sends the command a `sandbox` probe. If the probe fails, the run stops with no fallback.
