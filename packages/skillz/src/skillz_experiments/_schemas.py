@@ -211,7 +211,8 @@ def _surface() -> Json:
         "tools": {"type": "array", "uniqueItems": True, "items": {"type": "string", "pattern": "^" + TOOL_PATTERN + "$"}},
         "mcp_config": _relative_path(".json"),
         "agents": {"type": "array", "uniqueItems": True, "items": _relative_path(".md")},
-        "companions": {"type": "array", "uniqueItems": True, "items": _relative_path()},
+        "companions": {"type": "array", "uniqueItems": True, "items": {"anyOf": [
+            _relative_path(), {"type": "string", "pattern": r"^\.\./[^/.\\][^/\\]*$"}]}},
     }, SURFACE_FIELDS)}
 
 

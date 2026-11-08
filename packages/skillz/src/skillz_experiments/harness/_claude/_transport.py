@@ -202,12 +202,12 @@ class ClaudeCode:
             agent = workspace / ".claude/agents" / PurePosixPath(path).name
             agent.parent.mkdir(parents=True, exist_ok=True)
             _ = agent.write_text(candidate.files[path], encoding="utf-8")
-        for root in self.surface.companions:
+        for root, key in zip(self.surface.companions, self.surface.companion_keys):
             target = workspace / ".claude/skills" / PurePosixPath(root).name
             files = {name: text.encode("utf-8") for name, text in candidate.files.items()} | candidate.frozen
             for name, data in files.items():
-                if name.startswith(root + "/"):
-                    file = target / name.removeprefix(root + "/")
+                if name.startswith(key + "/"):
+                    file = target / name.removeprefix(key + "/")
                     file.parent.mkdir(parents=True, exist_ok=True)
                     _ = file.write_bytes(data)
                     file.chmod(0o555 if name.endswith(".pyz") else 0o444)

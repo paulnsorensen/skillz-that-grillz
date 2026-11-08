@@ -127,7 +127,7 @@ def declared_names(surface: Surface | None, files: Mapping[str, str] | None) -> 
     found = files or {}
     missing = [path for path in (*surface.agents, *([] if surface.mcp_config is None else [surface.mcp_config]))
                if path not in found]
-    missing += [f"{path}/SKILL.md" for path in surface.companions if f"{path}/SKILL.md" not in found]
+    missing += [f"{path}/SKILL.md" for path in surface.companion_keys if f"{path}/SKILL.md" not in found]
     if missing:
         raise CodedError("contract-surface-missing", f"the contract surface names files that the skill lacks: {', '.join(missing)}")
     for path in surface.agents:

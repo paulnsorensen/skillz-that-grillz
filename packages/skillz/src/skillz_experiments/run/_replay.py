@@ -107,7 +107,7 @@ def differences(directory: Path, seed: Candidate, patch: Patch) -> list[str]:
     comes from the patch alone, so the recorded winner does not hold it.
     """
     expected = {name: text.encode("utf-8") for name, text in patch.candidate.items() if is_skill_file(name)}
-    frozen = {name: data for name, data in seed.frozen.items() if not name.startswith(WEDGE_PREFIX)}
+    frozen = {name: data for name, data in seed.frozen.items() if is_skill_file(name)}
     found = _mismatch(_tree(directory / "skill"), expected | frozen, "")
     if patch.wedge is not None:
         wedge = {name.removeprefix(WEDGE_PREFIX): text.encode("utf-8") for name, text in patch.candidate.items()
