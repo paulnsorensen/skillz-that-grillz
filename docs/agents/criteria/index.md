@@ -137,12 +137,16 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-571-calibrate](./gh-571-calibrate.md) — gh-571-calibrate: the plan estimate charges the measured per-call time
 - [gh-571](./gh-571.md) — gh-571: the run estimate shows the prompt-scaled reflection time
 - [gh-580](./gh-580.md) — gh-580: a fixture that many cases share counts once against the seed bound
+- [gh-581](./gh-581.md) — gh-581: run wedge archives from the zip
 - [gh-582](./gh-582.md) — gh-582: The doctor names the nested-sandbox fix before the AppArmor fix
+- [gh-588](./gh-588.md) — gh-588: a task run raises its call cap, sees a repeats table, and records its unspent reserve
+- [gh-589](./gh-589.md) — gh-589: a seed fixture can be a png, jpg, webp, or gif image
 - [gh-591](./gh-591.md) — gh-591: CodeRabbit includes the source branch
 - [gh-596](./gh-596.md) — gh-596: reduce pure-Python CLI startup imports
 - [gh-649](./gh-649.md) — gh-649: a decline-cases journey family for the self-autoimprove kit
 - [gh-651](./gh-651.md) — gh-651: a regression case shows whether it reproduces the field failure on the seed
 - [gh-656](./gh-656.md) — gh-656: flag a seed that scores 0 through a setup fault, before the search
+- [gh-657](./gh-657.md) — gh-657: validate gates against pass and fail fixtures
 - [gh-658](./gh-658.md) — gh-658: warn when the train split has almost no headroom
 - [gh-663](./gh-663.md) — gh-663: a partially failing regression case stays in its family mean
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
