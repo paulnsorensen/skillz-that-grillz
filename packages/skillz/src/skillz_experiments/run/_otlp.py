@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import http.client
 import json
+import math
 import sys
+import threading
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping, Sequence
@@ -99,7 +101,7 @@ class OtlpJson:
         try:
             with cast(http.client.HTTPResponse, urllib.request.urlopen(request, timeout=self._timeout)) as response:
                 _ = response.read()
-        except (OSError, ValueError, http.client.HTTPException) as error:
+        except (OSError, ValueError, OverflowError, http.client.HTTPException) as error:
             if not self._warned:
                 self._warned = True
                 self._report(f"the OTLP trace export to {_shown(self.endpoint)} failed ({type(error).__name__}); "
@@ -121,7 +123,8 @@ def _timeout(text: str | None) -> float:
         milliseconds = float(text) if text else DEFAULT_TIMEOUT_SECONDS * 1000
     except ValueError:
         return DEFAULT_TIMEOUT_SECONDS
-    return milliseconds / 1000 if milliseconds > 0 else DEFAULT_TIMEOUT_SECONDS
+    seconds = milliseconds / 1000
+    return seconds if math.isfinite(seconds) and 0 < seconds < threading.TIMEOUT_MAX else DEFAULT_TIMEOUT_SECONDS
 
 
 def exporter_from_environment(environ: Mapping[str, str], report: Callable[[str], None] = warn) -> OtlpJson | None:
@@ -143,7 +146,11 @@ def exporter_from_environment(environ: Mapping[str, str], report: Callable[[str]
         report(f"the OTLP protocol {protocol!r} is not supported; set OTEL_EXPORTER_OTLP_PROTOCOL=http/json. "
                + "The run continues without a trace export")
         return None
-    if urllib.parse.urlsplit(endpoint).scheme not in ("http", "https"):
+    try:
+        scheme = urllib.parse.urlsplit(endpoint).scheme
+    except ValueError:
+        scheme = ""
+    if scheme not in ("http", "https"):
         report("the OTLP traces endpoint must be an http or https URL; the run continues without a trace export")
         return None
     resource: dict[str, Attribute] = {**_pairs(environ.get("OTEL_RESOURCE_ATTRIBUTES", "")),

@@ -100,9 +100,38 @@ def test_the_judge_trace_redacts_and_cuts_each_field_and_keeps_the_ends_of_a_lon
     gap = next(index for index, step in enumerate(trace) if "omitted_steps" in step)
     assert trace[0]["turn"] == 0 and trace[-1]["turn"] == 59
     assert len(trace) - 1 + cast(int, trace[gap]["omitted_steps"]) == 60
-    assert len(json.dumps(trace)) <= TRACE_CHARS + 100
+    assert len(json.dumps(trace)) <= TRACE_CHARS
     assert judge_trace(many[:2]) == many[:2]
     assert judge_trace([{"input": ["token=abc123secret", 1]}]) == [{"input": ["[redacted]", 1]}]
+
+
+@pytest.mark.ac("autoimprove-observability:AC-6")
+def test_nested_credential_keys_and_values_are_redacted_before_a_container_is_cut() -> None:
+    secret = "credential-value-that-must-not-leak"
+    steps: list[dict[str, object]] = [{"input": {"api_key": {"nested": secret},
+                                                  f"label token={secret}": "safe",
+                                                  "details": [{"password": secret}, {"command": "just build"}]}}]
+    trace = judge_trace(steps)
+    encoded = json.dumps(trace)
+    assert secret not in encoded
+    assert trace == [{"input": {"[redacted]": "[redacted]", "label [redacted]": "[redacted]",
+                                  "details": [{"[redacted]": "[redacted]"}, {"command": "just build"}]}}]
+    oversized = judge_trace([{"input": {"api_key": secret, "output": "x" * (FIELD_CHARS + 100)}}])
+    assert secret not in json.dumps(oversized)
+    assert "[redacted]" in str(oversized[0]["input"])
+
+
+@pytest.mark.ac("autoimprove-observability:AC-6")
+def test_many_short_steps_and_omission_marker_fit_the_complete_json_budget() -> None:
+    steps: list[dict[str, object]] = [{"turn": index} for index in range(6_000)]
+    trace = judge_trace(steps)
+    assert len(json.dumps(trace)) <= TRACE_CHARS
+    assert trace[0] == {"turn": 0} and trace[-1] == {"turn": 5_999}
+    (marker,) = [step for step in trace if "omitted_steps" in step]
+    assert marker["omitted_steps"] == len(steps) - len(trace) + 1
+    boundary = judge_trace([{"text": "x" * 10} for _ in range(2_000)])
+    assert len(json.dumps(boundary)) <= TRACE_CHARS
+    assert boundary[0] == {"text": "x" * 10} and boundary[-1] == {"text": "x" * 10}
 
 
 @pytest.mark.ac("autoimprove-observability:AC-7")
@@ -110,7 +139,7 @@ def test_an_edit_to_the_trace_renderer_or_bounds_changes_the_scoring_digest(tmp_
     package = tmp_path / "skillz_experiments"
     _ = shutil.copytree(Path(str(files("skillz_experiments"))), package)
     before = scoring_digest(package)
-    for name in ("evaluation/_trace.py", "harness/_steps.py"):
+    for name in ("evaluation/_trace.py", "harness/_steps.py", "_redact.py"):
         path = package / name
         _ = path.write_text(path.read_text() + "\n# changed\n")
         after = scoring_digest(package)

@@ -27,9 +27,9 @@ from skillz_experiments.run._stop import Stop
 CLOCK_TOLERANCE = 5.0
 
 # The modules whose source decides a score, next to every file in `gate/`. Follow a module when a later wave moves it into a slice.
-# `evaluation/_trace.py` and `harness/_steps.py` shape the task trace that the journey judge sees.
+# Trace rendering, bounds, and redaction shape the evidence that the journey judge sees.
 SCORING_FILES = ("evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "evaluation/_trace.py",
-                 "harness/_steps.py", "_graders.py", "_audit.py", "_contract.py")
+                 "harness/_steps.py", "_graders.py", "_audit.py", "_contract.py", "_redact.py")
 
 
 def _source_files(root: Traversable, prefix: str = "") -> Iterator[tuple[str, str]]:

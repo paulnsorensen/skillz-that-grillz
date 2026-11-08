@@ -5,7 +5,7 @@ import json
 import socketserver
 import subprocess
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
@@ -246,6 +246,15 @@ def test_an_otlp_endpoint_receives_the_run_phase_case_and_model_call_spans_of_a_
     assert not [leak for leak in leaks if leak in texts]
 
 
+@pytest.mark.ac("autoimprove-observability:AC-4")
+def test_a_malformed_otlp_endpoint_does_not_stop_a_real_journey_run(tmp_path: Path) -> None:
+    scenario = journey_scenario(tmp_path)
+    environment = otlp_environment("http://user:secret@[::1?token=hidden")
+    result = run_scenario(scenario, tmp_path, harness="claude", mode="journey", env_overrides=environment)
+    assert_promoted(scenario, result, kinds=frozenset({"journey"}))
+    assert result["phase"] == "complete"
+
+
 GATE_CRITERION = {"id": "gate-run", "must": True,
                   "text": "WHEN the agent reports the result THE agent SHALL have run gate.py and shown it passing."}
 
@@ -282,6 +291,25 @@ def test_a_criterion_that_needs_a_gate_run_passes_only_when_the_task_trace_shows
     assert all(any(step.get("text") == f"Which {topic} should I transform?" for step in trace for topic in ("code", "label"))
                for trace in traces)
     assert not any("trace" in untrusted(cast(str, entry["prompt"])) for entry in log if entry["role"] == "simulator")
+
+
+@pytest.mark.ac("autoimprove-observability:AC-6")
+def test_gate_evidence_alone_changes_a_valid_journey_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    cast(Callable[[str], None], monkeypatch.syspath_prepend)(str(FIXTURES))
+    from fixtures.journey import judge
+
+    reference = {"must": ["MAPLE\n"], "criteria": [GATE_CRITERION]}
+    data = {"reference": reference, "output_files": {"output/result.txt": "MAPLE\n"},
+            "transcript": [{"role": "assistant", "text": "Which code should I transform?"},
+                           {"role": "user", "text": "Value: maple"},
+                           {"role": "assistant", "text": '{"text": "MAPLE\\n", "gate": "3 passed"}'}],
+            "files": {"question.txt": "code\n"}}
+    unsupported = judge("RUBRIC\nUNTRUSTED DATA (JSON):\n" + json.dumps(data), ["criteria"])
+    executed = judge("RUBRIC\nUNTRUSTED DATA (JSON):\n" + json.dumps(data | {"trace": [
+        {"turn": 2, "tool": "Bash", "input": {"command": "python3 gate.py"},
+         "output": "gate: 3 passed\n", "error": False}]}), ["criteria"])
+    assert unsupported["criteria"] == {"gate-run": {"level": 1, "reason": "fake judge"}}
+    assert executed["criteria"] == {"gate-run": {"level": 4, "reason": "fake judge"}}
 
 
 def untrusted(prompt: str) -> dict[str, object]:

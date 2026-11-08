@@ -227,6 +227,22 @@ def test_an_unsupported_protocol_or_scheme_warns_once_and_turns_the_export_off(e
 
 
 @pytest.mark.ac("autoimprove-observability:AC-4")
+@pytest.mark.parametrize("endpoint", ["http://[::1", "https://user:secret@[::1/path?token=hidden"])
+def test_a_malformed_endpoint_warns_once_without_secrets(endpoint: str) -> None:
+    warnings: list[str] = []
+    assert exporter_from_environment({"OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": endpoint}, warnings.append) is None
+    assert warnings == ["the OTLP traces endpoint must be an http or https URL; the run continues without a trace export"]
+
+
+@pytest.mark.ac("autoimprove-observability:AC-4")
+@pytest.mark.parametrize("setting", ["inf", "1e309", "1e300"])
+def test_an_unsupported_timeout_uses_the_default(setting: str) -> None:
+    exporter = exporter_from_environment({"OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318",
+                                          "OTEL_EXPORTER_OTLP_TIMEOUT": setting})
+    assert exporter is not None and exporter._timeout == 10.0  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.ac("autoimprove-observability:AC-4")
 def test_a_failed_export_warns_once_without_the_user_part_or_a_header_value() -> None:
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
