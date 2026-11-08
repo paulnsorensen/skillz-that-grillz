@@ -13,6 +13,7 @@ from typing import cast
 
 from skillz_experiments._cases import CodedError, journey_of, mapping, text_map
 from skillz_experiments._contract import LOCATION, Contract, load_contract, parse
+from skillz_experiments._evals_format import TASK_FIXTURE
 from skillz_experiments._gate_files import expand_gates, probe_gates
 from skillz_experiments._intake import (
     HOLDOUT_MINIMUM, MINIMUM_FAMILIES, TRAIN_FAMILIES_MINIMUM, TRAIN_MINIMUM, DraftCase, check_helper_input,
@@ -68,22 +69,30 @@ def _contract(target: Path, findings: list[Finding]) -> tuple[Contract | None, s
         return None, "draft", "skill"
 
 
-def _from_seed(seeded: Sequence[Mapping[str, object]], journeys: Sequence[str], findings: list[Finding]) -> list[DraftCase]:
+def _from_seed(seeded: Sequence[Mapping[str, object]], journeys: Sequence[str], findings: list[Finding],
+               scores_task: bool = True) -> list[DraftCase]:
     """Map the seed cases to draft cases, the way an agent copies them into the draft.
 
     A case with no family joins no split, as in `seed_projection`. Each one adds a finding.
+    A task case with no files stays in the split, and adds the `cases-invalid` finding that `run` stops with.
+    Unless `scores_task`, the run does not score a task case: it takes `family = id` and needs no files (gh-701).
     """
     drafted: list[DraftCase] = []
     for case in seeded:
+        kind = str(case["kind"])
         family = seed_family(case)
+        if family is None and kind == "task" and not scores_task:
+            family = str(case["id"])
         if family is None:
             findings.append(_finding(
                 "case-family-missing", "error", EVALS,
                 f"the task entry {case['id']} has no family, so it joins no split",
                 "set family on the entry; the draft needs a family for it"))
             continue
-        kind = str(case["kind"])
         item = dict(case)
+        if kind == "task" and scores_task and not item.get("files"):
+            findings.append(_finding("cases-invalid", "error", EVALS, f"the task entry {case['id']} has no files, so run "
+                                     + "refuses its case", TASK_FIXTURE))
         drafted.append(DraftCase(str(case["id"]), family, kind, str(case["request"]), "skill",
                                  text_map(item.get("files", {})), case.get("expected"), journey_of(item, kind in journeys)))
     return drafted
@@ -122,6 +131,13 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
     contract, status, source = _contract(target, findings)
     journeys = contract.journey_kinds() if contract is not None else ("journey",)
 
+    chosen: tuple[str, ...] | None = None
+    if contract is not None:
+        try:
+            chosen = scored_kinds(contract, kinds)
+        except FAILURES as error:
+            findings.append(_failure(error, LOCATION))
+    scores_task = chosen is None or any(kind not in journeys for kind in chosen)
     seeded: list[dict[str, object]] | None = None
     try:
         seeded = seed_cases(target)
@@ -133,7 +149,7 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
     if draft is not None:
         origin = "draft"
         try:
-            drafted = load_draft(draft, journeys)
+            drafted = load_draft(draft, journeys, scores_task)
         except FAILURES as error:
             findings.append(_failure(error, str(draft)))
         if drafted is not None:
@@ -150,7 +166,7 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
     elif seeded is not None:
         origin = "seed"
         try:
-            drafted = _from_seed(seeded, journeys, findings)
+            drafted = _from_seed(seeded, journeys, findings, scores_task)
         except FAILURES as error:
             findings.append(_failure(error, EVALS))
         else:
@@ -158,13 +174,6 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
 
     if contract is not None:
         findings.extend(_gate_findings(target, journeys, drafted))
-
-    chosen: tuple[str, ...] | None = None
-    if contract is not None:
-        try:
-            chosen = scored_kinds(contract, kinds)
-        except FAILURES as error:
-            findings.append(_failure(error, LOCATION))
 
     split_seed = DEFAULT_SEED if seed is None else seed
     split: dict[str, object] = {"seed": split_seed, "train": None, "validation": None, "holdout": None,

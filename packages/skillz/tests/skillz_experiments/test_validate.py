@@ -179,3 +179,72 @@ def test_validate_runs_offline_with_an_empty_home_and_no_agent_cli(
     code, report = _report(capsys, "--target", str(REPO / "skills/skillz"))
     assert code == 0 and report["ok"] is True
     assert list(home.iterdir()) == []
+
+
+def _fileless(target: Path) -> None:
+    """Give the target 12 task entries in 4 families with fixtures, and one prompt-only entry `no-fixture`."""
+    _entries(target, {family: 3 for family in "abcd"})
+    (target / "evals/files").mkdir(parents=True, exist_ok=True)
+    _ = (target / "evals/files/input.txt").write_text("hello\n")
+    document = cast(dict[str, list[dict[str, object]]], json.loads((target / "evals/evals.json").read_text()))
+    for entry in document["evals"]:
+        entry["files"] = ["evals/files/input.txt"]
+    document["evals"].append({"name": "no-fixture", "family": "a", "prompt": "Say hello.", "expected_output": "Says hello."})
+    _ = (target / "evals/evals.json").write_text(json.dumps(document))
+
+
+@pytest.mark.ac("gh-696:AC-1")
+def test_run_on_a_seed_copy_with_a_fileless_task_case_stops_as_cases_invalid_without_a_traceback(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _fileless(target)
+    command = ["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose"]
+    assert main(command) == 1
+    assert json.loads(capsys.readouterr().err)["code"] == "cases-missing"
+    _ = (out / "cases.draft.json").write_bytes((out / "cases.seed.json").read_bytes())
+    assert main(command) == 1
+    captured = capsys.readouterr()
+    error = cast(dict[str, object], json.loads(captured.err))
+    assert error["code"] == "cases-invalid" and "traceback" not in error, error
+    assert "case no-fixture" in str(error["error"]) and "files" in str(error["error"])
+    assert "evals/evals.json" in str(error["error"]) and "prompt" in str(error["error"])
+
+
+@pytest.mark.ac("gh-697:AC-1")
+def test_validate_reports_a_task_entry_without_files_that_run_refuses(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    _fileless(target)
+    code, report = _report(capsys, "--target", str(target))
+    findings = cast(list[dict[str, object]], report["findings"])
+    found = [item for item in findings if item["code"] == "cases-invalid"]
+    assert code == 1 and report["ok"] is False and len(found) == 1, findings
+    assert found[0]["severity"] == "error" and found[0]["file"] == "evals/evals.json"
+    assert "no-fixture" in str(found[0]["message"]) and "evals/evals.json" in str(found[0]["fix"])
+    assert "prompt" in str(found[0]["fix"])
+
+
+@pytest.mark.ac("gh-697:AC-2")
+def test_validate_reports_a_fileless_draft_task_case_with_the_run_code(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _fileless(target)
+    with pytest.raises(Stop):
+        _ = run(target, out, "local-test", live=True)
+    draft = out / "cases.draft.json"
+    _ = draft.write_bytes((out / "cases.seed.json").read_bytes())
+    code, report = _report(capsys, "--target", str(target), "--draft", str(draft))
+    findings = cast(list[dict[str, object]], report["findings"])
+    assert code == 1 and [item["code"] for item in findings if item["file"] == str(draft)] == ["cases-invalid"], findings
+
+
+@pytest.mark.ac("gh-701:AC-4")
+def test_validate_with_an_unknown_kind_reports_it_and_keeps_the_task_checks_strict(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    _fileless(target)
+    code, report = _report(capsys, "--target", str(target), "--kind", "no-such-kind")
+    findings = cast(list[dict[str, object]], report["findings"])
+    contract = [item for item in findings if item["file"] == "evals/autoimprove.json" and item["severity"] == "error"]
+    assert code == 1 and contract and "no-such-kind" in str(contract[0]["message"]), findings
+    assert [item["code"] for item in findings if item["code"] == "cases-invalid"] == ["cases-invalid"], findings
