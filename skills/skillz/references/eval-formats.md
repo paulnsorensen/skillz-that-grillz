@@ -205,6 +205,8 @@ The run stops with `cases-too-few`, and `validate` reports the same finding befo
 
 Run `skillz-experiment.pyz validate --target SKILL` before the first `run`.
 It makes no model call, no host check, and no write. It reports every problem in one pass.
+With `--draft RUN/cases.draft.json`, it reports `case-criteria-missing` or `case-criteria-invalid` for each scored judged case that `run` refuses.
+A seed case has no criteria until you draft them, so `validate` without `--draft` does not report missing criteria.
 Each finding has `code`, `severity`, `file`, `pointer`, `message`, and `fix`.
 The command exits 1 when any finding has severity `error`.
 

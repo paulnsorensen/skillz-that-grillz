@@ -16,14 +16,15 @@ from skillz_experiments._contract import LOCATION, Contract, load_contract, pars
 from skillz_experiments._evals_format import TASK_FIXTURE
 from skillz_experiments._gate_files import expand_gates, probe_gates
 from skillz_experiments._intake import (
-    HOLDOUT_MINIMUM, MINIMUM_FAMILIES, TRAIN_FAMILIES_MINIMUM, TRAIN_MINIMUM, DraftCase, check_helper_input,
-    intake_contract, load_draft, split_cases, too_few,
+    HOLDOUT_MINIMUM, MINIMUM_FAMILIES, TRAIN_FAMILIES_MINIMUM, TRAIN_MINIMUM, DraftCase, IntakeCase, check_criteria,
+    check_helper_input, intake_contract, load_draft, split_cases, too_few,
 )
 from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, fixture_error, fixture_misses, seed_cases, seed_family
 from skillz_experiments.run import DEFAULT_SEED, resolve_statistics, scored_kinds
 
 Finding = dict[str, object]
 FAILURES = (CodedError, ValueError, OSError)
+CRITERIA_FIX = "draft or fix expected.criteria of the case with the criteria drafting reference that SKILL.md lists"
 
 
 def _finding(code: str, severity: str, file: str, message: str, fix: str = "", pointer: str = "",
@@ -113,6 +114,17 @@ def _fixture_findings(target: Path, drafted: Sequence[DraftCase], file_of: Calla
         findings.append(_failure(fixture_error(misses), file))
 
 
+def _criteria_findings(contract: Contract, cases: Sequence[IntakeCase], file: str) -> list[Finding]:
+    """Return one finding for each case that `check_criteria` refuses, so one pass shows every case that `run` stops on."""
+    found: list[Finding] = []
+    for case in cases:
+        try:
+            check_criteria(contract, [case])
+        except CodedError as error:
+            found.append(_finding(error.code, "error", file, str(error), CRITERIA_FIX))
+    return found
+
+
 def _gate_findings(target: Path, journeys: Sequence[str], drafted: Sequence[DraftCase] | None) -> list[Finding]:
     """Run each gate file of the contract on its fixtures and on a null trace; see `probe_gates`."""
     path = target / LOCATION
@@ -190,6 +202,9 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
         except FAILURES as error:
             findings.append(_failure(error, where))
         else:
+            # A seed case has no criteria until the agent drafts them, so only the draft gets the check that `run` makes.
+            if draft is not None:
+                findings.extend(_criteria_findings(contract, planned, where))
             for name in ("train", "validation", "holdout"):
                 split[name] = sum(case.split == name and case.scored and case.kind in chosen for case in planned)
             shortfall = too_few(Counter(case.family for case in planned if case.scored and case.kind in chosen))
