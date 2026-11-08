@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
+from math import isfinite
 from typing import cast
 
 # The newest outcomes that the view lists one by one. The cases and the leaderboard count every outcome.
@@ -29,7 +30,15 @@ def _items(value: object) -> list[Record]:
 
 
 def _number(value: object) -> float | None:
-    return float(cast(float, value)) if type(value) in (int, float) else None
+    if type(value) not in (int, float):
+        return None
+    try:
+        number = float(cast(float, value))
+    except OverflowError as error:
+        raise ValueError("invalid run number") from error
+    if not isfinite(number):
+        raise ValueError("invalid run number")
+    return number
 
 
 def _text(value: object) -> str | None:
@@ -75,18 +84,23 @@ def _roles(record: Record, judged: list[Record], reflections: list[Record]) -> l
     """Return one row per role: recorded calls and seconds, and the tokens and latency of its outcomes."""
     usage: defaultdict[str, list[tuple[Record, float | None]]] = defaultdict(list)
     for outcome in judged:
+        if outcome.get("status") == "candidate-contract-rejected":
+            continue
         for role, (field, latency) in USAGE_FIELDS.items():
-            if isinstance(outcome.get(field), dict):
-                usage[role].append((_mapping(outcome.get(field)), _number(outcome.get(latency)) if latency else None))
+            key = ("task_usage" if "task_usage" in outcome else "usage") if role == "task" else field
+            if isinstance(outcome.get(key), dict):
+                usage[role].append((_mapping(outcome.get(key)), _number(outcome.get(latency)) if latency else None))
     for outcome in reflections:
         if isinstance(outcome.get("usage"), dict):
             usage["reflection"].append((_mapping(outcome.get("usage")), _number(outcome.get("latency_seconds"))))
     calls, seconds = _mapping(record.get("calls_by_role")), _mapping(record.get("seconds_by_role"))
     rows: list[dict[str, object]] = []
-    for role in sorted(set(usage) | set(calls), key=lambda name: (-(_number(calls.get(name)) or 0), name)):
+    for role in sorted(set(usage) | set(calls) | set(seconds), key=lambda name: (-(_number(calls.get(name)) or 0), name)):
         items = usage.get(role, [])
-        tokens = {key: sum(_number(item.get(key)) or 0 for item, _ in items)
-                  for key in ("input_tokens", "cached_input_tokens", "output_tokens")}
+        tokens: dict[str, float | None] = {}
+        for key in ("input_tokens", "cached_input_tokens", "output_tokens"):
+            values = [value for item, _ in items if (value := _number(item.get(key))) is not None]
+            tokens[key] = sum(values) if values else None
         rows.append({"role": role, "calls": _number(calls.get(role)), "seconds": _number(seconds.get(role)),
                      "outcomes": len(items), **tokens, "mean_latency": _mean(latency for _, latency in items)})
     return rows
@@ -105,8 +119,8 @@ def _leaderboard(judged: list[Record]) -> list[dict[str, object]]:
 
 
 def _scores(row: dict[str, object], items: list[Record]) -> dict[str, object]:
-    scores = [_number(item.get("score")) for item in items]
-    return row | {"cases": len({item.get("case_id") for item in items}), "runs": len(items),
+    scores = [_number(item.get("score")) if item.get("status") != "evaluation-failed" else None for item in items]
+    return row | {"cases": len({_text(item.get("case_id")) or "?" for item in items}), "runs": len(items),
                   "scored": sum(score is not None for score in scores), "mean": _mean(scores),
                   "zero_runs": sum(score == 0 for score in scores)}
 
@@ -153,10 +167,12 @@ def _reflection(step: int, outcome: Record) -> dict[str, object]:
 
 def _outcome(index: int, outcome: Record) -> dict[str, object]:
     return {"index": index, "case_id": _text(outcome.get("case_id")), "split": _text(outcome.get("split")),
-            "arm": _text(outcome.get("arm")), "candidate": _short(outcome.get("search_candidate")),
-            "repeat": _number(outcome.get("repeat")), "score": _number(outcome.get("score")),
+            "arm": _text(outcome.get("arm")), "candidate": _short(outcome.get("search_candidate")) or _short(outcome.get("candidate_hash")),
+            "repeat": _number(outcome.get("repeat")),
+            "score": None if outcome.get("status") == "evaluation-failed" else _number(outcome.get("score")),
             "status": _text(outcome.get("status")), "latency": _number(outcome.get("latency_seconds")),
-            "task_tokens": _number(_mapping(outcome.get("task_usage")).get("input_tokens")),
+            "task_tokens": _number(_mapping(outcome.get("task_usage" if "task_usage" in outcome else "usage")).get("input_tokens"))
+            if outcome.get("status") != "candidate-contract-rejected" else None,
             "criteria": _criteria(outcome)}
 
 

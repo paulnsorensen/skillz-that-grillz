@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import secrets
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -60,6 +61,7 @@ class _Server(ThreadingHTTPServer):
     def __init__(self, port: int, source: _Source) -> None:
         super().__init__((HOST, port), _Handler)
         self.source = source
+        self.capability = secrets.token_urlsafe(32)
         bound = self.server_address[1]
         self.hosts = {f"{HOST}:{bound}", f"localhost:{bound}"}
 
@@ -73,7 +75,15 @@ class _Handler(BaseHTTPRequestHandler):
             return
         path = self.path.split("?", 1)[0]
         if path == "/api/run":
-            self._send(200, "application/json", json.dumps(self.server.source.current(), allow_nan=False))
+            if self.headers.get("X-Watch-Capability") != self.server.capability:
+                self._send(403, "text/plain", "forbidden\n")
+                return
+            current = self.server.source.current()
+            try:
+                body = json.dumps(current, allow_nan=False)
+            except (ValueError, OverflowError) as error:
+                body = json.dumps({"path": str(self.server.source.path), "state": "error", "error": str(error)})
+            self._send(200, "application/json", body)
         elif path in ASSETS:
             self._send(200, *ASSETS[path])
         else:
@@ -104,6 +114,6 @@ def watch(out: Path, port: int = 0) -> None:
     except OSError as error:
         raise CodedError("watch-port", f"cannot listen on {HOST}:{port}: {error.strerror or error}") from None
     with server:
-        print(json.dumps({"url": f"http://{HOST}:{server.server_address[1]}/", "run": str(source.path)}), flush=True)
+        print(json.dumps({"url": f"http://{HOST}:{server.server_address[1]}/#{server.capability}", "run": str(source.path)}), flush=True)
         with contextlib.suppress(KeyboardInterrupt):
             server.serve_forever()

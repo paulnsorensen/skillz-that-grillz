@@ -41,7 +41,8 @@ const text = (value) => (value === null || value === undefined || value === "" ?
 
 function table(headers, rows) {
   if (!rows.length) return el("p", {class: "empty"}, "No data yet.");
-  return el("table", {}, el("thead", {}, el("tr", {}, headers.map((h) => el("th", {}, h)))), el("tbody", {}, rows));
+  return el("div", {class: "table-scroll"}, el("table", {},
+    el("thead", {}, el("tr", {}, headers.map((h) => el("th", {}, h)))), el("tbody", {}, rows)));
 }
 
 const row = (cells, attributes) => el("tr", attributes, cells.map((cell) => el("td", {}, cell)));
@@ -62,7 +63,8 @@ function status(s) {
   const gate = s.gate_verdict ? `${s.gate_verdict}, delta ${num(s.gate_delta, 3)}, SE ${num(s.gate_se, 3)}` : "not run";
   const comparisons = s.comparisons.map((c) => row([text(c.challenger), text(c.incumbent), text(c.verdict),
     num(c.delta, 3), num(c.se, 3)]));
-  return [el("div", {class: "meters"}, meter("Calls", s.calls, s.call_cap), meter("Seconds", s.seconds, s.seconds_cap)),
+  return [el("div", {class: "meters"}, meter("Calls", s.calls, s.call_cap),
+    el("div", {class: "meter"}, el("span", {}, `Accumulated call seconds: ${num(s.seconds)}. Wall-clock budget: ${num(s.seconds_cap)} s.`))),
     el("p", {}, `Model ${text(s.model)}. Search stop: ${text(s.stop_trigger)} (${text(s.search_reason)}). Gate: ${gate}.`),
     el("h3", {}, "Validation comparisons"),
     table(["Challenger", "Incumbent", "Verdict", "Delta", "SE"], comparisons)];
@@ -139,7 +141,12 @@ function render(data) {
 
 async function poll() {
   try {
-    const response = await fetch("/api/run", {cache: "no-store"});
+    const capability = location.hash.slice(1);
+    if (!capability) {
+      document.getElementById("state").textContent = "This page needs the private link printed by watch.";
+      return;
+    }
+    const response = await fetch("/api/run", {cache: "no-store", headers: {"X-Watch-Capability": capability}});
     render(await response.json());
   } catch (error) {
     document.getElementById("state").textContent = `The watcher does not answer: ${error}`;
@@ -157,16 +164,17 @@ h1 { font-size: 20px; margin: 16px 0 4px; }
 h2 { font-size: 16px; border-bottom: 1px solid var(--line); padding-bottom: 4px; margin-top: 28px; }
 h3 { font-size: 14px; }
 #state, .meta, .empty { color: GrayText; }
-table { border-collapse: collapse; width: 100%; margin: 8px 0; }
-th, td { text-align: left; vertical-align: top; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.table-scroll { max-width: 100%; overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 600px; margin: 8px 0; }
+th, td { text-align: left; vertical-align: top; padding: 4px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
 th { font-weight: 600; }
 tr.unmet td { background: var(--bad); }
 details { border-bottom: 1px solid var(--line); padding: 4px 0; }
 details.zero > summary { color: var(--zero); font-weight: 600; }
-summary { cursor: pointer; }
+summary { cursor: pointer; overflow-wrap: anywhere; }
 .meters { display: flex; flex-wrap: wrap; gap: 24px; }
 .meter { display: flex; flex-direction: column; gap: 4px; min-width: 240px; }
 progress { width: 100%; }
-li { margin-bottom: 12px; }
+li { margin-bottom: 12px; overflow-wrap: anywhere; }
 li p { margin: 2px 0; }
 """

@@ -39,11 +39,15 @@ class Watcher:
     process: subprocess.Popen[str]
     port: int
     out: Path
+    capability: str
 
-    def get(self, path: str, host: str | None = None, method: str = "GET") -> Reply:
+    def get(self, path: str, host: str | None = None, method: str = "GET", *, authorized: bool = True) -> Reply:
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         try:
-            connection.request(method, path, headers={"Host": host or f"127.0.0.1:{self.port}"})
+            headers = {"Host": host or f"127.0.0.1:{self.port}"}
+            if authorized:
+                headers["X-Watch-Capability"] = self.capability
+            connection.request(method, path, headers=headers)
             response = connection.getresponse()
             return Reply(response.status, {key.lower(): value for key, value in response.getheaders()},
                          response.read().decode("utf-8"))
@@ -84,8 +88,10 @@ def _start(command: list[str], out: Path) -> Watcher:
     started = cast(dict[str, str], json.loads(line))
     assert started["run"] == str(out.resolve() / "run.json")
     prefix = "http://127.0.0.1:"
-    assert started["url"].startswith(prefix) and started["url"].endswith("/"), started
-    return Watcher(process, int(started["url"].removeprefix(prefix).rstrip("/")), out)
+    assert started["url"].startswith(prefix) and "/#" in started["url"], started
+    address, capability = started["url"].removeprefix(prefix).split("/#", 1)
+    assert len(capability) >= 40
+    return Watcher(process, int(address), out, capability)
 
 
 def _stop(watcher: Watcher) -> int:
@@ -159,6 +165,8 @@ def test_watch_serves_only_its_own_paths_to_its_own_host(watcher: Watcher) -> No
     assert [watcher.get(path).status for path in ("/run.json", "/cases.json", "/../run.json", "/api")] == [404] * 4
     assert watcher.get("/api/run", host="evil.example").status == 403
     assert watcher.get("/api/run", host=f"localhost:{watcher.port}").status == 200
+    assert watcher.get("/api/run", authorized=False).status == 403
+    assert PRIVATE not in watcher.get("/api/run", authorized=False).body
     assert watcher.get("/api/run", method="POST").status == 501
     with pytest.raises(OSError):
         _ = socket.create_connection(("127.0.0.2", watcher.port), timeout=2).close()
@@ -216,6 +224,88 @@ def test_view_leaves_out_malformed_parts_of_a_record() -> None:
     assert shown["cases"] == [{"case_id": "?", "splits": ["train"], "statuses": [], "cases": 1, "runs": 1, "scored": 0,
                                "mean": None, "zero_runs": 0, "criteria": []}]
     assert cast(Json, shown["status"])["comparisons"] == [] and cast(Json, shown["status"])["call_cap"] is None
-    assert shown["roles"] == [{"role": "task", "calls": 1.0, "seconds": None, "outcomes": 0, "input_tokens": 0,
-                               "cached_input_tokens": 0, "output_tokens": 0, "mean_latency": None}]
+    assert shown["roles"] == [{"role": "task", "calls": 1.0, "seconds": None, "outcomes": 0, "input_tokens": None,
+                               "cached_input_tokens": None, "output_tokens": None, "mean_latency": None}]
     assert (shown["reflections"], shown["outcome_count"]) == ([], 1)
+
+
+@pytest.mark.ac("run-observability:AC-2")
+@pytest.mark.ac("run-observability:AC-3")
+def test_watch_projects_synthetic_run_without_private_data(watcher: Watcher) -> None:
+    fixture = Path(__file__).parent / "fixtures/watch/run.json"
+    _ = (watcher.out / "run.json").write_bytes(fixture.read_bytes())
+    response = watcher.get("/api/run")
+    shown = response.data()
+    assert PRIVATE not in response.body and "PRIVATE_TRANSCRIPT_NOT_IN_UI" not in response.body
+    assert [row["role"] for row in cast(list[Json], shown["roles"])] == [
+        "task", "judge", "reflection", "preflight", "failed", "simulator"]
+    roles = {cast(str, row["role"]): row for row in cast(list[Json], shown["roles"])}
+    assert (roles["task"]["outcomes"], roles["task"]["input_tokens"]) == (3, 262)
+    assert (roles["preflight"]["calls"], roles["preflight"]["seconds"], roles["preflight"]["outcomes"]) == (1, 4.0, 0)
+    assert (roles["failed"]["calls"], roles["failed"]["seconds"], roles["failed"]["outcomes"]) == (None, 3.0, 0)
+    assert all(roles["failed"][key] is None for key in ("input_tokens", "cached_input_tokens", "output_tokens"))
+    assert roles["task"]["cached_input_tokens"] == 20 and roles["simulator"]["cached_input_tokens"] is None
+    assert (roles["simulator"]["calls"], roles["simulator"]["seconds"], roles["simulator"]["input_tokens"]) == (
+        None, 7.0, 15)
+    cases = {row["case_id"]: row for row in cast(list[Json], shown["cases"])}
+    assert (cases["press-1"]["scored"], cases["press-1"]["zero_runs"], cases["press-1"]["mean"]) == (2, 1, 0.5)
+    assert (cases["scope-1"]["runs"], cases["scope-1"]["scored"], cases["scope-1"]["mean"]) == (1, 0, None)
+    assert (cases["always-zero"]["scored"], cases["always-zero"]["zero_runs"]) == (1, 1)
+    newest = cast(list[Json], shown["outcomes"])
+    assert (newest[1]["candidate"], newest[1]["task_tokens"]) == ("d" * 12, 42.0)
+    assert (newest[2]["status"], newest[2]["score"], newest[2]["candidate"]) == (
+        "evaluation-failed", None, "c" * 12)
+    assert cast(Json, shown["status"])["gate_verdict"] == "promote"
+    assert cast(list[Json], shown["reflections"])[1]["rejected"] == "budget limit"
+
+
+@pytest.mark.ac("run-observability:AC-9")
+@pytest.mark.parametrize("record", [
+    '{"outcomes":[{"case_id":["not","hashable"],"split":"train","score":1}]}',
+    '{"calls":' + "9" * 400 + '}',
+    '{"calls":1e400}',
+])
+def test_watch_rejects_malformed_numbers_and_recovers(watcher: Watcher, record: str) -> None:
+    _ = (watcher.out / "run.json").write_text(record)
+    response = watcher.get("/api/run")
+    if '"case_id"' in record:
+        assert response.data()["state"] == "ok"
+    else:
+        assert response.data()["state"] == "error"
+    write(watcher.out / "run.json", _record("complete", []))
+    assert cast(Json, watcher.run()["status"])["phase"] == "complete"
+
+
+@pytest.mark.ac("run-observability:AC-2")
+def test_watch_limits_newest_outcomes_without_losing_summary(watcher: Watcher) -> None:
+    outcomes = [_outcome(f"case-{index}", 1.0, "a") for index in range(201)]
+    outcomes[0]["status"] = "evaluation-failed"
+    outcomes[0]["score"] = 0.0
+    write(watcher.out / "run.json", _record("searched", outcomes))
+    shown = watcher.run()
+    newest = cast(list[Json], shown["outcomes"])
+    assert (shown["outcome_count"], len(newest), newest[0]["index"], newest[-1]["index"]) == (201, 200, 201, 2)
+    board = cast(list[Json], shown["leaderboard"])[0]
+    assert (board["runs"], board["scored"], board["mean"], board["zero_runs"]) == (201, 200, 1.0, 0)
+
+
+@pytest.mark.ac("run-observability:AC-3")
+@pytest.mark.parametrize("rejected", [False, True])
+def test_watch_ignores_null_and_rejected_usage(watcher: Watcher, rejected: bool) -> None:
+    fixture = Path(__file__).parent / "fixtures/watch/run.json"
+    record = cast(Json, json.loads(fixture.read_text()))
+    recorded = cast(list[Json], record["outcomes"])
+    cast(Json, recorded[0]["simulator_usage"])["cached_input_tokens"] = 0
+    outcome = recorded[2]
+    outcome.update({"task_usage": None, "usage": {"input_tokens": 999}})
+    if rejected:
+        outcome.update({"status": "candidate-contract-rejected", "task_usage": {"input_tokens": 999},
+                        "judge_usage": {"input_tokens": 999}})
+    write(watcher.out / "run.json", record)
+    shown = watcher.run()
+    roles = {row["role"]: row for row in cast(list[Json], shown["roles"])}
+    assert (roles["task"]["outcomes"], roles["task"]["input_tokens"]) == (3, 262)
+    assert (roles["judge"]["outcomes"], roles["judge"]["input_tokens"]) == (2, 62)
+    assert roles["simulator"]["cached_input_tokens"] == 0
+    newest = cast(list[Json], shown["outcomes"])
+    assert next(row for row in newest if row["case_id"] == "scope-1")["task_tokens"] is None

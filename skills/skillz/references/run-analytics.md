@@ -13,7 +13,8 @@ python3 scripts/skillz-experiment.pyz watch <out>
 ```
 
 The first stdout line is JSON with the page `url`. Give that URL to the user.
-The page shows the phase, the calls and seconds against their caps, each role, and the leaderboard.
+Keep the URL private. Its random fragment grants access to run data; open the full URL, including that fragment.
+The page shows the phase, calls against the call cap, accumulated call seconds, each role, and the leaderboard.
 It also shows each case with the judge reason of each unmet criterion, the reflections, and the newest outcomes.
 It reloads the data every 2 seconds. Stop it with Ctrl-C when the user is done.
 
@@ -49,7 +50,7 @@ Keep the results local. Do not paste a judge reason into a public issue without 
   Read `dealbreakers` first: a `must` criterion at level 1 or 2 scores the case 0.
 - `unmet-criteria` gives each criterion that the judge did not accept, its lowest level, and the judge reason of that level.
 - `score-by-arm` compares the seed and each candidate on the same split. Compare means only on the same split.
-- `role-usage` shows where the calls, tokens, and seconds go. `run-status` compares the calls and seconds with their caps.
+- `role-usage` shows where the calls, tokens, and seconds go. `run-status` separates accumulated call seconds from the wall-clock budget.
 - `reflections` gives each proposer hypothesis in order. `run-status` gives the search `stop_trigger` and the gate verdict.
 - An empty result means no data for that query. Report it as no data, not as 0.
 
@@ -57,7 +58,7 @@ Keep the results local. Do not paste a judge reason into a public issue without 
 
 ### `run-status`
 
-One row per run: phase, calls and seconds against their caps, search stop, and gate verdict.
+One row per run: phase, calls against the call cap, accumulated call seconds, configured wall-clock budget, search stop, and gate verdict. Accumulated call seconds can overlap; they do not measure wall-clock budget use.
 
 ```sql
 WITH runs AS (
@@ -97,33 +98,44 @@ outcomes AS (
     FROM runs
 ),
 usage AS (
-    SELECT run_file, 'task' AS role, o -> 'task_usage' AS u, o ->> 'latency_seconds' AS latency
-    FROM outcomes WHERE (o ->> 'split') <> 'reflection'
+    SELECT run_file, 'task' AS role,
+           CASE WHEN json_exists(o, '$.task_usage') THEN o -> 'task_usage' ELSE o -> 'usage' END AS u,
+           o ->> 'latency_seconds' AS latency
+    FROM outcomes WHERE (o ->> 'split') <> 'reflection' AND (o ->> 'status') IS DISTINCT FROM 'candidate-contract-rejected'
     UNION ALL
     SELECT run_file, 'judge', o -> 'judge_usage', o ->> 'judge_latency_seconds'
-    FROM outcomes WHERE (o ->> 'split') <> 'reflection'
+    FROM outcomes WHERE (o ->> 'split') <> 'reflection' AND (o ->> 'status') IS DISTINCT FROM 'candidate-contract-rejected'
     UNION ALL
     SELECT run_file, 'simulator', o -> 'simulator_usage', NULL
-    FROM outcomes WHERE (o ->> 'split') <> 'reflection'
+    FROM outcomes WHERE (o ->> 'split') <> 'reflection' AND (o ->> 'status') IS DISTINCT FROM 'candidate-contract-rejected'
     UNION ALL
     SELECT run_file, 'reflection', o -> 'usage', o ->> 'latency_seconds'
     FROM outcomes WHERE (o ->> 'split') = 'reflection'
+),
+role_names AS (
+    SELECT run_file, unnest(json_keys(run -> 'calls_by_role')) AS role FROM runs
+    UNION SELECT run_file, unnest(json_keys(run -> 'seconds_by_role')) AS role FROM runs
+    UNION SELECT DISTINCT run_file, role FROM usage WHERE json_type(u) = 'OBJECT'
+),
+usage_totals AS (
+    SELECT run_file, role, count(*) AS usage_rows,
+           sum((u ->> 'input_tokens')::BIGINT)::BIGINT AS input_tokens,
+           sum((u ->> 'cached_input_tokens')::BIGINT)::BIGINT AS cached_input_tokens,
+           sum((u ->> 'output_tokens')::BIGINT)::BIGINT AS output_tokens,
+           round(avg(latency::DOUBLE), 1) AS mean_latency_s,
+           round(max(latency::DOUBLE), 1) AS max_latency_s
+    FROM usage WHERE json_type(u) = 'OBJECT'
+    GROUP BY run_file, role
 )
 SELECT
-    usage.run_file,
-    role,
-    any_value((run -> 'calls_by_role' ->> role)::INTEGER) AS calls,
-    any_value(round((run -> 'seconds_by_role' ->> role)::DOUBLE, 1)) AS seconds,
-    count(*) AS usage_rows,
-    sum((u ->> 'input_tokens')::BIGINT)::BIGINT AS input_tokens,
-    sum((u ->> 'cached_input_tokens')::BIGINT)::BIGINT AS cached_input_tokens,
-    sum((u ->> 'output_tokens')::BIGINT)::BIGINT AS output_tokens,
-    round(avg(latency::DOUBLE), 1) AS mean_latency_s,
-    round(max(latency::DOUBLE), 1) AS max_latency_s
-FROM usage JOIN runs USING (run_file)
-WHERE json_type(u) = 'OBJECT'
-GROUP BY usage.run_file, role
-ORDER BY usage.run_file, calls DESC NULLS LAST, role;
+    names.run_file, names.role,
+    (run -> 'calls_by_role' ->> names.role)::INTEGER AS calls,
+    round((run -> 'seconds_by_role' ->> names.role)::DOUBLE, 1) AS seconds,
+    coalesce(usage_rows, 0) AS usage_rows, input_tokens, cached_input_tokens, output_tokens,
+    mean_latency_s, max_latency_s
+FROM role_names AS names JOIN runs USING (run_file)
+LEFT JOIN usage_totals AS totals ON names.run_file = totals.run_file AND names.role = totals.role
+ORDER BY names.run_file, calls DESC NULLS LAST, names.role;
 ```
 
 ### `score-by-arm`
@@ -146,7 +158,7 @@ scored AS (
         o ->> 'arm' AS arm,
         left(coalesce(o ->> 'search_candidate', o ->> 'candidate_hash'), 12) AS candidate,
         o ->> 'case_id' AS case_id,
-        (o ->> 'score')::DOUBLE AS score
+        CASE WHEN (o ->> 'status') = 'evaluation-failed' THEN NULL ELSE (o ->> 'score')::DOUBLE END AS score
     FROM outcomes WHERE (o ->> 'split') <> 'reflection'
 )
 SELECT
@@ -179,7 +191,7 @@ scored AS (
         run_file,
         o ->> 'case_id' AS case_id,
         o ->> 'split' AS split,
-        (o ->> 'score')::DOUBLE AS score,
+        CASE WHEN (o ->> 'status') = 'evaluation-failed' THEN NULL ELSE (o ->> 'score')::DOUBLE END AS score,
         o ->> 'status' AS status
     FROM outcomes WHERE (o ->> 'split') <> 'reflection'
 )

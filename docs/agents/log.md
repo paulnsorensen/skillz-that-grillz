@@ -160,3 +160,6 @@
 - 2026-11-01 · 94d1d3fbd5485a92 · merged · decisions/wedge-skill-packaging.md · Record bundled .pth and .egg-info initialization, literal keyword imports, private writable compilation copies, verified interpreter candidates, and format-10 invalidation. Frozen probes return the page at ranks 1, 2, and 3. Index reconciliation remains pending.
 
 - 2026-11-02 · harness-ergonomics-recovery · added · decisions/skillz-harness-ergonomics.md · Recovered the four harness ergonomics ADRs from the 2026-10-11 Mold session, with current paths for the Codex version gate and the `run` options.
+
+
+- 2026-11-08 · cb1a4af886af04e5 · merged · criteria/run-observability.md · Record private watcher capabilities and producer-aligned accounting. Three frozen retrieval probes rank first.
