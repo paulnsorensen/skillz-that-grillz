@@ -1,11 +1,28 @@
-"""The unspent holdout reserve of a finished run: the `search_end` snapshot and its validated reading (gh-588)."""
+"""The end of the search budget: the search stop trigger, and the unspent holdout reserve of a finished run, from
+the `search_end` snapshot and its validated reading (gh-588)."""
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from typing import cast
 
 from skillz_experiments._budget import Budget, ceilings
 from skillz_experiments._cases import CodedError
+
+# The `search.stop_trigger` of each engine stop reason. Idle (no new evaluation for `skip_limit` iterations) is not a stall.
+ENGINE_TRIGGERS: Mapping[str, str] = {"metric-count": "metric-count", "call-share": "call-share", "stall": "stall",
+                                     "idle": "idle"}
+
+
+def budget_trigger(budget: Budget, timed_out: bool) -> str:
+    """Return the `search.stop_trigger` of a budget stop. The caller has given the reserved gate time back.
+
+    `timed_out` is whether the deadline had passed while the gate time was reserved. When the deadline is still
+    past without the reserve, the global deadline fired; else the search deadline did. Otherwise the call cap fired.
+    """
+    if not timed_out:
+        return "call-cap"
+    return "deadline" if budget.out_of_time() else "search-deadline"
 
 
 def search_end(budget: Budget, record: dict[str, object]) -> dict[str, float | int]:
