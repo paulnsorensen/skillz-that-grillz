@@ -343,7 +343,8 @@ def test_a_missing_pyz_or_a_broken_wedge_toml_stops_with_a_code(world: World) ->
     with pytest.raises(CodedError) as missing:
         _ = plan_targets(world.skill, skeleton.files, contract, "prose")
     assert missing.value.code == "target-not-built" and "scripts/beta.pyz" in str(missing.value)
-    for text in ("name = [\n", '[[target]]\nname = "alpha"\n\n[[target]]\nentry = "beta:main"\n'):
+    for text in ("name = [\n", '[[target]]\nname = "alpha"\n\n[[target]]\nentry = "beta:main"\n',
+                 'name = "../alpha"\n', 'name = "/absolute"\n', 'name = "alpha beta"\n'):
         _ = (world.skill / "wedge.toml").write_text(text)
         with pytest.raises(CodedError) as broken:
             _ = plan_targets(world.skill, skeleton.files, contract, "prose")

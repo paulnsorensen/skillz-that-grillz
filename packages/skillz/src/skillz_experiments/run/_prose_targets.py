@@ -5,6 +5,7 @@ It needs no shared defaults from a parent `wedge.toml` and no source path, so it
 """
 from __future__ import annotations
 
+import re
 import tomllib
 from pathlib import Path
 from typing import TypedDict, cast
@@ -23,8 +24,9 @@ def _names(path: Path) -> list[str]:
     raw = table.get("target", [table])
     tables = cast(list[object], raw) if isinstance(raw, list) else []
     names = [cast(dict[str, object], item).get("name") for item in tables if isinstance(item, dict)]
-    if not names or len(names) != len(tables) or not all(isinstance(name, str) and name.strip() for name in names):
-        raise CodedError("wedge-config-invalid", f"{path} is not a valid wedge config: each target needs a name")
+    if not names or len(names) != len(tables) or not all(
+            isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name) for name in names):
+        raise CodedError("wedge-config-invalid", f"{path} is not a valid wedge config: each target needs a safe name")
     return cast(list[str], names)
 
 
