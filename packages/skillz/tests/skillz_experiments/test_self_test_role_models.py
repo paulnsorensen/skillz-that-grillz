@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
@@ -14,7 +15,7 @@ ROLES = {"task": {"adapter": "claude", "model": "sonnet"}, "reflection": {"adapt
          "judge": {"adapter": "claude", "model": "opus"}}
 
 
-def _config(tmp_path: Path, roles: dict[str, dict[str, str]]) -> Path:
+def _config(tmp_path: Path, roles: Mapping[str, Mapping[str, object]]) -> Path:
     path = tmp_path / "harness.json"
     _ = path.write_text(json.dumps({"schema_version": 1, "roles": roles}))
     return path
@@ -62,4 +63,17 @@ def test_a_role_without_a_model_stops_with_usage_and_names_the_role(
 def test_preflight_only_without_a_model_or_a_role_file_stops_with_usage(capsys: pytest.CaptureFixture[str]) -> None:
     assert _cli.main(["self-test", "--preflight-only"]) == 1
     error = _error(capsys)
-    assert error["code"] == "usage" and "traceback" not in error and "--model" in str(error["error"])
+    assert error["code"] == "usage" and "traceback" not in error
+    assert all(name in str(error["error"]) for name in (*ROLES, "--model", "--harness-config"))
+
+
+@pytest.mark.ac("gh-707:AC-2")
+@pytest.mark.parametrize("invalid", [None, "", "  ", 42])
+@pytest.mark.parametrize("fallback", [[], ["--model", "sonnet"]])
+def test_an_invalid_configured_model_stops_with_usage_even_with_a_fallback(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str], invalid: object, fallback: list[str]) -> None:
+    roles = {**ROLES, "task": {"adapter": "claude", "model": invalid}}
+    assert _cli.main(["self-test", "--preflight-only", "--harness-config", str(_config(tmp_path, roles)), *fallback]) == 1
+    error = _error(capsys)
+    assert error["code"] == "usage" and "traceback" not in error
+    assert "task" in str(error["error"]) and "--model" in str(error["error"])

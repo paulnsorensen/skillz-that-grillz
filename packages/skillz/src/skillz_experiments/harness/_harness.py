@@ -43,11 +43,13 @@ class Configuration:
         defaults = {key: value for key, value in document.items() if key not in {"schema_version", "roles"}}
         root = path.resolve().parent if path is not None else Path.cwd()
         named = [*ROLES, *(["simulator"] if "simulator" in overrides else [])]
-        blank = [name for name in named if model is None and "model" not in defaults | mapping(overrides.get(name, {}))]
+        values = {name: defaults | mapping(overrides.get(name, {})) for name in named}
+        blank = [name for name, value in values.items()
+                 if not isinstance(selected := value.get("model", model), str) or not selected.strip()]
         if blank:
-            raise CodedError("usage", f"the harness configuration names no model for role {', '.join(blank)}; "
-                             + "set model for each role in the file, or pass --model")
-        roles = {name: parse_role(defaults | mapping(overrides.get(name, {})), model or "", root) for name in named}
+            raise CodedError("usage", f"the harness configuration names no valid model for role {', '.join(blank)}; "
+                             + "set a nonempty model for each role in the file, or remove invalid model entries and pass --model")
+        roles = {name: parse_role(value, model or "", root) for name, value in values.items()}
         return cls(roles, path.resolve() if path is not None else None)
 
     @classmethod
