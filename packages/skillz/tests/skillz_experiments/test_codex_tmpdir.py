@@ -1,9 +1,12 @@
-"""Codex task temp files live beside the workspace, so they have no sandbox `.git` ancestor (gh-305)."""
+"""Codex task temp files live beside the workspace, outside Git discovery (gh-305)."""
 from __future__ import annotations
 
 import json
 import os
+import shlex
+import shutil
 import stat
+import sys
 import subprocess
 import tempfile
 from collections.abc import Iterator
@@ -13,8 +16,8 @@ import pytest
 
 from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import make_workspace
-from skillz_experiments.harness._codex import Codex, configuration, private_task_tmpdir, task_tmpdir
-from skillz_experiments.harness._isolation import SOCKET_PATH_LIMIT
+from skillz_experiments.harness._codex import Codex, configuration
+from skillz_experiments.harness._isolation import SOCKET_PATH_LIMIT, private_task_tmpdir, task_tmpdir
 
 FAKE = '#!/bin/sh\n/usr/bin/env\nfor argument in "$@"; do echo "ARG=$argument"; done\n'
 
@@ -46,17 +49,13 @@ def _git(arguments: list[str], cwd: Path, ceiling: Path) -> subprocess.Completed
 
 
 @pytest.mark.ac("gh-305:AC-1")
-def test_task_temp_dirs_have_no_git_ancestor(tmp_path: Path, adapter: Codex) -> None:
+def test_task_temp_dirs_are_outside_git_discovery(tmp_path: Path, adapter: Codex) -> None:
     workspace = make_workspace(tmp_path / "task" / "workspace")
     assert _git(["init", "-q"], workspace, tmp_path).returncode == 0
     env = adapter._environment(workspace)  # pyright: ignore[reportPrivateUsage]
     assert Path(env["TMPDIR"]) == tmp_path / "task" / "tmp"
     assert Path(env["TMPDIR"]).is_dir()
     made = Path(tempfile.mkdtemp(dir=env["TMPDIR"]))
-    for path in (made, *made.parents):
-        if path == tmp_path or tmp_path not in path.parents:
-            break
-        assert not (path / ".git").exists()
     inside = _git(["rev-parse", "--show-toplevel"], made, tmp_path)
     assert inside.returncode == 128 and inside.stdout == ""
     control = _git(["rev-parse", "--show-toplevel"], workspace / "tmp", tmp_path)
@@ -138,3 +137,89 @@ def test_private_task_tmpdir_refuses_an_unprivate_directory(tmp_path: Path) -> N
     fresh.mkdir()
     made = private_task_tmpdir(fresh / "workspace")
     assert made == fresh / "tmp" and stat.S_IMODE(made.lstat().st_mode) == 0o700
+
+
+@pytest.mark.ac("gh-305:AC-2")
+@pytest.mark.parametrize("root", ["workspace", "tmp"])
+@pytest.mark.parametrize("unsafe", ["symlink", "dangling", "file"])
+def test_launch_rejects_unsafe_git_roots(tmp_path: Path, adapter: Codex, root: str, unsafe: str) -> None:
+    workspace = make_workspace(tmp_path / "task" / "workspace")
+    target = workspace if root == "workspace" else tmp_path / "task" / "tmp"
+    _ = private_task_tmpdir(workspace)
+    git = target / ".git"
+    if unsafe == "file":
+        _ = git.write_text("not a directory")
+    else:
+        destination = workspace / ".agents" if unsafe == "symlink" else tmp_path / "absent"
+        git.symlink_to(destination)
+    with pytest.raises(ValueError, match=".git"):
+        _ = adapter._environment(workspace)  # pyright: ignore[reportPrivateUsage]
+    assert git.is_symlink() if unsafe != "file" else git.is_file()
+
+
+@pytest.mark.ac("gh-305:AC-2")
+def test_launch_prepares_both_git_roots_without_config_side_effects(tmp_path: Path, adapter: Codex) -> None:
+    workspace = make_workspace(tmp_path / "task" / "workspace")
+    roots = (workspace / ".git", tmp_path / "task" / "tmp" / ".git")
+    arguments = configuration(workspace, Path("/usr/bin/codex"), [])
+    assert all(not root.exists() for root in roots)
+    _ = configuration(Path("/TASK/workspace"), Path("/usr/bin/codex"), [])
+    _ = adapter._environment(workspace)  # pyright: ignore[reportPrivateUsage]
+    assert all(root.is_dir() and not root.is_symlink() for root in roots)
+    assert configuration(workspace, Path("/usr/bin/codex"), []) == arguments
+    for root in roots:
+        root.rmdir()
+    _ = adapter._environment(workspace)  # pyright: ignore[reportPrivateUsage]
+    assert all(root.is_dir() and not root.is_symlink() for root in roots)
+
+
+@pytest.mark.ac("gh-305:AC-2")
+@pytest.mark.skipif(sys.platform != "linux", reason="the Codex Linux mount boundary is required")
+def test_real_codex_sandbox_keeps_agents_read_only_with_reused_policy(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, harness_bin: Path) -> None:
+    path = os.pathsep.join(entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+                           if Path(entry).resolve() != harness_bin.resolve())
+    found = shutil.which("codex", path=path)
+    if found is None:
+        pytest.skip("real Codex CLI is absent outside pytest harness bin")
+    monkeypatch.setenv("PATH", path)
+    if Path("/etc/codex/skills").exists():
+        pytest.skip("admin skill roots stop the Codex transport")
+    executable = Path(found).resolve()
+    assert executable != (harness_bin / "codex").resolve()
+    workspace = make_workspace(tmp_path / "task with space" / "workspace")
+    sentinel = workspace / ".agents" / "sentinel"
+    _ = sentinel.write_text("original")
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    transport = Codex("m", Budget(10, 120, 0), lambda: None)
+    try:
+        environment = transport._environment(workspace)  # pyright: ignore[reportPrivateUsage]
+        environment["CODEX_HOME"] = str(home)
+        policy = configuration(workspace, executable, [])
+        command = [str(executable), "sandbox", *policy, "-P", "skillz", "--include-managed-config",
+                   "-C", str(workspace), "--", "/usr/bin/env", "-i", "PATH=/usr/bin:/bin",
+                   f"HOME={workspace / 'home'}", f"TMPDIR={environment['TMPDIR']}", "LANG=C.UTF-8", "/bin/sh", "-c"]
+
+        def run(script: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run([*command, script], cwd=workspace, env=environment,
+                                  capture_output=True, text=True, timeout=30, check=False)
+
+        for root in (workspace / ".git", Path(environment["TMPDIR"]) / ".git"):
+            target = shlex.quote(str(root))
+            agents = shlex.quote(str(workspace / '.agents'))
+            attempted = run(f"rmdir {target} && ln -s {agents} {target}")
+            assert attempted.returncode != 0, attempted.stderr
+            assert f"'{root}': Device or resource busy" in attempted.stderr
+            assert root.is_dir() and not root.is_symlink()
+            denied = run("printf tampered > .agents/sentinel")
+            assert denied.returncode != 0, denied.stderr
+            assert sentinel.read_text() == "original"
+        initialized = run("git init -q -b main && git rev-parse --is-inside-work-tree")
+        assert initialized.returncode == 0, initialized.stderr
+        assert initialized.stdout.strip() == "true"
+        denied = run("printf tampered > .agents/sentinel")
+        assert denied.returncode != 0, denied.stderr
+        assert sentinel.read_text() == "original"
+    finally:
+        transport.close()

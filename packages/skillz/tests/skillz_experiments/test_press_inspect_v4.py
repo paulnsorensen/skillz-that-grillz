@@ -233,7 +233,9 @@ def test_codex_sandbox_returns_the_real_stderr_as_the_third_value(tmp_path: Path
         return subprocess.CompletedProcess(command, 3, "out", "err\n")
 
     monkeypatch.setattr("skillz_experiments.harness._codex.sandboxed", process)
-    assert adapter.sandbox(tmp_path / "workspace", ["x"]) == (3, "out", "err\n")
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert adapter.sandbox(workspace, ["x"]) == (3, "out", "err\n")
 
 
 @pytest.mark.parametrize(("answers", "accepted"), [
