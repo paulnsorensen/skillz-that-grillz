@@ -32,7 +32,8 @@ class Configuration:
     source: Path | None = None
 
     @classmethod
-    def load(cls, path: Path | None, model: str) -> Configuration:
+    def load(cls, path: Path | None, model: str | None) -> Configuration:
+        """Read the role file at `path`. `model` is the model of each role that names none; with None, every role must name one."""
         document = read(path) if path is not None else {"schema_version": 1}
         if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
             raise ValueError("unsupported harness configuration version")
@@ -41,10 +42,14 @@ class Configuration:
             raise ValueError("unknown harness role")
         defaults = {key: value for key, value in document.items() if key not in {"schema_version", "roles"}}
         root = path.resolve().parent if path is not None else Path.cwd()
-        roles = {name: parse_role(defaults | mapping(overrides.get(name, {})), model, root)
-                 for name in ROLES}
-        if "simulator" in overrides:
-            roles["simulator"] = parse_role(defaults | mapping(overrides["simulator"]), model, root)
+        named = [*ROLES, *(["simulator"] if "simulator" in overrides else [])]
+        values = {name: defaults | mapping(overrides.get(name, {})) for name in named}
+        blank = [name for name, value in values.items()
+                 if not isinstance(selected := value.get("model", model), str) or not selected.strip()]
+        if blank:
+            raise CodedError("usage", f"the harness configuration names no valid model for role {', '.join(blank)}; "
+                             + "set a nonempty model for each role in the file, or remove invalid model entries and pass --model")
+        roles = {name: parse_role(value, model or "", root) for name, value in values.items()}
         return cls(roles, path.resolve() if path is not None else None)
 
     @classmethod
