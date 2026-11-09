@@ -47,6 +47,7 @@ def _run(target: Path, out: Path, capsys: pytest.CaptureFixture[str], *extra: st
 @pytest.mark.parametrize("entry", [_greet(files=["evals/files/input.txt"]), _greet()], ids=["with-files", "fileless"])
 def test_validate_accepts_an_unscored_task_entry_without_a_family(
         tmp_path: Path, capsys: pytest.CaptureFixture[str], entry: dict[str, object]) -> None:
+    """Do not require task families or fixtures when validation selects only journeys."""
     target = _target(tmp_path, entry)
     assert main(["validate", "--target", str(target), "--kind", "journey"]) == 0
     report = cast(dict[str, object], json.loads(capsys.readouterr().out))
@@ -58,6 +59,7 @@ def test_validate_accepts_an_unscored_task_entry_without_a_family(
 @pytest.mark.parametrize("entry", [_greet(files=["evals/files/input.txt"]), _greet()], ids=["with-files", "fileless"])
 def test_journey_run_copies_the_seed_with_an_unscored_task_entry_to_the_approval_stop(
         tmp_path: Path, capsys: pytest.CaptureFixture[str], entry: dict[str, object]) -> None:
+    """Reach case approval with an unchanged seed that contains an unscored task entry."""
     target, out = _target(tmp_path, entry), tmp_path / "run"
     assert _run(target, out, capsys)[1]["code"] == "cases-missing"
     _ = (out / "cases.draft.json").write_bytes((out / "cases.seed.json").read_bytes())
@@ -68,6 +70,7 @@ def test_journey_run_copies_the_seed_with_an_unscored_task_entry_to_the_approval
 @pytest.mark.ac("gh-701:AC-3")
 def test_a_run_that_scores_the_task_kind_still_requires_the_family_of_a_task_case(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Keep the explicit family requirement when the contract scores task cases."""
     target, out = _target(tmp_path, _greet(files=["evals/files/input.txt"])), tmp_path / "run"
     contract = cast(dict[str, object], json.loads((target / "evals/autoimprove.json").read_text()))
     contract["kinds"] = {"task": {"grader": "judge", "rubric": "Grade each criterion."}}

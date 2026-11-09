@@ -1,5 +1,4 @@
 """Case intake. The outer agent drafts cases; this module validates, splits, freezes, and asks once.
-
 No function here calls a model. Trigger and near-miss cases stay pending until an activation grader exists.
 """
 from __future__ import annotations
@@ -72,6 +71,7 @@ class IntakeCase(DraftCase):
 
 
 def _case(value: object, position: int, journeys: Collection[str], fixtures: Mapping[str, Fixture], scores_task: bool = True) -> DraftCase:
+    """Validate a draft case with the family and fixture rules for its scoring mode."""
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
         raise ValueError(f"draft case {position} must be a JSON object")
     item = cast(dict[str, object], value)

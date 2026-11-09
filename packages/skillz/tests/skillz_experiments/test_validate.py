@@ -196,6 +196,7 @@ def _fileless(target: Path) -> None:
 @pytest.mark.ac("gh-696:AC-1")
 def test_run_on_a_seed_copy_with_a_fileless_task_case_stops_as_cases_invalid_without_a_traceback(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    """Keep the case ID and fixture repair guidance in the coded stop, without a traceback."""
     target, out = make_target(tmp_path), tmp_path / "run"
     _fileless(target)
     command = ["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose"]
@@ -213,6 +214,7 @@ def test_run_on_a_seed_copy_with_a_fileless_task_case_stops_as_cases_invalid_wit
 @pytest.mark.ac("gh-697:AC-1")
 def test_validate_reports_a_task_entry_without_files_that_run_refuses(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    """Report the fileless seed entry once, with its source file and repair guidance."""
     target = make_target(tmp_path)
     _fileless(target)
     code, report = _report(capsys, "--target", str(target))
@@ -227,6 +229,7 @@ def test_validate_reports_a_task_entry_without_files_that_run_refuses(
 @pytest.mark.ac("gh-697:AC-2")
 def test_validate_reports_a_fileless_draft_task_case_with_the_run_code(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    """Keep draft validation consistent with the run command at the fixture boundary."""
     target, out = make_target(tmp_path), tmp_path / "run"
     _fileless(target)
     with pytest.raises(Stop):
@@ -241,6 +244,7 @@ def test_validate_reports_a_fileless_draft_task_case_with_the_run_code(
 @pytest.mark.ac("gh-701:AC-4")
 def test_validate_with_an_unknown_kind_reports_it_and_keeps_the_task_checks_strict(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    """An invalid kind must not bypass scored-task fixture validation."""
     target = make_target(tmp_path)
     _fileless(target)
     code, report = _report(capsys, "--target", str(target), "--kind", "no-such-kind")
