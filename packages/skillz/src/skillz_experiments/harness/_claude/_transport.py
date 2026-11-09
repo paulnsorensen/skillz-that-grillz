@@ -54,14 +54,9 @@ from skillz_experiments.harness._claude._events import (
     token_events,
     event_trace,
 )
-from skillz_experiments.harness._claude._login import (
-    check_ancestors,
-    login_failed,
-    preflight_leak,
-    keychain_environment,
-    ClaudeLogin,
-    login_credential_kind,
-)
+from skillz_experiments.harness._claude._git import hide_placeholders
+from skillz_experiments.harness._claude._login import (check_ancestors, login_failed, preflight_leak, keychain_environment, ClaudeLogin,
+                                                        login_credential_kind)
 from skillz_experiments.harness._claude._options import ClaudeOptions, resolve_read_roots
 from skillz_experiments.harness._claude._sandbox import (
     remove_tree,
@@ -202,12 +197,12 @@ class ClaudeCode:
             agent = workspace / ".claude/agents" / PurePosixPath(path).name
             agent.parent.mkdir(parents=True, exist_ok=True)
             _ = agent.write_text(candidate.files[path], encoding="utf-8")
-        for root in self.surface.companions:
+        for root, key in zip(self.surface.companions, self.surface.companion_keys):
             target = workspace / ".claude/skills" / PurePosixPath(root).name
             files = {name: text.encode("utf-8") for name, text in candidate.files.items()} | candidate.frozen
             for name, data in files.items():
-                if name.startswith(root + "/"):
-                    file = target / name.removeprefix(root + "/")
+                if name.startswith(key + "/"):
+                    file = target / name.removeprefix(key + "/")
                     file.parent.mkdir(parents=True, exist_ok=True)
                     _ = file.write_bytes(data)
                     file.chmod(0o555 if name.endswith(".pyz") else 0o444)
@@ -243,6 +238,7 @@ class ClaudeCode:
             raise CodedError("contract-surface", f"the candidate changes the MCP config {self.surface.mcp_config}; "
                              + "its server commands run on the host, so the seed text is fixed for the run")
         self._stage(workspace, candidate)
+        hide_placeholders(workspace / "home")
         settings_path = workspace.parent / "settings.json"
         _ = settings_path.write_text(json.dumps(self._floor(workspace, self.inventory().foreign - set(expected))))
         mcp_path = None

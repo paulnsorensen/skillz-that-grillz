@@ -155,9 +155,11 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-696](./gh-696.md) — gh-696: a draft task case without files stops with cases-invalid, not a traceback
 - [gh-697](./gh-697.md) — gh-697: validate reports a task entry without files that run refuses
 - [gh-698](./gh-698.md) — gh-698: a journey turn keeps every assistant text on Codex as on Claude
+- [gh-699](./gh-699.md) — gh-699: a contract companion can be a sibling directory
 - [gh-700](./gh-700.md) — gh-700: no Claude role starts below a foreign .git, so a run leaves no /tmp/.git skeleton
 - [gh-701](./gh-701.md) — gh-701: a run that does not score the task kind needs no family and no files on a task entry
 - [gh-702](./gh-702.md) — gh-702: a Claude surface file tool may write in the workspace only
+- [gh-703](./gh-703.md) — gh-703: a journey fixture can rebuild a Git repository under the Claude Code sandbox
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [kit-harder-journeys](./kit-harder-journeys.md) — kit-harder-journeys: harder journeys for the self-autoimprove kit
 - [proposer-cli-early](./proposer-cli-early.md) — proposer-cli-early: the reflection prompt offers @new-cli early and keeps room for its two edits

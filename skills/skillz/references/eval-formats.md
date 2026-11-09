@@ -141,14 +141,14 @@ The `helper` object has these fields:
 | `input` | The file name that the helper reads. The default is `fixture.md`. |
 | `fixtures` | Recorded inputs, return codes, and outputs. |
 
-The `surface` object has these fields. Each path is relative to the skill and names a file that the candidate holds:
+The `surface` object has these fields. Each path is relative to the skill and names a file that the candidate holds. A companion can also be `../<name>`:
 
 | Field | Meaning |
 | --- | --- |
 | `tools` | Extra tool names for the task role. Codex grants `Write`, `Edit`, and `MultiEdit` through its native file edit. The runner refuses any other name on a Codex task role. On Claude Code, a `Write`, `Edit`, `MultiEdit`, or `NotebookEdit` name lets that tool write in the workspace only; `.agents` and `.claude` stay denied, and a write outside the workspace is not granted. |
 | `mcp_config` | A JSON file of MCP servers. The run never edits it. Only the Claude task role runs it. |
 | `agents` | Markdown files of agents. The run never edits them. Only the Claude task role runs them. |
-| `companions` | Skill directories that stay read-only. Only the Claude task role runs them. |
+| `companions` | Skill directories that stay read-only. Only the Claude task role runs them. An entry `../<name>` names a sibling directory of the skill: one `..` part, then one non-hidden part. The runner stages every companion at `.claude/skills/<name>`. A sibling must be an existing directory, not a symlink, and not the skill itself. Two companions must not share a `<name>`. A sibling file enters every hash that a skill file enters. |
 
 The `statistics` object takes these fields. Every number is finite and at least 0:
 
