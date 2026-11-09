@@ -122,6 +122,19 @@ def test_nested_credential_keys_and_values_are_redacted_before_a_container_is_cu
 
 
 @pytest.mark.ac("autoimprove-observability:AC-6")
+def test_redacted_mcp_input_keys_keep_each_value_when_their_names_collide() -> None:
+    inputs: dict[str, object] = {"[redacted]#2": "literal", "https://a.example": "approved",
+                                "https://b.example": "denied", "api_key": "private-one",
+                                "password": "private-two"}
+    events = [_assistant({"type": "tool_use", "id": "m1", "name": "mcp__policy__check", "input": inputs})]
+    trace = judge_trace(claude_steps(events))
+    assert trace == [{"turn": 1, "tool": "mcp__policy__check",
+                      "input": {"[redacted]#2": "literal", "[redacted]": "approved", "[redacted]#3": "denied",
+                                "[redacted]#4": "[redacted]", "[redacted]#5": "[redacted]"},
+                      "output": None, "error": None}]
+
+
+@pytest.mark.ac("autoimprove-observability:AC-6")
 def test_many_short_steps_and_omission_marker_fit_the_complete_json_budget() -> None:
     steps: list[dict[str, object]] = [{"turn": index} for index in range(6_000)]
     trace = judge_trace(steps)

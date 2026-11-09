@@ -29,10 +29,19 @@ def _bounded(value: object) -> object:
     if isinstance(value, str):
         return _cut(value)
     if isinstance(value, dict):
-        bounded = {_cut(str(key)): "[redacted]" if is_credential_key(str(key)) else _bounded(item)
-                   for key, item in cast(dict[object, object], value).items()}
-        encoded = json.dumps(bounded)
-        return _cut(encoded) if len(encoded) > FIELD_CHARS else bounded
+        result: dict[str, object] = {}
+        next_suffix: dict[str, int] = {}
+        for key, item in cast(dict[object, object], value).items():
+            text = str(key)
+            name = _cut(text)
+            unique = name
+            while unique in result:
+                count = next_suffix.get(name, 1) + 1
+                next_suffix[name] = count
+                unique = f"{name}#{count}"
+            result[unique] = "[redacted]" if is_credential_key(text) else _bounded(item)
+        encoded = json.dumps(result)
+        return _cut(encoded) if len(encoded) > FIELD_CHARS else result
     if isinstance(value, list):
         bounded = [_bounded(item) for item in cast(list[object], value)]
         encoded = json.dumps(bounded)
