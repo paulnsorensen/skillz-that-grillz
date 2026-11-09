@@ -16,11 +16,14 @@ from pathlib import Path
 from typing import cast
 
 from skillz_experiments._protocol import USAGE_KEYS, VERSION
-from skillz_experiments.harness._codex import configuration, private_task_tmpdir, task_tmpdir
+from skillz_experiments.harness._codex import configuration
+from skillz_experiments.harness._isolation import prepare_git_root, private_task_tmpdir, task_tmpdir
 
 
 def _environment(workspace: Path, codex_home: Path) -> dict[str, str]:
     tmpdir = private_task_tmpdir(workspace)
+    prepare_git_root(workspace / ".git")
+    prepare_git_root(tmpdir / ".git")
     return {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"), "TMPDIR": str(tmpdir),
             "LANG": "C.UTF-8", "CODEX_HOME": str(codex_home)}
 
