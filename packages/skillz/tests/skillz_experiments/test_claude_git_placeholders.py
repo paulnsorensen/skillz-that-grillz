@@ -14,7 +14,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import make_workspace
 from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._claude import ClaudeCode
-from skillz_experiments.harness._claude._git import PLACEHOLDERS
+from skillz_experiments.harness._claude._git import PLACEHOLDERS, RUNTIME
 
 pytestmark = pytest.mark.usefixtures("host_login", "claude_in_process")
 
@@ -71,9 +71,10 @@ def _sandboxed(workspace: Path, environment: dict[str, str], command: str) -> su
 def test_the_task_home_excludes_every_root_placeholder_and_no_runner_directory(tmp_path: Path) -> None:
     workspace, environment = _launch(tmp_path)
     ignore = Path(environment["HOME"]) / ".config/git/ignore"
-    assert ignore.read_text().splitlines() == [f"/{name}" for name in PLACEHOLDERS]
+    lines = ignore.read_text().splitlines()
+    assert lines == [f"/{name}" for name in PLACEHOLDERS] + ["/home/", "/tmp/"]
     assert {".gitconfig", ".bashrc", ".bash_profile", ".vscode", ".idea"} <= set(PLACEHOLDERS)
-    assert not {".agents", ".claude"} & set(PLACEHOLDERS)
+    assert not {".agents", ".claude"} & set(PLACEHOLDERS + RUNTIME)
     assert not (workspace / "home/.config/git/config").exists()
 
 
@@ -83,8 +84,7 @@ def test_git_add_all_skips_the_sandbox_placeholders(tmp_path: Path) -> None:
     workspace, environment = _launch(tmp_path)
     ran = _sandboxed(workspace, environment, "git init -q -b main && echo x > f && git add -A && git ls-files")
     tracked = ran.stdout.split()
-    assert (ran.returncode, ran.stderr, "f" in tracked) == (0, "", True)
-    assert not set(PLACEHOLDERS) & set(tracked)
+    assert (ran.returncode, ran.stderr, tracked) == (0, "", ["f"])
 
 
 @needs_bwrap
@@ -95,5 +95,5 @@ def test_a_fixture_commits_with_the_global_identity_after_the_repository_config_
     local = _sandboxed(workspace, environment, "git config user.email a@b")
     assert local.returncode != 0 and "Device or resource busy" in local.stderr
     ran = _sandboxed(workspace, environment, "git config --global user.email a@b && git config --global user.name n "
-                     + "&& echo x > f && git add -A && git commit -qm init && git log --format=%ae%n%an%n%s")
-    assert (ran.returncode, ran.stdout.split(), ran.stderr) == (0, ["a@b", "n", "init"], "")
+                     + "&& echo x > f && git add -A && git commit -qm init && git log --format=%ae%n%an%n%s && git ls-files")
+    assert (ran.returncode, ran.stdout.split(), ran.stderr) == (0, ["a@b", "n", "init", "f"], "")

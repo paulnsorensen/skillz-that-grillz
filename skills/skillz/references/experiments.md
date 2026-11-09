@@ -343,6 +343,8 @@ Each case has these fields:
   A fixture that rebuilds a Git repository runs under the Claude Code sandbox, and the sandbox has limits:
   - Claude Code binds `/dev/null` over the workspace root names `.gitconfig`, `.gitmodules`, `.bashrc`, `.bash_profile`, `.zshrc`, `.zprofile`, `.profile`, `.ripgreprc`, `.vscode`, `.idea`, and `.mcp.json`.
     `git add -A` fails on a device entry. The runner lists these names in the global Git exclude file of the task `HOME`, so `git add -A` skips them.
+    The same file hides the runtime-owned `home/` and `tmp/` directories, so the exclude file and a `git config --global` identity stay out of the fixture repository.
+    The exclude file is global: it also hides these root names in a repository that a fixture creates in a subdirectory.
     The runner does not hide `.agents` and `.claude`. Use `git add -A` for case files only; stage a path by name when you need an exact set.
   - Claude Code binds `.git/config` and `.git/hooks` read-only in each Bash command that starts after the repository exists. The runner cannot lift this.
     `git config user.email` (repository-local) fails with `Device or resource busy` in such a command. It works only in the same Bash command as `git init`.
