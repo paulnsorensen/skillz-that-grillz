@@ -150,6 +150,9 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-657](./gh-657.md) — gh-657: validate gates against pass and fail fixtures
 - [gh-658](./gh-658.md) — gh-658: warn when the train split has almost no headroom
 - [gh-663](./gh-663.md) — gh-663: a partially failing regression case stays in its family mean
+- [gh-696](./gh-696.md) — gh-696: a draft task case without files stops with cases-invalid, not a traceback
+- [gh-697](./gh-697.md) — gh-697: validate reports a task entry without files that run refuses
+- [gh-701](./gh-701.md) — gh-701: a run that does not score the task kind needs no family and no files on a task entry
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [kit-harder-journeys](./kit-harder-journeys.md) — kit-harder-journeys: harder journeys for the self-autoimprove kit
 - [proposer-cli-early](./proposer-cli-early.md) — proposer-cli-early: the reflection prompt offers @new-cli early and keeps room for its two edits
