@@ -23,6 +23,7 @@ from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._open import engine_hash, validation_policy
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import RunState
+from skillz_experiments.run._unspent import budget_trigger
 from skillz_experiments.search import _history, add_validation_scores, attempts, complete_means, search, search_allowance
 from skillz_experiments.search import validation_complete
 from test_run_search import MODEL, Provider, _interrupt, _start  # pyright: ignore[reportPrivateUsage]
@@ -108,10 +109,10 @@ def test_the_engine_names_a_spent_call_share_as_the_stop() -> None:
 @pytest.mark.ac("gh-500:AC-7")
 def test_a_budget_stop_names_the_call_cap_the_search_deadline_or_the_global_deadline() -> None:
     live, expired = Budget(10, 60.0), Budget(10, 60.0, started=time.monotonic() - 120.0)
-    assert _session._budget_trigger(live, False) == "call-cap"  # pyright: ignore[reportPrivateUsage]
+    assert budget_trigger(live, False) == "call-cap"
     # The deadline passed while the gate time was reserved, and the global deadline is still ahead.
-    assert _session._budget_trigger(live, True) == "search-deadline"  # pyright: ignore[reportPrivateUsage]
-    assert _session._budget_trigger(expired, True) == "deadline"  # pyright: ignore[reportPrivateUsage]
+    assert budget_trigger(live, True) == "search-deadline"
+    assert budget_trigger(expired, True) == "deadline"
 
 
 @pytest.mark.ac("gh-500:AC-7")
