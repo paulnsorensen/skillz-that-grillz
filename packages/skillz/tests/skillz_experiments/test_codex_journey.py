@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import errno
+import json
 import os
 import shlex
 import signal
@@ -20,6 +21,7 @@ from skillz_experiments.evaluation import CheckMemo, Reply, Transcript, evaluate
 from skillz_experiments.evaluation._evaluator import _prompt  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.evaluation._scoring import executed
 from skillz_experiments.harness._codex import Codex
+from skillz_experiments.harness._steps import codex_steps
 from skillz_experiments.harness._codex_journey import _first_turn_loaded  # pyright: ignore[reportPrivateUsage]
 from test_journey import contract, journey_case
 from test_journey_press import Judge
@@ -224,6 +226,39 @@ def test_codex_converse_trace_reaches_real_journey_gate_through_evaluator(
     else:
         assert result["scores"] == {"command": 0.0, "judge": None}
         assert result["status"] == "gate-failed"
+
+
+@pytest.mark.usefixtures("host_login")
+@pytest.mark.ac("autoimprove-observability:AC-5")
+def test_a_codex_journey_judge_sees_the_commands_and_their_output_by_turn(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_codex(tmp_path, monkeypatch, "gate_journey")
+    source = (Path(__file__).resolve().parents[4] / "skills/skillz/evals/gates/journey.py").read_text()
+    rules = parse({"schema_version": 1, "status": "approved", "skill": "echo-skill",
+                   "invocation": "$echo-skill run", "kinds": {"journey": {"grader": "journey",
+                   "argv": [sys.executable, "-I", "-c", source], "rubric": "Score the journey."}}}, "skill")
+    case, candidate = journey_case(tmp_path, rules, 2)
+    task = Codex("offline-test", Budget(5, 120, 0), lambda: None)
+    judge = Judge([{"reply": "follow up", "done": False},
+                   {"criteria": {"must-0": {"level": 4, "reason": "valid trace"}}}])
+    judge.budget = task.budget
+
+    def sandbox(_self: Codex, workspace: Path, argv: list[str]) -> tuple[int, str, str]:
+        done = subprocess.run(argv, cwd=workspace, capture_output=True, text=True, timeout=30, check=False)
+        return done.returncode, done.stdout, done.stderr
+
+    monkeypatch.setattr(Codex, "sandbox", sandbox)
+    try:
+        result = evaluate(task, judge, candidate, case, checks=CheckMemo(), steps=codex_steps)
+    finally:
+        task.close()
+    assert result["scores"] == {"command": 1.0, "judge": 1.0} and "steps" not in result
+    simulator, judged = judge.prompts
+    assert '"trace"' not in simulator and "The `trace` field lists" in judged
+    trace = cast(list[dict[str, object]], json.loads(judged.partition("\nUNTRUSTED DATA (JSON):\n")[2])["trace"])
+    runs = [(step["turn"], step["output"]) for step in trace if "skillz-experiment.pyz run" in json.dumps(step.get("input"))]
+    assert runs[-1] == (2, "done") and [turn for turn, _ in runs] == [1, 1, 2]
+    assert {"turn": 1, "text": f"Approve {'ab' * 32}?"} in trace
 
 
 @pytest.mark.usefixtures("host_login")

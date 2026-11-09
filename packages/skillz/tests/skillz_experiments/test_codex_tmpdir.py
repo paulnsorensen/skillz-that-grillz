@@ -152,7 +152,7 @@ def test_launch_rejects_unsafe_git_roots(tmp_path: Path, adapter: Codex, root: s
     else:
         destination = workspace / ".agents" if unsafe == "symlink" else tmp_path / "absent"
         git.symlink_to(destination)
-    with pytest.raises(ValueError, match=".git"):
+    with pytest.raises(ValueError, match=r"\.git"):
         _ = adapter._environment(workspace)  # pyright: ignore[reportPrivateUsage]
     assert git.is_symlink() if unsafe != "file" else git.is_file()
 

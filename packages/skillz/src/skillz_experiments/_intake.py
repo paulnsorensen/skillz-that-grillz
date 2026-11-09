@@ -1,5 +1,4 @@
 """Case intake. The outer agent drafts cases; this module validates, splits, freezes, and asks once.
-
 No function here calls a model. Trigger and near-miss cases stay pending until an activation grader exists.
 """
 from __future__ import annotations
@@ -15,7 +14,7 @@ from skillz_experiments._cases import (
     JOURNEY_FIELDS, CodedError, Fixture, Journey, Split, case_criteria, journey_of, loads_untrusted, mapping, string, text_map,
 )
 from skillz_experiments._contract import LOCATION, RUBRIC_GRADERS, Contract, Grader, load_contract, parse
-from skillz_experiments._evals_format import EVAL_KINDS, SOURCES, regression_of
+from skillz_experiments._evals_format import EVAL_KINDS, SOURCES, TASK_FIXTURE, regression_of
 from skillz_experiments._frontmatter import read_frontmatter
 from skillz_experiments._records import approval_digest, share_files, write_cases
 
@@ -71,16 +70,18 @@ class IntakeCase(DraftCase):
         return item | ({"regression": True} if self.regression else {})
 
 
-def _case(value: object, position: int, journeys: Collection[str], fixtures: Mapping[str, Fixture]) -> DraftCase:
+def _case(value: object, position: int, journeys: Collection[str], fixtures: Mapping[str, Fixture], scores_task: bool = True) -> DraftCase:
+    """Validate a draft case with the family and fixture rules for its scoring mode."""
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
         raise ValueError(f"draft case {position} must be a JSON object")
     item = cast(dict[str, object], value)
     name = item.get("id") if isinstance(item.get("id"), str) and item.get("id") else f"#{position}"
     if set(item) - DRAFT_FIELDS:
         raise ValueError(f"case {name}: unknown fields {', '.join(sorted(set(item) - DRAFT_FIELDS))}")
-    if DRAFT_REQUIRED - set(item):
-        raise CodedError("cases-invalid", f"case {name}: missing fields {', '.join(sorted(DRAFT_REQUIRED - set(item)))}; add each "
-                         + "field (a trigger or near-miss seed case takes family = id; a task case needs an explicit family)")
+    item = {"family": item.get("id")} | item if item.get("kind") == "task" and not scores_task else item
+    if missing := sorted(DRAFT_REQUIRED - set(item)):
+        raise CodedError("cases-invalid", f"case {name}: missing fields {', '.join(missing)}; add each field "
+                         + "(a trigger or near-miss seed case takes family = id; a scored task case needs an explicit family)")
     try:
         kind, source = item["kind"], item["source"]
         allowed = (*EVAL_KINDS, *journeys)
@@ -88,10 +89,9 @@ def _case(value: object, position: int, journeys: Collection[str], fixtures: Map
             raise ValueError(f"kind must be one of {', '.join(allowed)}")
         if source not in SOURCES:
             raise ValueError(f"source must be one of {', '.join(SOURCES)}")
-        files = text_map(item.get("files", {}), fixtures)
-        expected = item.get("expected")
-        if kind == "task" and (not files or expected is None):
-            raise ValueError("a task case needs files and an expected reference")
+        files, expected = text_map(item.get("files", {}), fixtures), item.get("expected")
+        if kind == "task" and scores_task and (not files or expected is None):
+            raise CodedError("cases-invalid", f"a task case needs files and an expected reference; {TASK_FIXTURE}")
         return DraftCase(string(item["id"], "id"), string(item["family"], "family"), cast(str, kind),
                           string(item["request"], "request"), cast(str, source), files, expected,
                           journey_of(item, kind in journeys), regression_of(item, source, kind not in PENDING_KINDS))
@@ -101,11 +101,11 @@ def _case(value: object, position: int, journeys: Collection[str], fixtures: Map
         raise ValueError(f"case {name}: {error}") from None
 
 
-def load_draft(path: Path, journeys: Collection[str] = ("journey",)) -> list[DraftCase]:
+def load_draft(path: Path, journeys: Collection[str] = ("journey",), scores_task: bool = True) -> list[DraftCase]:
     """Read and strictly validate `cases.draft.json`. Raise `ValueError` that names the bad case.
 
     The draft is a list of cases, or an object whose `cases` list paths into its shared `fixtures` map (gh-580).
-    `journeys` names the contract kinds that use the journey grader. Their cases take the journey fields.
+    `journeys` names the contract kinds that use the journey grader. Unless `scores_task`, a task case may omit family and files.
     """
     if not path.is_file() or path.is_symlink() or path.stat().st_size > DRAFT_LIMIT:
         raise ValueError("draft must be a bounded regular file, not a symlink")
@@ -114,7 +114,7 @@ def load_draft(path: Path, journeys: Collection[str] = ("journey",)) -> list[Dra
     if not isinstance(shared.get("cases"), list) or not shared["cases"] or set(shared) - {"fixtures", "cases"}:
         raise ValueError("draft must be a nonempty list of cases, or an object with only fixtures and a nonempty cases list")
     fixtures = text_map(shared.get("fixtures", {}))
-    cases = [_case(item, position, journeys, fixtures) for position, item in enumerate(cast(list[object], shared["cases"]), 1)]
+    cases = [_case(item, position, journeys, fixtures, scores_task) for position, item in enumerate(cast(list[object], shared["cases"]), 1)]
     names = [case.identifier for case in cases]
     if len(set(names)) != len(names):
         raise ValueError(f"duplicate case id {next(name for name in names if names.count(name) > 1)}")

@@ -152,3 +152,19 @@ def fixture_from_bytes(data: bytes, name: str) -> Fixture:
     if kind is None:
         raise ValueError(f"{name} must be UTF-8 text or a png, jpg, webp, or gif image")
     return {"base64": base64.b64encode(data).decode("ascii"), "type": kind}
+
+
+def sibling_trees(root: Path, companions: Sequence[str]) -> list[tuple[Path, str]]:
+    """Return the directory and the name of each `../<name>` companion. Refuse one that is not a plain directory beside `root`."""
+    base = root.resolve()
+    trees: list[tuple[Path, str]] = []
+    for companion in companions:
+        name = companion[3:]
+        path = base.parent / name
+        if not companion.startswith("../"):
+            continue
+        if name == base.name or path.is_symlink() or not path.is_dir() or path.resolve().parent != base.parent:
+            raise CodedError("contract-surface", f"companion {companion} must name an existing directory beside the skill: "
+                             + "not the skill, a symlink, or a path that leaves the parent directory")
+        trees.append((path, name))
+    return trees

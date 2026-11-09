@@ -157,7 +157,8 @@ def test_an_export_carries_the_fingerprint_and_no_case_text(
 
 @pytest.mark.ac("gh-235:AC-6")
 def test_the_scoring_files_are_pinned_and_exist() -> None:
-    assert SCORING_FILES == ("evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "_graders.py", "_audit.py", "_contract.py")
+    assert SCORING_FILES == ("evaluation/_evaluator.py", "evaluation/_memo.py", "evaluation/_scoring.py", "evaluation/_trace.py",
+                             "harness/_steps.py", "_graders.py", "_audit.py", "_contract.py", "_redact.py")
     assert [name for name in SCORING_FILES if not (PACKAGE / name).is_file()] == []
 
 
