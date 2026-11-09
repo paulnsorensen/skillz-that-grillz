@@ -150,6 +150,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-657](./gh-657.md) — gh-657: validate gates against pass and fail fixtures
 - [gh-658](./gh-658.md) — gh-658: warn when the train split has almost no headroom
 - [gh-663](./gh-663.md) — gh-663: a partially failing regression case stays in its family mean
+- [gh-694](./gh-694.md) — gh-694: validate reports each draft judged case that run refuses for its criteria
 - [gh-695](./gh-695.md) — gh-695: a prose run on a copy reads only the wedge target names
 - [gh-696](./gh-696.md) — gh-696: a draft task case without files stops with cases-invalid, not a traceback
 - [gh-697](./gh-697.md) — gh-697: validate reports a task entry without files that run refuses
