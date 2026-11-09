@@ -137,13 +137,13 @@ max_lines = 300
 "packages/skillz/src/skillz_experiments/_intake.py" = { max_lines = 429, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/harness/_claude/_events.py" = { max_lines = 386, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/harness/_claude/_preflight.py" = { max_lines = 305, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
-"packages/skillz/src/skillz_experiments/harness/_claude/_transport.py" = { max_lines = 651, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/harness/_claude/_transport.py" = { max_lines = 647, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/harness/_codex.py" = { max_lines = 519, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/run/_outcomes.py" = { max_lines = 333, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/run/_plan.py" = { max_lines = 302, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/run/_run.py" = { max_lines = 400, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/run/_search_phase.py" = { max_lines = 423, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
-"packages/skillz/src/skillz_experiments/run/_session.py" = { max_lines = 356, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/run/_session.py" = { max_lines = 349, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/run/_wedge_targets.py" = { max_lines = 787, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/search/_history.py" = { max_lines = 334, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/wrapper/_gemini.py" = { max_lines = 492, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }

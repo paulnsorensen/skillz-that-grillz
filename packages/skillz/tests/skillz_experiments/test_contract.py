@@ -269,7 +269,7 @@ def test_contract_surface_parses_every_declared_field() -> None:
 
 @pytest.mark.parametrize(("surface", "message"), [
     ({"tool": ["Bash"]}, "unknown fields: tool"),
-    ({"companions": ["../other"]}, "relative, non-hidden"),
+    ({"companions": ["../a/b"]}, "relative, non-hidden"),
     ({"companions": ["/abs/skill"]}, "relative, non-hidden"),
     ({"agents": [".hidden/a.md"]}, "relative, non-hidden"),
     ({"mcp_config": "mcp.yaml"}, "must end with .json"),

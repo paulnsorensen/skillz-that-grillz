@@ -1035,6 +1035,7 @@ def test_a_tampered_seed_stops_resume(
         _ = run(prep.target, prep.out, MODEL, live=True, factory=Spy(refuse=True).factory)
 
 
+@pytest.mark.ac("autoimprove-observability:AC-7")
 def test_a_changed_engine_hash_stops_resume(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
