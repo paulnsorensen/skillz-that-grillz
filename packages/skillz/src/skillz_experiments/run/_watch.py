@@ -1,7 +1,7 @@
 """`watch`: a read-only page on 127.0.0.1 that shows `<out>/run.json` while a run works.
 
 The server reads `run.json` again when its size or modification time changes. It writes no file.
-It answers only GET requests for its own three paths, and only for a Host header of its own loopback address.
+It answers only GET requests for its own allowlisted paths, and only for a Host header of its own loopback address.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import json
 import os
 import secrets
 import threading
+from importlib.resources import files
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import final
@@ -24,6 +25,7 @@ HOST = "127.0.0.1"
 POLICY = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; "
           + "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 ASSETS = {"/": ("text/html", PAGE), "/app.js": ("text/javascript", SCRIPT), "/app.css": ("text/css", STYLE)}
+IMAGE_ASSETS = {"/favicon.png": "favicon.png", "/brand.png": "brand.png"}
 
 
 @final
@@ -86,13 +88,17 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(200, "application/json", body)
         elif path in ASSETS:
             self._send(200, *ASSETS[path])
+        elif path in IMAGE_ASSETS:
+            image = files("skillz_experiments.run").joinpath("_assets", IMAGE_ASSETS[path]).read_bytes()
+            self._send(200, "image/png", image)
         else:
             self._send(404, "text/plain", "not found\n")
 
-    def _send(self, status: int, kind: str, body: str) -> None:
-        data = body.encode("utf-8")
+    def _send(self, status: int, kind: str, body: str | bytes) -> None:
+        data = body.encode("utf-8") if isinstance(body, str) else body
+        content_type = f"{kind}; charset=utf-8" if isinstance(body, str) else kind
         self.send_response(status)
-        for name, value in (("Content-Type", f"{kind}; charset=utf-8"), ("Content-Length", str(len(data))),
+        for name, value in (("Content-Type", content_type), ("Content-Length", str(len(data))),
                             ("Cache-Control", "no-store"), ("Content-Security-Policy", POLICY),
                             ("X-Content-Type-Options", "nosniff"), ("Referrer-Policy", "no-referrer")):
             self.send_header(name, value)

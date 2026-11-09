@@ -2,7 +2,11 @@
 
 T3 browser checks exercise the real source CLI on Linux.
 All data is synthetic. PNGs omit the private URL fragment.
-All 18 PNGs show the final source after the second bounded cure.
+Captures 01–18 preserve the earlier functional baseline before the styling review.
+Captures 19–26 show the corrected branding and readable tables before the hidden stale notice is added.
+Captures 27–29 show the persistent warning in the final stale-data implementation.
+Captures 30–31 verify compact assets through the rebuilt archive on desktop and mobile.
+The parent visually reviews all 31 PNGs.
 The fixture covers the six page sections and their empty, populated, expanded, fault, and budget states.
 
 ## Reproduce
@@ -39,7 +43,7 @@ The fixture covers the six page sections and their empty, populated, expanded, f
 | [17-offline](17-offline.png) | A stopped server produces a visible connection error. |
 | [18-newest-200-limit](18-newest-200-limit.png) | The page lists the newest 200 of 205 outcomes, newest first. |
 
-## Measured checks
+## Baseline measured checks
 
 - Missing and wrong capabilities each return HTTP 403 with no run data.
 - The valid capability returns HTTP 200 with `Cache-Control: no-store`.
@@ -71,8 +75,71 @@ Restore its case ID and the `complete` phase.
 
 For the cutoff variant, create 205 baseline outcomes with candidate hash `f` repeated 64 times.
 Use case ID `cutoff-<i % 3>`, repeat `i + 1`, score `i % 2`, and empty criteria for indices 0 through 204.
-The final capture rewrites the same real watcher record. It does not substitute an API.
+Capture 18 rewrites the same real watcher record. It does not substitute an API.
 
-The error screenshots retain the last successful tables under an explicit error header.
+The baseline error screenshots retain the last successful tables under an error header that can scroll away.
 The initial Loading label is transient; the browser checks the resulting waiting or data state.
 This series does not test macOS or browsers outside the T3 browser.
+
+## Screenshot review and corrected styling
+
+The PR 691 screenshot review finds broken table headers, split short identifiers, weak dark-mode contrast, and hidden error warnings.
+The earlier page-width check misses these defects.
+The corrected layout gives tables readable widths and local horizontal scrolling.
+Headers wrap at spaces rather than inside words.
+The official favicon and header art load locally with no external resource requests.
+
+| PNG | Observable result |
+| --- | --- |
+| [19-branded-desktop-light](19-branded-desktop-light.png) | Official icon and header art, warm cards, readable status and table columns. |
+| [20-branded-desktop-dark](20-branded-desktop-dark.png) | Dark theme with stronger zero-case contrast. |
+| [21-readable-expanded-cases](21-readable-expanded-cases.png) | Expanded case headers stay whole and judge reasons stay readable. |
+| [22-branded-mobile-light](22-branded-mobile-light.png) | Branding fits a 390-pixel viewport. |
+| [23-mobile-role-columns](23-mobile-role-columns.png) | Local scrolling retains whole roles and candidate identifiers. |
+| [24-mobile-readable-criteria](24-mobile-readable-criteria.png) | Criterion headers do not split inside words. |
+| [25-mobile-judge-reasons](25-mobile-judge-reasons.png) | Local scrolling exposes complete judge reasons. |
+| [26-mobile-dark-reflections](26-mobile-dark-reflections.png) | Dark reflections retain long literal text without page overflow. |
+| [27-mobile-stale-data](27-mobile-stale-data.png) | Invalid JSON leaves a persistent stale-data warning above retained tables. |
+| [28-desktop-stale-data](28-desktop-stale-data.png) | The desktop warning stays visible with the detailed header offscreen. |
+| [29-offline-stale-data](29-offline-stale-data.png) | The warning stays visible after the real watcher stops. |
+| [30-compact-assets-desktop](30-compact-assets-desktop.png) | Rebuilt archive: compact official PNGs retain desktop branding and six role rows. |
+| [31-compact-assets-mobile-dark](31-compact-assets-mobile-dark.png) | Rebuilt archive: compact branding fits the dark mobile viewport. |
+
+## Final layout and stale-data checks
+
+The final PR 691 browser checks use the real source CLI and temporary run files, not a replacement API.
+At 1280×900, page width is 1280 pixels and table widths are 1158 pixels.
+At 390×844, page width is 390 pixels and table containers are 336 pixels wide.
+Mobile table scroll widths are 760 or 1120 pixels, depending on column count.
+Header words, short role names, and 12-character candidate identifiers have no inside-word splits.
+
+The zero-case text contrast rises from 3.44:1 to 8.36:1 in dark mode.
+Light-mode zero-case contrast is 6.34:1.
+Hover contrast remains 6.83:1 dark and 5.72:1 light.
+Both official images load. External resource requests remain zero.
+
+The persistent stale-data warning covers invalid JSON, a missing record, a removed capability, and a stopped server after valid data.
+The warning stays at y=8 with a height of 40.5 CSS pixels while the detailed header is offscreen.
+Six role rows and nine open disclosures remain.
+An initial missing record shows no stale warning because no old tables exist.
+Restoring the record and its original timestamp clears the warning without replacing the Roles table.
+Restoring the capability also clears the warning.
+
+To reproduce recovery, preserve the temporary record timestamp before writing invalid JSON.
+Restore both the valid record and that timestamp.
+To reproduce offline data, stop the watcher only after the page loads a valid record and scrolls to Cases.
+These checks remain limited to Linux and the T3 browser.
+
+## Compact asset verification
+
+Captures 19–29 use full-size image copies. Captures 30–31 use the approved compact copies with unchanged page code.
+The final asset check runs the rebuilt `skillz-experiment.pyz` against the tracked synthetic fixture.
+The favicon loads at 128×128 pixels and 25,548 bytes. The header loads at 560×305 pixels and 61,314 bytes.
+Both images load in the T3 browser without external resource requests.
+Page width equals the viewport: 1280 pixels on desktop and 390 pixels on mobile.
+The source HTTP test rejects the old 1254×1254 favicon and passes with the compact image.
+The original artwork files remain unchanged. The rebuilt archive measures 18,729,821 bytes, below the unchanged 24 MiB limit.[^1]
+
+[^1]: packages/skillz/tests/skillz_experiments/test_watch.py:169-176,225-232; packages/skillz/src/skillz_experiments/_candidate.py:21; local rebuilt archive measurement, 2026-11-09.
+
+_Source: PR #691 T3 browser checks and screenshot review · Updated: 2026-11-09 · Supersedes: the 18-capture final-source claim and header-only error presentation · 2026-11-08_

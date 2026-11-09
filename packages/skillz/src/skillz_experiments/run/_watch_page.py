@@ -5,11 +5,20 @@ PAGE = """<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Autoimprove run</title>
+<title>Autoimprove run · skillz-that-grillz</title>
+<link rel="icon" type="image/png" href="/favicon.png">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<header><h1>Autoimprove run</h1><p id="state">Loading...</p></header>
+<header class="masthead">
+  <div class="masthead-copy">
+    <div class="brand"><img src="/favicon.png" alt="" width="32" height="32"><span>skillz-that-grillz</span></div>
+    <h1>Autoimprove run</h1>
+    <p id="state" role="status">Loading...</p>
+  </div>
+  <img class="brand-art" src="/brand.png" alt="Grilled-cheese illustration and skillz-that-grillz wordmark" width="1000" height="545">
+</header>
+<p id="stale" role="status" hidden>Stale data. Latest update unavailable.</p>
 <main>
 <section><h2>Status</h2><div id="status"></div></section>
 <section><h2>Roles</h2><div id="roles"></div></section>
@@ -121,14 +130,20 @@ function put(id, content) {
   document.getElementById(id).replaceChildren(...[content].flat());
 }
 
+function setStale(unavailable) {
+  document.getElementById("stale").hidden = !unavailable || shown === null;
+}
+
 function render(data) {
   const state = document.getElementById("state");
   if (data.state !== "ok") {
     state.textContent = data.state === "waiting" ? `Waiting for ${data.path}` : `Cannot read ${data.path}: ${data.error}`;
+    setStale(true);
     return;
   }
   const s = data.status;
   state.textContent = `${text(s.run_id)}: phase ${text(s.phase)}, updated ${new Date(data.modified * 1000).toLocaleTimeString()}`;
+  setStale(false);
   if (shown === data.modified) return;
   shown = data.modified;
   put("status", status(s));
@@ -144,12 +159,14 @@ async function poll() {
     const capability = location.hash.slice(1);
     if (!capability) {
       document.getElementById("state").textContent = "This page needs the private link printed by watch.";
+      setStale(true);
       return;
     }
     const response = await fetch("/api/run", {cache: "no-store", headers: {"X-Watch-Capability": capability}});
     render(await response.json());
   } catch (error) {
     document.getElementById("state").textContent = `The watcher does not answer: ${error}`;
+    setStale(true);
   } finally {
     setTimeout(poll, 2000);
   }
@@ -158,23 +175,68 @@ async function poll() {
 poll();
 """
 
-STYLE = """:root { color-scheme: light dark; --line: #8884; --bad: #c0392b22; --zero: #c0392b; }
-body { font: 14px/1.4 system-ui, sans-serif; margin: 0 auto; max-width: 1200px; padding: 0 16px 48px; }
-h1 { font-size: 20px; margin: 16px 0 4px; }
-h2 { font-size: 16px; border-bottom: 1px solid var(--line); padding-bottom: 4px; margin-top: 28px; }
-h3 { font-size: 14px; }
-#state, .meta, .empty { color: GrayText; }
+STYLE = """:root {
+  color-scheme: light dark;
+  --page: #faf6ed; --card: #fffdf8; --ink: #2c261e; --muted: #665b4a;
+  --line: #dacdb6; --accent: #a95e09; --accent-soft: #fff0d0;
+  --bad: #fff0e9; --zero: #a83824; --focus: #a95e09;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --page: #171a1b; --card: #222629; --ink: #f4ede1; --muted: #c7baa5;
+    --line: #474744; --accent: #ffca70; --accent-soft: #3b3325;
+    --bad: #402b28; --zero: #ffab96; --focus: #ffca70;
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--page); color: var(--ink); }
+body { font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 1240px; padding: 20px 20px 48px; }
+.masthead { display: flex; align-items: center; justify-content: space-between; gap: 24px;
+  min-width: 0; padding: 16px 20px; border: 1px solid var(--line); border-radius: 16px;
+  background: var(--card); box-shadow: 0 8px 28px #35250e12; }
+.masthead-copy { min-width: 0; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--accent); font-weight: 750;
+  letter-spacing: .02em; }
+.brand img { width: 32px; height: 32px; border-radius: 8px; }
+h1 { font-size: clamp(1.45rem, 3vw, 2rem); line-height: 1.2; margin: 8px 0 4px; }
+.brand-art { display: block; width: min(32%, 280px); height: auto; max-height: 110px;
+  object-fit: contain; border-radius: 10px; }
+#state, .meta, .empty { color: var(--muted); overflow-wrap: anywhere; }
+#state { margin: 0; }
+#stale { position: sticky; top: 8px; z-index: 2; margin: 12px 0 0; padding: 8px 12px;
+  border: 1px solid var(--zero); border-radius: 8px; background: var(--bad); color: var(--ink);
+  font-weight: 700; overflow-wrap: anywhere; }
+main { display: grid; gap: 16px; margin-top: 16px; min-width: 0; }
+section { min-width: 0; padding: 18px 20px; border: 1px solid var(--line);
+  border-radius: 14px; background: var(--card); }
+h2 { color: var(--accent); font-size: 1.1rem; margin: 0 0 14px; }
+h3 { font-size: 1rem; margin: 16px 0 8px; }
+p { overflow-wrap: anywhere; }
 .table-scroll { max-width: 100%; overflow-x: auto; }
-table { border-collapse: collapse; width: 100%; min-width: 600px; margin: 8px 0; }
-th, td { text-align: left; vertical-align: top; padding: 4px 8px; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
-th { font-weight: 600; }
-tr.unmet td { background: var(--bad); }
-details { border-bottom: 1px solid var(--line); padding: 4px 0; }
-details.zero > summary { color: var(--zero); font-weight: 600; }
-summary { cursor: pointer; overflow-wrap: anywhere; }
-.meters { display: flex; flex-wrap: wrap; gap: 24px; }
-.meter { display: flex; flex-direction: column; gap: 4px; min-width: 240px; }
-progress { width: 100%; }
+table { border-collapse: collapse; table-layout: fixed; width: 100%; min-width: 760px; margin: 8px 0; }
+table:has(th:nth-child(8)) { min-width: 1120px; }
+table:has(th:nth-child(4):last-child) th:nth-child(1) { width: 20%; }
+table:has(th:nth-child(4):last-child) th:nth-child(2) { width: 18%; }
+table:has(th:nth-child(4):last-child) th:nth-child(3) { width: 17%; }
+th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+th { background: var(--accent-soft); color: var(--ink); font-weight: 700; overflow-wrap: normal; }
+td { overflow-wrap: anywhere; }
+tbody tr:hover td { background: var(--accent-soft); }
+tr.unmet td, tr.unmet:hover td { background: var(--bad); }
+details { border-top: 1px solid var(--line); padding: 4px 0; }
+details.zero > summary { color: var(--zero); font-weight: 700; }
+summary { cursor: pointer; padding: 8px 6px; border-radius: 6px; overflow-wrap: anywhere; }
+summary:hover { background: var(--accent-soft); }
+summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+.meters { display: flex; flex-wrap: wrap; gap: 16px; }
+.meter { display: flex; flex-direction: column; gap: 4px; min-width: min(240px, 100%); }
+progress { width: 100%; accent-color: var(--accent); }
 li { margin-bottom: 12px; overflow-wrap: anywhere; }
 li p { margin: 2px 0; }
+@media (max-width: 600px) {
+  body { padding: 12px 12px 32px; }
+  .masthead { display: block; padding: 14px; }
+  .brand-art { width: min(100%, 250px); max-height: 72px; margin-top: 12px; }
+  section { padding: 14px; }
+}
 """

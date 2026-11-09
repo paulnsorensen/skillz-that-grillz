@@ -5,6 +5,7 @@ import http.client
 import json
 import signal
 import socket
+import struct
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -42,6 +43,11 @@ class Watcher:
     capability: str
 
     def get(self, path: str, host: str | None = None, method: str = "GET", *, authorized: bool = True) -> Reply:
+        status, headers, body = self.get_raw(path, host, method, authorized=authorized)
+        return Reply(status, headers, body.decode("utf-8"))
+
+    def get_raw(self, path: str, host: str | None = None, method: str = "GET", *,
+                authorized: bool = True) -> tuple[int, dict[str, str], bytes]:
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
         try:
             headers = {"Host": host or f"127.0.0.1:{self.port}"}
@@ -49,8 +55,7 @@ class Watcher:
                 headers["X-Watch-Capability"] = self.capability
             connection.request(method, path, headers=headers)
             response = connection.getresponse()
-            return Reply(response.status, {key.lower(): value for key, value in response.getheaders()},
-                         response.read().decode("utf-8"))
+            return response.status, {key.lower(): value for key, value in response.getheaders()}, response.read()
         finally:
             connection.close()
 
@@ -158,9 +163,22 @@ def test_watch_serves_only_its_own_paths_to_its_own_host(watcher: Watcher) -> No
     _ = (watcher.out / "cases.json").write_text("{}")
     page = watcher.get("/")
     assert page.status == 200 and '<script src="/app.js"></script>' in page.body
+    assert '<link rel="icon" type="image/png" href="/favicon.png">' in page.body
+    assert '<img class="brand-art" src="/brand.png"' in page.body
+    assert '<p id="stale" role="status" hidden>Stale data. Latest update unavailable.</p>' in page.body
+    assets = Path(__file__).resolve().parents[2] / "src/skillz_experiments/run/_assets"
+    for route, name, dimensions in (("/favicon.png", "favicon.png", (128, 128)),
+                                    ("/brand.png", "brand.png", (560, 305))):
+        status, headers, body = watcher.get_raw(route)
+        assert (status, headers["content-type"], body) == (200, "image/png", (assets / name).read_bytes())
+        assert body[:8] == b"\x89PNG\r\n\x1a\n"
+        assert struct.unpack(">II", body[16:24]) == dimensions
+        assert len(body) <= 200 * 1024
     assert "script-src 'self'" in page.headers["content-security-policy"] and page.headers["cache-control"] == "no-store"
     assert "textContent" in watcher.get("/app.js").body and "innerHTML" not in watcher.get("/app.js").body
-    assert watcher.get("/app.css").headers["content-type"] == "text/css; charset=utf-8"
+    style = watcher.get("/app.css")
+    assert style.headers["content-type"] == "text/css; charset=utf-8"
+    assert "#stale { position: sticky;" in style.body and "z-index: 2;" in style.body
     assert PRIVATE not in watcher.get("/api/run").body and WINNER not in watcher.get("/api/run").body
     assert [watcher.get(path).status for path in ("/run.json", "/cases.json", "/../run.json", "/api")] == [404] * 4
     assert watcher.get("/api/run", host="evil.example").status == 403
@@ -199,7 +217,19 @@ def test_the_bundled_archive_serves_the_watch_page(tmp_path: Path) -> None:
     started = _start([sys.executable, str(BUNDLE)], tmp_path)
     try:
         assert started.run()["state"] == "waiting"
-        assert started.get("/").status == 200
+        page = started.get("/")
+        assert page.status == 200
+        assert '<link rel="icon" type="image/png" href="/favicon.png">' in page.body
+        assert '<img class="brand-art" src="/brand.png"' in page.body
+        assert '<p id="stale" role="status" hidden>Stale data. Latest update unavailable.</p>' in page.body
+        assets = Path(__file__).resolve().parents[2] / "src/skillz_experiments/run/_assets"
+        for route, name, dimensions in (("/favicon.png", "favicon.png", (128, 128)),
+                                        ("/brand.png", "brand.png", (560, 305))):
+            status, headers, body = started.get_raw(route)
+            assert (status, headers["content-type"], body) == (200, "image/png", (assets / name).read_bytes())
+            assert body[:8] == b"\x89PNG\r\n\x1a\n"
+            assert struct.unpack(">II", body[16:24]) == dimensions
+            assert len(body) <= 200 * 1024
     finally:
         assert _stop(started) == 0
 

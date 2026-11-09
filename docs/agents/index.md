@@ -3,6 +3,7 @@
 <!-- HALLOUMINATE:INDEX-START -->
 - [criteria/](./criteria/index.md) — criteria
 - [decisions/](./decisions/index.md) — decisions
+- [evidence/](./evidence/index.md) — evidence
 - [ideas/](./ideas/index.md) — ideas
 - [research/](./research/index.md) — research
 - [sources/](./sources/index.md) — sources
