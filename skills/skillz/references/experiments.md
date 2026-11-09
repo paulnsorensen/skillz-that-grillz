@@ -1179,7 +1179,7 @@ A contract declares the tool surface in a `surface` block. Every field is option
 - `tools`: extra tool names for the task role.
 - `mcp_config`: a `.json` file with the MCP servers.
 - `agents`: `.md` files. The frontmatter `name` of each file must equal the file stem.
-- `companions`: skill directories that the runner stages read-only. Search never edits them.
+- `companions`: skill directories that the runner stages read-only. Search never edits them. An entry `../<name>` names a sibling directory of the skill. The runner stages it at `.claude/skills/<name>`. The files of a sibling enter every hash that the files of the skill enter. A sibling that is missing, is not a directory, is a symlink, or has the name of the skill stops with `contract-surface`.
 
 Search never edits an agent file or the MCP config either. The contract cannot list them in `editable`.
 

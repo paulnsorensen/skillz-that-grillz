@@ -10,8 +10,8 @@ from functools import cached_property
 from pathlib import Path
 
 from skillz_experiments._cases import Case, CodedError, digest, mapping, relative
-from skillz_experiments._contract import LOCATION, Contract, resolve
-from skillz_experiments._records import write_bytes
+from skillz_experiments._contract import LOCATION, SIBLING_PREFIX, Contract, resolve
+from skillz_experiments._records import sibling_trees, write_bytes
 
 OUTPUT_FILE_LIMIT = 64
 OUTPUT_BYTES_LIMIT = 262144
@@ -34,7 +34,7 @@ _RUNTIME_OWNED = {"home", "tmp", ".agents", "answer.json", "response-schema.json
 
 def is_skill_file(name: str) -> bool:
     """Return whether the candidate file `name` is a file of the skill: not a wedge source and not the `@new-cli`, `@hypothesis`, or `@notes` component."""
-    return not name.startswith(WEDGE_PREFIX) and name not in {NEW_CLI, HYPOTHESIS, NOTES}
+    return not name.startswith((WEDGE_PREFIX, SIBLING_PREFIX)) and name not in {NEW_CLI, HYPOTHESIS, NOTES}
 
 
 def _megabytes(size: int) -> str:
@@ -138,32 +138,35 @@ class Candidate:
         """
         if root.is_symlink():
             raise ValueError("candidate must not contain symlinks")
-        ignored = ignored_files(root) - _built_archives(root)
+        surface = contract.surface if contract is not None else None
+        trees = [(root, "")] + [(path, f"{SIBLING_PREFIX}{name}/") for path, name in sibling_trees(root, surface.companions if surface else ())]
         files: dict[str, str] = {}
         frozen: dict[str, bytes] = {}
-        for path in sorted(root.rglob("*")):
-            posix = path.relative_to(root).as_posix()
-            if posix in ignored or _metadata(posix) or posix.startswith("evals/"):
-                continue
-            if path.is_symlink():
-                raise ValueError("candidate must not contain symlinks")
-            if path.is_file():
-                if any(part.startswith(".") for part in posix.split("/")):
-                    raise CodedError("hidden-file", f"{posix} is a hidden file; remove it")
-                name = relative(posix)
-                if not is_skill_file(name):
-                    raise CodedError("reserved-name", f"{name} is reserved for wedge sources, the new-target component, and the hypothesis and notes components; rename the file")
-                if name in (LOCATION, *exclude):
+        for tree, prefix in trees:
+            ignored = ignored_files(tree) - _built_archives(tree)
+            for path in sorted(tree.rglob("*")):
+                posix = path.relative_to(tree).as_posix()
+                if posix in ignored or _metadata(posix) or posix.startswith("evals/"):
                     continue
-                if path.stat().st_size > FROZEN_FILE_LIMIT:
-                    raise CodedError("frozen-file-too-large", f"{name} is {_megabytes(path.stat().st_size)}; "
-                                     + f"the limit is {_megabytes(FROZEN_FILE_LIMIT)} per file")
-                data = path.read_bytes()
-                text = as_text(data)
-                if text is None:
-                    frozen[name] = data
-                else:
-                    files[name] = text
+                if path.is_symlink():
+                    raise ValueError("candidate must not contain symlinks")
+                if path.is_file():
+                    if any(part.startswith(".") for part in posix.split("/")):
+                        raise CodedError("hidden-file", f"{posix} is a hidden file; remove it")
+                    if not is_skill_file(relative(posix)):
+                        raise CodedError("reserved-name", f"{posix} is reserved for wedge sources, the new-target component, and the hypothesis and notes components; rename the file")
+                    name = prefix + relative(posix)
+                    if name in (LOCATION, *exclude):
+                        continue
+                    if path.stat().st_size > FROZEN_FILE_LIMIT:
+                        raise CodedError("frozen-file-too-large", f"{name} is {_megabytes(path.stat().st_size)}; "
+                                         + f"the limit is {_megabytes(FROZEN_FILE_LIMIT)} per file")
+                    data = path.read_bytes()
+                    text = as_text(data)
+                    if text is None:
+                        frozen[name] = data
+                    else:
+                        files[name] = text
         if "SKILL.md" not in files or not set(editable) <= files.keys():
             raise ValueError("candidate needs SKILL.md and existing editable components")
         return cls(files, tuple(editable), contract, frozen=frozen)
@@ -210,7 +213,7 @@ class Candidate:
             path.parent.mkdir(parents=True, exist_ok=True)
             _ = path.write_text(content, encoding="utf-8")
         for name, data in self.frozen.items():
-            if name.startswith(WEDGE_PREFIX):
+            if name.startswith((WEDGE_PREFIX, SIBLING_PREFIX)):
                 continue
             path = root / relative(name)
             path.parent.mkdir(parents=True, exist_ok=True)
