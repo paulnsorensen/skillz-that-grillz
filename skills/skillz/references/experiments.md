@@ -345,12 +345,13 @@ Each case has these fields:
     `git add -A` fails on a device entry. The runner lists these names in the global Git exclude file of the task `HOME`, so `git add -A` skips them.
     The same file hides the runtime-owned `home/` and `tmp/` directories, so the exclude file and a `git config --global` identity stay out of the fixture repository.
     The exclude file is global: it also hides these root names in a repository that a fixture creates in a subdirectory.
-    The runner does not hide `.agents` and `.claude`. Use `git add -A` for case files only; stage a path by name when you need an exact set.
+    The runner does not hide `.agents` and `.claude`, so `git add -A` also stages the skill that the runner puts there. Stage each path by name when the commit must hold an exact set.
   - Claude Code binds `.git/config` and `.git/hooks` read-only in each Bash command that starts after the repository exists. The runner cannot lift this.
     `git config user.email` (repository-local) fails with `Device or resource busy` in such a command. It works only in the same Bash command as `git init`.
   - Set the identity with `git config --global user.email ...` and `git config --global user.name ...`. The task `HOME` is the workspace `home` directory, and it is writable.
-    Do not write `home/.config/git/config`: Claude Code binds `home/.config` read-only. The forms `git -c user.email=... commit` and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*` variables also work.
-  - A hook cannot go into `.git/hooks`. Keep the hook in a visible directory such as `githooks/` and set `core.hooksPath` with `git config --global`.
+    Do not write `home/.config/git/config`: Claude Code binds `home/.config` read-only. The forms `git -c user.name=... -c user.email=... commit` and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*` variables also work.
+  - A hook cannot go into `.git/hooks`. Keep the hook in a visible directory such as `githooks/`, make it executable with `chmod +x`, and set `core.hooksPath` with `git config --global`.
+    Git skips a hook file that is not executable, and the runner writes fixture files without the execute bit.
 - `expected`: the reference answer as JSON. A `task` case needs it.
   A scored case whose kind uses a `judge`, `hybrid`, or `journey` grader also needs `expected.criteria`. Draft them with the criteria drafting reference that `SKILL.md` lists.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
