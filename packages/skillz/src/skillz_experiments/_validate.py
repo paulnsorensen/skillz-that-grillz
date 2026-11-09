@@ -116,12 +116,14 @@ def _fixture_findings(target: Path, drafted: Sequence[DraftCase], file_of: Calla
 
 def _criteria_findings(contract: Contract, cases: Sequence[IntakeCase], file: str) -> list[Finding]:
     """Return one finding for each case that `check_criteria` refuses, so one pass shows every case that `run` stops on."""
+    prefix = "/cases" if Path(file).read_text(encoding="utf-8").lstrip().startswith("{") else ""
     found: list[Finding] = []
-    for case in cases:
+    for index, case in enumerate(cases):
         try:
             check_criteria(contract, [case])
         except CodedError as error:
-            found.append(_finding(error.code, "error", file, str(error), CRITERIA_FIX))
+            found.append(_finding(error.code, "error", file, str(error), CRITERIA_FIX,
+                                  f"{prefix}/{index}/expected/criteria"))
     return found
 
 
