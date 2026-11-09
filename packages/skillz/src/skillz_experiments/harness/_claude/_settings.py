@@ -5,6 +5,7 @@ import tempfile
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import cast
 
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
 from skillz_experiments._contract import Surface
@@ -22,6 +23,10 @@ RUNTIME_READ = ("/usr", "/bin", "/lib", "/lib32", "/lib64", "/libx32", "/proc/se
 
 
 MACOS_READ = ("/System", "/Library")
+
+
+FILE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+"""The Claude Code tools that `Edit(...)` permission rules govern. A contract surface can add them to the task role (gh-702)."""
 
 
 MACOS_DENY_READ = ("/Volumes", "/private/var/folders", "/var/folders")
@@ -65,6 +70,22 @@ def settings(workspace: Path, out: Path | None = None, *, config: Path | None = 
                                  *[f"Read(/{root}/{CONFIG_PREFIX}*/**)" for root in temporary]]}}
     if overrides:
         floor["skillOverrides"] = {name: "off" for name in sorted(overrides)}
+    return floor
+
+
+def with_file_tools(floor: dict[str, object], workspace: Path, tools: Collection[str]) -> dict[str, object]:
+    """Let each surface file tool in `tools` (`FILE_TOOLS`) write in `workspace` only, and return `floor` (gh-702).
+
+    The allow rule names the workspace, and deny rules keep `.agents` and `.claude` out of reach, as the sandbox does for
+    commands. Claude Code 2.1.319 applies `Edit(...)` rules to every file tool and does not grant a write outside the
+    allowed path. Without a file tool, `floor` stays unchanged.
+    """
+    if FILE_TOOLS.isdisjoint(tools):
+        return floor
+    roots = unique([str(workspace), str(workspace.resolve())])
+    permissions = cast(dict[str, list[str]], floor["permissions"])
+    permissions["allow"] = [*permissions["allow"], *(f"Edit(/{root}/**)" for root in roots)]
+    permissions["deny"] = [*permissions["deny"], *(f"Edit(/{root}/{name}/**)" for root in roots for name in (".agents", ".claude"))]
     return floor
 
 

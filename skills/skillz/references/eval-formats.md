@@ -145,7 +145,7 @@ The `surface` object has these fields. Each path is relative to the skill and na
 
 | Field | Meaning |
 | --- | --- |
-| `tools` | Extra tool names for the task role. Codex grants `Write`, `Edit`, and `MultiEdit` through its native file edit. The runner refuses any other name on a Codex task role. |
+| `tools` | Extra tool names for the task role. Codex grants `Write`, `Edit`, and `MultiEdit` through its native file edit. The runner refuses any other name on a Codex task role. On Claude Code, a `Write`, `Edit`, `MultiEdit`, or `NotebookEdit` name lets that tool write in the workspace only; `.agents` and `.claude` stay denied, and a write outside the workspace is not granted. |
 | `mcp_config` | A JSON file of MCP servers. The run never edits it. Only the Claude task role runs it. |
 | `agents` | Markdown files of agents. The run never edits them. Only the Claude task role runs them. |
 | `companions` | Skill directories that stay read-only. Only the Claude task role runs them. |
