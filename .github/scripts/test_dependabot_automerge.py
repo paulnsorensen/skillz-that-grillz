@@ -1,131 +1,298 @@
-"""Exercise the Dependabot auto-merge workflow's real shell steps."""
+"""Test Mergify policy bindings and the trusted cleanup shell."""
 
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from typing import ClassVar, cast
-from typing_extensions import override
+from typing import ClassVar, TypedDict, cast
 
 import yaml
+from typing_extensions import override
 
-WORKFLOW = Path(__file__).parents[1] / "workflows" / "dependabot-automerge.yml"
-PR_URL = "https://github.com/example/repo/pull/1"
+ROOT = Path(__file__).parents[1]
+WORKFLOW = ROOT / "workflows" / "dependabot-automerge.yml"
+MERGIFY = ROOT.parent / ".mergify.yml"
+REPO = "paulnsorensen/skillz-that-grillz"
+
+GH_SHIM = """#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+
+state = Path(os.environ["GH_SHIM_STATE"])
+items = json.loads(state.read_text())
+entry = items.pop(0)
+state.write_text(json.dumps(items))
+if sys.argv[1:] != entry["argv"]:
+    sys.exit(f"unexpected gh call: {sys.argv[1:]} != {entry['argv']}")
+print(entry.get("stdout", ""), end="")
+sys.exit(entry.get("exit", 0))
+"""
 
 
-class DependabotAutomergeTest(unittest.TestCase):
-    steps: ClassVar[list[dict[str, object]]]
+class GhCall(TypedDict):
+    argv: list[str]
+    stdout: str
+    exit: int
+
+
+def call(argv: list[str], stdout: str = "", exit: int = 0) -> GhCall:
+    return {"argv": argv, "stdout": stdout, "exit": exit}
+
+
+def view(number: str, state: str) -> GhCall:
+    return call(["pr", "view", number, "--repo", REPO, "--json",
+                 "autoMergeRequest", "--jq", ".autoMergeRequest != null"], state + "\n")
+
+
+class DependabotAutoMergeTest(unittest.TestCase):
+    workflow: ClassVar[dict[str | bool, object]]
+    config: ClassVar[dict[str, object]]
+    policy: ClassVar[list[str]]
 
     @classmethod
     @override
     def setUpClass(cls) -> None:
-        workflow = cast(dict[str, object], yaml.safe_load(WORKFLOW.read_text()))
-        jobs = cast(dict[str, object], workflow["jobs"])
-        arm = cast(dict[str, object], jobs["arm"])
-        cls.steps = cast(list[dict[str, object]], arm["steps"])
+        cls.workflow = cast(dict[str | bool, object], yaml.safe_load(WORKFLOW.read_text()))
+        cls.config = cast(dict[str, object], yaml.safe_load(MERGIFY.read_text()))
+        cls.policy = cast(list[str], cast(dict[str, object], cls.config["shared"])["dependabot_policy"])
 
-    def _run_step(
-        self, step_name: str, *, dependencies: list[dict[str, str]] | None = None,
-        armed: bool = False, other_authors: int = 0,
-    ) -> tuple[str, list[str]]:
-        step = next(step for step in self.steps if step.get("name") == step_name)
-        script = cast(str, step["run"])
+    def test_native_queue_rechecks_only_bot_policy_and_keeps_human_path(self) -> None:
+        queue = cast(list[dict[str, object]], self.config["queue_rules"])
+        self.assertEqual(len(queue), 1)
+        self.assertEqual(queue[0]["name"], "default")
+        self.assertEqual(queue[0]["batch_size"], 1)
+        self.assertEqual(queue[0]["batch_max_wait_time"], "30s")
+        self.assertNotIn("allow_inplace_checks", queue[0])
+        for key in ("queue_conditions", "merge_conditions"):
+            conditions = cast(list[object], queue[0][key])
+            self.assertEqual(conditions[0], "base = main")
+            branches = cast(list[object], cast(dict[str, object], conditions[1])["or"])
+            self.assertEqual(branches[0], "author != dependabot[bot]")
+            self.assertIs(cast(dict[str, object], branches[1])["and"], self.policy)
+        protections = cast(dict[str, object], self.config["merge_protections_settings"])
+        self.assertIs(protections["auto_merge_conditions"], self.policy)
+        self.assertEqual(set(self.config), {"shared", "queue_rules", "merge_protections_settings"})
+
+    def test_policy_uses_immutable_commit_identity_and_complete_metadata(self) -> None:
+        for condition in (
+            "author = dependabot[bot]", "base = main", "-from-fork",
+            f"head-repo-full-name = {REPO}", "#commits = 1",
+            "commits[*].author = dependabot[bot]",
+            "commits[*].email_author = 49699333+dependabot[bot]@users.noreply.github.com",
+            "commits[*].commit_verification_verified",
+            "#dependabot-dependency-name > 0", "#dependabot-dependency-type > 0",
+            "#dependabot-update-type > 0",
+            "dependabot-update-type != version-update:semver-major",
+        ):
+            self.assertIn(condition, self.policy)
+        self.assertFalse(any("label" in item or "title" in item or "body" in item
+                             for item in self.policy))
+
+    def test_native_message_patterns_reject_unsafe_metadata(self) -> None:
+        patterns = [item.split(" ~= ", 1) for item in self.policy if " ~= " in item]
+
+        def accepted(message: str) -> bool:
+            return all(
+                bool(re.search(pattern, message)) != attribute.startswith("-")
+                for attribute, pattern in patterns
+                if attribute.endswith("commit_message")
+            )
+
+        def message(old: str = "6.170.13", new: str = "6.170.14",
+                    update: str = "patch", name: str = "hypothesis",
+                    group: str = "") -> str:
+            return (f"chore(deps-dev): bump {name}\n\n"
+                    f"Updates `{name}` from {old} to {new}\n\n"
+                    "---\nupdated-dependencies:\n"
+                    f"- dependency-name: {name}\n  dependency-version: {new}\n"
+                    "  dependency-type: direct:development\n"
+                    f"  update-type: version-update:semver-{update}\n"
+                    f"{group}...\n")
+
+        self.assertTrue(accepted(message()))
+        self.assertTrue(accepted(message("2.31.0", "2.32.0", "minor")))
+        self.assertTrue(accepted(message("0.9.0", "0.9.1")))
+        self.assertTrue(accepted(message(group="  dependency-group: uv-minor-and-patch\n")))
+        mixed = message("0.9.0", "0.9.1").replace(
+            "---\nupdated-dependencies:",
+            "Updates `other` from 1.2.0 to 1.3.0\n\n---\nupdated-dependencies:",
+        ).replace(
+            "...\n",
+            "- dependency-name: other\n  dependency-version: 1.3.0\n"
+            + "  dependency-type: direct:development\n"
+            + "  update-type: version-update:semver-minor\n...\n",
+        )
+        self.assertTrue(accepted(mixed))
+        for unsafe in (
+            message("0.9.0", "0.10.0", "minor"),
+            message("unknown", "6.170.14"),
+            message("6.170.13", "unknown"),
+            message("6.170.13", "6.170.14", "major"),
+            message().replace("  dependency-version:", "  missing-version:"),
+            message().replace("  dependency-type:", "  missing-type:"),
+        ):
+            with self.subTest(unsafe=unsafe):
+                self.assertFalse(accepted(unsafe))
+        self.assertTrue(any("dependabot/fetch-metadata" in item for item in self.policy))
+        self.assertTrue(any("rust|node|nodejs|python|go|golang" in item for item in self.policy))
+
+    def test_workflow_has_only_trusted_cleanup_trigger_and_permissions(self) -> None:
+        triggers = cast(dict[str, object], self.workflow.get("on", self.workflow.get(True)))
+        self.assertEqual(triggers["workflow_run"],
+                         {"workflows": ["validate"], "types": ["completed"]})
+        self.assertEqual(triggers["schedule"], [{"cron": "17 * * * *"}])
+        self.assertIn("workflow_dispatch", triggers)
+        self.assertEqual(self.workflow["permissions"], {})
+        self.assertFalse(cast(dict[str, object], self.workflow["concurrency"])["cancel-in-progress"])
+        jobs = cast(dict[str, object], self.workflow["jobs"])
+        job = cast(dict[str, object], jobs["cleanup"])
+        self.assertEqual(job["permissions"], {"pull-requests": "write"})
+        steps = cast(list[object], job["steps"])
+        self.assertEqual(len(steps), 1)
+        step = cast(dict[str, object], steps[0])
+        self.assertEqual(step["env"],
+                         {"GH_TOKEN": "${{ secrets.GITHUB_TOKEN }}",
+                          "GH_REPO": "${{ github.repository }}"})
+        self.assertEqual(step["shell"], "bash")
+        self.assertNotIn("uses:", WORKFLOW.read_text())
+        run = cast(str, step["run"])
+        self.assertNotIn("--auto", run)
+        self.assertNotIn("--squash", run)
+        self.assertNotIn("statuses:", run)
+
+    def run_shell(self, calls: list[GhCall]) -> tuple[subprocess.CompletedProcess[str], list[GhCall]]:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            gh = root / "gh"
-            _ = gh.write_text("\n".join((
-                "#!/bin/sh",
-                "printf '%s\\n' \"$*\" >> \"$GH_LOG\"",
-                "case \"$*\" in",
-                "  *commits*) printf '%s\\n' \"$OTHER_AUTHORS\" ;;",
-                "  *autoMergeRequest*) printf '%s\\n' \"$ARMED\" ;;",
-                "esac",
-                "",
-            )))
-            gh.chmod(0o755)
-            output = root / "output"
-            log = root / "gh.log"
-            result = subprocess.run(
-                ["bash", "-e", "-o", "pipefail", "-c", script],
-                capture_output=True, text=True, check=False,
-                env={
-                    **os.environ,
-                    "PATH": f"{root}:{os.environ['PATH']}",
-                    "GH_LOG": str(log),
-                    "OTHER_AUTHORS": str(other_authors),
-                    "ARMED": str(armed).lower(),
-                    "GITHUB_OUTPUT": str(output),
-                    "DEPS": json.dumps(dependencies or []),
-                    "PR_URL": PR_URL,
-                },
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            return output.read_text() if output.exists() else "", log.read_text().splitlines()
-
-    def test_metadata_action_stays_with_a_human_even_in_mixed_groups(self) -> None:
-        normal = {
-            "dependencyName": "requests", "prevVersion": "2.31.0",
-            "newVersion": "2.32.0", "updateType": "version-update:semver-minor",
-        }
-        for update in ("version-update:semver-patch", "version-update:semver-minor"):
-            with self.subTest(update=update):
-                action = {
-                    "dependencyName": "dependabot/fetch-metadata", "prevVersion": "3.1.0",
-                    "newVersion": "3.1.1", "updateType": update,
-                }
-                for group in ([action], [normal, action]):
-                    with self.subTest(group=group):
-                        output, _ = self._run_step("Check bump policy", dependencies=group)
-                        self.assertEqual(output, "arm=false\n")
-
-    def test_supported_bumps_stay_eligible_and_other_rejections_remain(self) -> None:
-        def bump(name: str, previous: str, update: str) -> dict[str, str]:
-            return {
-                "dependencyName": name, "prevVersion": previous,
-                "newVersion": "9.9.9", "updateType": update,
+            shim = root / "gh"
+            _ = shim.write_text(GH_SHIM)
+            _ = shim.chmod(0o755)
+            state = root / "calls.json"
+            _ = state.write_text(json.dumps(calls))
+            env = os.environ | {
+                "PATH": f"{root}:{os.environ['PATH']}",
+                "GH_SHIM_STATE": str(state),
+                "GH_TOKEN": "test-token",
+                "GH_REPO": REPO,
             }
+            jobs = cast(dict[str, object], self.workflow["jobs"])
+            job = cast(dict[str, object], jobs["cleanup"])
+            step = cast(dict[str, object], cast(list[object], job["steps"])[0])
+            run = cast(str, step["run"])
+            result = subprocess.run(["bash", "-c", run], env=env,
+                                    capture_output=True, text=True, check=False)
+            return result, cast(list[GhCall], json.loads(state.read_text()))
 
-        patch = "version-update:semver-patch"
-        minor = "version-update:semver-minor"
-        for dependencies, expected in (
-            ([bump("requests", "2.0.0", patch)], "arm=true\n"),
-            ([bump("requests", "2.0.0", minor)], "arm=true\n"),
-            ([bump("requests", "2.0.0", patch), bump("pyyaml", "6.0.0", minor)], "arm=true\n"),
-            ([bump("requests", "0.9.0", minor)], "arm=false\n"),
-            ([bump("python", "3.11.0", patch)], "arm=false\n"),
-            ([bump("requests", "2.0.0", "version-update:semver-major")], "arm=false\n"),
-            ([bump("requests", "", patch)], "arm=false\n"),
-            ([], "arm=false\n"),
-        ):
-            with self.subTest(dependencies=dependencies):
-                output, _ = self._run_step("Check bump policy", dependencies=dependencies)
-                self.assertEqual(output, expected)
-        output, _ = self._run_step(
-            "Check bump policy", dependencies=[bump("requests", "2.0.0", patch)],
-            other_authors=1,
-        )
-        self.assertEqual(output, "arm=false\n")
-
-    def test_cleanup_runs_after_failure_only_when_policy_did_not_arm(self) -> None:
-        step = next(step for step in self.steps if step.get("name") == "Disable auto-merge")
-        self.assertEqual(step["if"], "${{ !cancelled() && steps.policy.outputs.arm != 'true' }}")
-        _, commands = self._run_step("Disable auto-merge", armed=True)
-        self.assertEqual(commands, [
-            f"pr view {PR_URL} --json autoMergeRequest --jq .autoMergeRequest != null",
-            f"pr merge --disable-auto {PR_URL}",
+    def test_shell_disables_all_armed_bot_prs_and_verifies_each(self) -> None:
+        listing = call(["api", "--paginate",
+                        f"repos/{REPO}/pulls?state=open&per_page=100",
+                        "--jq", '.[] | select(.user.login == "dependabot[bot]") | .number'],
+                       "1\n2\n")
+        result, remaining = self.run_shell([
+            listing, view("1", "true"),
+            call(["pr", "merge", "1", "--repo", REPO, "--disable-auto"]),
+            view("1", "false"), view("2", "false"),
         ])
-        _, commands = self._run_step("Disable auto-merge", armed=False)
-        self.assertEqual(commands, [
-            f"pr view {PR_URL} --json autoMergeRequest --jq .autoMergeRequest != null",
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(remaining, [])
+
+    def test_shell_continues_after_failed_disarm_and_exits_nonzero(self) -> None:
+        listing = call(["api", "--paginate",
+                        f"repos/{REPO}/pulls?state=open&per_page=100",
+                        "--jq", '.[] | select(.user.login == "dependabot[bot]") | .number'],
+                       "1\n2\n")
+        result, remaining = self.run_shell([
+            listing, view("1", "true"),
+            call(["pr", "merge", "1", "--repo", REPO, "--disable-auto"], exit=1),
+            view("2", "true"),
+            call(["pr", "merge", "2", "--repo", REPO, "--disable-auto"]),
+            view("2", "false"),
         ])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("PR 1: could not disable auto-merge", result.stderr)
+        self.assertEqual(remaining, [])
 
-    def test_default_branch_source_is_documented_without_premature_activation(self) -> None:
-        header = WORKFLOW.read_text().split("name:", 1)[0]
-        self.assertIn("pull_request_target runs this file from dist", header)
-        self.assertIn("after normal publication", header)
+    def test_shell_fails_if_readback_remains_armed(self) -> None:
+        listing = call(["api", "--paginate",
+                        f"repos/{REPO}/pulls?state=open&per_page=100",
+                        "--jq", '.[] | select(.user.login == "dependabot[bot]") | .number'],
+                       "1\n")
+        result, remaining = self.run_shell([
+            listing, view("1", "true"),
+            call(["pr", "merge", "1", "--repo", REPO, "--disable-auto"]),
+            view("1", "true"),
+        ])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("auto-merge remains armed", result.stderr)
+        self.assertEqual(remaining, [])
 
+
+    def test_shell_fails_if_listing_fails(self) -> None:
+        listing = call(["api", "--paginate",
+                        f"repos/{REPO}/pulls?state=open&per_page=100",
+                        "--jq", '.[] | select(.user.login == "dependabot[bot]") | .number'],
+                       exit=1)
+        result, remaining = self.run_shell([listing])
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(remaining, [])
+
+    def test_shell_succeeds_if_no_bot_prs_are_open(self) -> None:
+        listing = call(["api", "--paginate",
+                        f"repos/{REPO}/pulls?state=open&per_page=100",
+                        "--jq", '.[] | select(.user.login == "dependabot[bot]") | .number'])
+        result, remaining = self.run_shell([listing])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(remaining, [])
+
+    def test_shell_continues_after_state_read_failure(self) -> None:
+        listing = call(["api", "--paginate",
+                        f"repos/{REPO}/pulls?state=open&per_page=100",
+                        "--jq", '.[] | select(.user.login == "dependabot[bot]") | .number'],
+                       "1\n2\n")
+        bad_view = view("1", "true")
+        bad_view["exit"] = 1
+        result, remaining = self.run_shell([
+            listing, bad_view, view("2", "true"),
+            call(["pr", "merge", "2", "--repo", REPO, "--disable-auto"]),
+            view("2", "false"),
+        ])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("PR 1: could not read auto-merge state", result.stderr)
+        self.assertEqual(remaining, [])
+
+    def test_shell_rejects_malformed_auto_merge_state(self) -> None:
+        listing = call(["api", "--paginate",
+                        f"repos/{REPO}/pulls?state=open&per_page=100",
+                        "--jq", '.[] | select(.user.login == "dependabot[bot]") | .number'],
+                       "1\n2\n")
+        result, remaining = self.run_shell([
+            listing, view("1", "unknown"), view("2", "true"),
+            call(["pr", "merge", "2", "--repo", REPO, "--disable-auto"]),
+            view("2", "false"),
+        ])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("PR 1: invalid auto-merge state", result.stderr)
+        self.assertEqual(remaining, [])
+
+    def test_shell_fails_if_post_disable_read_fails(self) -> None:
+        listing = call(["api", "--paginate",
+                        f"repos/{REPO}/pulls?state=open&per_page=100",
+                        "--jq", '.[] | select(.user.login == "dependabot[bot]") | .number'],
+                       "1\n2\n")
+        bad_view = view("1", "false")
+        bad_view["exit"] = 1
+        result, remaining = self.run_shell([
+            listing, view("1", "true"),
+            call(["pr", "merge", "1", "--repo", REPO, "--disable-auto"]),
+            bad_view, view("2", "false"),
+        ])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("PR 1: could not verify auto-merge state", result.stderr)
+        self.assertEqual(remaining, [])
 
 if __name__ == "__main__":
     _ = unittest.main()

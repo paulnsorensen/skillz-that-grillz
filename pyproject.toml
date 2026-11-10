@@ -137,14 +137,14 @@ max_lines = 300
 "packages/skillz/src/skillz_experiments/_intake.py" = { max_lines = 429, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/harness/_claude/_events.py" = { max_lines = 386, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/harness/_claude/_preflight.py" = { max_lines = 305, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
-"packages/skillz/src/skillz_experiments/harness/_claude/_transport.py" = { max_lines = 651, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
-"packages/skillz/src/skillz_experiments/harness/_codex.py" = { max_lines = 519, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/harness/_claude/_transport.py" = { max_lines = 647, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/harness/_codex.py" = { max_lines = 503, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/run/_outcomes.py" = { max_lines = 333, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/run/_plan.py" = { max_lines = 302, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/run/_run.py" = { max_lines = 400, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/run/_search_phase.py" = { max_lines = 423, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
-"packages/skillz/src/skillz_experiments/run/_session.py" = { max_lines = 356, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
-"packages/skillz/src/skillz_experiments/run/_wedge_targets.py" = { max_lines = 820, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/run/_session.py" = { max_lines = 349, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
+"packages/skillz/src/skillz_experiments/run/_wedge_targets.py" = { max_lines = 787, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/search/_history.py" = { max_lines = 334, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/skillz/src/skillz_experiments/wrapper/_gemini.py" = { max_lines = 492, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
 "packages/wedge/src/wedge/_build.py" = { max_lines = 641, reason = "Pre-existing file at adoption; keep its measured ceiling until it is split." }
@@ -168,6 +168,7 @@ max_seconds = 20
 "tests/skillz_experiments/test_ac_marker.py" = { max_seconds = 43, reason = "Slowest of CI runs 41417007579 and 41419094652: 17.1 s, before the prune PR." }
 "tests/skillz_experiments/test_analytics_packs.py" = { max_seconds = 45, reason = "Slowest of CI runs 41417007579 and 41419094652: 17.9 s, before the prune PR." }
 "tests/skillz_experiments/test_autoimprove_claims.py" = { max_seconds = 557, reason = "Slowest of CI runs 41417007579 and 41419094652: 222.5 s, before the prune PR." }
+"tests/skillz_experiments/test_budget_cap_run.py" = { max_seconds = 34, reason = "CI run 42105553664 (PR #683): 13.4 s for its one full 28-family search test. Approved by the owner on 2026-11-05." }
 "tests/skillz_experiments/test_bundle.py" = { max_seconds = 83, reason = "Slowest of CI runs 41417007579 and 41419094652: 33.2 s, before the prune PR." }
 "tests/skillz_experiments/test_call_timeout.py" = { max_seconds = 73, reason = "Slowest of CI runs 41417007579 and 41419094652: 28.9 s, before the prune PR." }
 "tests/skillz_experiments/test_check_timeouts.py" = { max_seconds = 54, reason = "Slowest of CI runs 41417007579 and 41419094652: 21.5 s, before the prune PR." }

@@ -143,6 +143,7 @@ The first run freezes the choice, and a resume ignores `--kind`.
 A default `run` on `skills/skillz` evaluates the 18 checked-in journeys beside the tasks, so its estimate grows. Pass `--kind task` for a task-only run. Pass `--kind journey` for a journey-only run.
 The contract helper applies to task cases only. A journey case gets no helper instruction and needs no helper credit.
 Run journeys from a copy of the skill with `--edit prose`. A frozen helper stops only `--edit prose+cli`.
+`--edit prose` reads only the target names from the skill's own `wedge.toml`. The copy needs no parent `wedge.toml` and no source path, but each `scripts/<name>.pyz` must exist.
 `--seed` sets the split seed. Keep the default unless the user asks.
 `--effort LEVEL` passes `--effort` to every Claude Code call: `low`, `medium`, `high`, `xhigh`, or `max`.
 `--sandbox-read PATH` mounts one absolute host path read-only in the runner's OS sandbox. Repeat it for more paths.
@@ -202,7 +203,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `credential-changed` | The login file moved, or the runner could not restore a refreshed login file. A run that already completed keeps its result and records a `close_warning` instead. The `close_warning` appears in the run summary JSON on stdout, not on stderr. | If the run completed and has a `close_warning`, export the result. Then log in again before the next run. Otherwise log in again and start a new run directory. |
 | `clock-skew` | On resume, the wall clock is more than 5 seconds earlier than the run start. | Set the clock right, then run again. Otherwise start a new run directory. |
 | `sandbox-unavailable` | The Bash sandbox cannot start, or the temp directory path is too long for the Unix-socket probe. When the runner starts inside another sandbox (for example Claude Code's sandboxed Bash), `bwrap` cannot create a user namespace, and the fix says so. | Apply the fix in the message (for a long path, set `TMPDIR` to a short directory such as `/tmp`), then run again in the same directory. For the nested case, start the runner from a normal shell. Alternatively, add a `sandbox.excludedCommands` entry for the runner command. An AppArmor change does not help. The runner never weakens the sandbox, except one rule on a host that blocks the nested user namespace, which the live socket probe guards. |
-| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A preflight call with no tool call of its tool also stops the run; the message says that the model refused or skipped the check, and that this is not a confirmed leak. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. When the live preflight calls returned and a check then failed, the message also names `RUN/preflight.events.json`. | To find the cause of a failed probe, read `RUN/preflight.events.json` before you spend another live call. For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. For a Read-tool leak, report the Claude Code version; no unsafe fallback exists. For a refused or skipped check, read the model reply in `RUN/preflight.events.json`, then run again. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
+| `preflight-leak` | A user skill, plugin, agent, or MCP server loads, or a skill stays on after `skillOverrides` turns it off. A failed read, write, or sandbox probe also stops with this code. The Read tool returning a sealed file outside the workspace, or never being called, also stops the run. A preflight call with no tool call of its tool also stops the run; the message says that the model refused or skipped the check, and that this is not a confirmed leak. A `CLAUDE.md` or `CLAUDE.local.md` file in an ancestor of the workspace also stops the run. A `.git` entry in an ancestor of the workspace, such as `/tmp/.git`, also stops the run, because Claude Code takes that ancestor as the repository and its sandbox writes git protection entries into it. On macOS, a `CLAUDE.md` file or a `rules` directory with `.md` files in the config directory also stops the run, before any model call. The code also covers a skill inventory that times out, a Claude Code process that fails to run, and a stream with no init event; the message gives the exit code and a stderr excerpt. When the live preflight calls returned and a check then failed, the message also names `RUN/preflight.events.json`. | To find the cause of a failed probe, read `RUN/preflight.events.json` before you spend another live call. For a leak, move the named entry out of the config directory or the ancestor directory for the run, then run again. Remove a stray `.git` above the workspace only when no repository needs it; otherwise set `TMPDIR` to a directory without a `.git` ancestor. For a Read-tool leak, report the Claude Code version; no unsafe fallback exists. For a refused or skipped check, read the model reply in `RUN/preflight.events.json`, then run again. For a timeout, a failed process, or a missing init event, read the message, check that `claude` starts, then run again. |
 | `nono-removed` | A resume found a run that recorded the removed nono backend, or a role file sets `isolation` to `nono`. The message links issue 211. A completed run still returns its summary. | Start a new run directory. |
 | `isolation-removed` | A role file sets the removed `isolation` key. | Delete the key. |
 | `codex-version-unsupported` | The Codex CLI is older than 0.154.0, or its `--version` output is unparsable. No model call ran. | Install Codex 0.154.0 or newer, then run again. |
@@ -212,7 +213,7 @@ These other codes arrive on stderr as `code`, with no data on stdout:
 | `candidate-name-taken` | The candidate skill name matches a Claude Code command or another loaded skill. A contract companion name can also match one. The init event then cannot show that the candidate loaded. No model call ran. | Rename the skill or the companion, then start a new run directory. |
 | `evals-unreadable` | `evals/evals.json` or `evals/journeys.json` is a symlink, too large, or malformed. An entry can also have an unknown `kind`, a duplicate case id (also across the two files), assertions on a trigger or near-miss, or a string `expected_skill` with no `kind` (the message says to set `kind`). At the `cases-missing` stop, an entry can also list a fixture that is unsafe, missing, empty, too large, or not UTF-8 text, or the seed can be too large. The message names the problem. | Fix the eval file or the fixture, set `kind` on an ambiguous entry, then run again. |
 | `cases-uncovered` | The draft lacks an entry of `evals/evals.json` or a journey of `evals/journeys.json`. It can also change an entry `kind` or `request`, or a journey `brief`. The message names each entry and the difference. The stop comes after the draft loads. | Restore the entry in the draft. To drop it on purpose, remove it from its eval file. Then run again. A run directory that an older version drafted can stop here: a kind-less entry with no assertions moved from `trigger` to `task`. Copy the seed again, or set `kind` in the entry. |
-| `cases-invalid` | A draft case lacks a required field, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. Then run again. |
+| `cases-invalid` | A draft case lacks a required field, a `task` case has no `files`, or a `task` case lacks the contract helper input in `files`. The message names the case id and the field or file. | Add the field, or add the helper input file to the `files` of each `task` case. For a `task` case with no `files`, add a fixture to its `evals/evals.json` entry, name the fixture in the entry `prompt`, and copy the new seed case. Then run again. |
 | `cases-too-few` | The scored families cannot fill the splits. A run needs 4 scored families: train 4 scored cases from 2 families, validation 1 family, and a holdout of 6 scored cases. The message names the cases and families that each split needs, the validation family, the train families, the holdout capacity, the deficit, and a fix. The data holds `families`, `families_minimum`, `holdout_minimum`, `train_minimum`, `train_families_minimum`, `holdout_capacity`, `deficit`, `shortfall` (the missing `cases` and `families` of each split), and `fix`. | Follow the fix: add scored cases to other families, or add a family. Then run again. |
 | `search-failed` | Every search evaluation failed. | Check the model, then start a new run directory. |
 | `search-faulted` | At least 4 search evaluations finished in this session and more than half failed, or the 5 newest failed in a row. A resume starts a new count. The message gives the failed counts by reason. | Wait for the provider, then resume the run in the same directory. |
@@ -313,7 +314,10 @@ The stop comes before the case question and any model call. `validate` reports t
 A request word counts without its edge punctuation, a leading `./`, and a line reference such as `:3`.
 A word counts only when it has a `/` or a file extension. A URL, an absolute path, and a `~` path do not count.
 An output, a rename target, or an absent file passes when its name differs from each known fixture.
-When the entry lists no fixture, `files` is empty. Draft the starting fixture that the request needs.
+When the entry lists no fixture, `files` is empty, and the run stops with `cases-invalid`. `validate` reports each such entry.
+The draft cannot change the request, so it cannot name a new fixture. Add the fixture to the entry `files` in `evals/evals.json`, and name it in the entry `prompt`. Then copy the new seed case.
+
+This rule and the family rule apply only when the run scores the `task` kind. A run scores it when the selected kinds include a kind that does not use the journey grader. A journey-only contract, or `--kind` with only journey kinds, does not score it. In that run, a `task` case without `family` takes `family = id`, and a `task` case without `files` is valid. The case shows as `not scored`.
 A seed case has a `family` only when the entry has a nonempty-text `family` key. Otherwise set the `family` by the rule below.
 Keep every seed case in the draft with its `id`, `kind`, and `request` unchanged, and a journey case with its `brief` unchanged. You can extend `files`, `expected`, and `family`.
 When the draft drops a seed case or changes its `id`, `kind`, `request`, or `brief`, the run stops with `cases-uncovered`. To drop an entry on purpose, remove it from its eval file.
@@ -337,6 +341,20 @@ Each case has these fields:
   A suffix does not clear a hidden part, so store a file such as `.env` under a name without the leading dot.
   The runner writes fixtures verbatim, so the request must tell the task to rename the file.
   When the contract declares a helper, each `task` case must list the contract helper input in `files`.
+  The Claude and Codex harnesses exclude runtime-owned `home/` and `tmp/` through the global Git exclude file in task `HOME`.
+  This keeps runtime files and a `git config --global` identity out of fixture commits.
+  Codex excludes only these directories. Claude also excludes the sandbox placeholders below.
+  The exclude file is global: its patterns also apply in a repository that a fixture creates in a subdirectory.
+  A fixture that rebuilds a Git repository under the Claude Code sandbox has these limits:
+  - Claude Code binds `/dev/null` over the workspace root names `.gitconfig`, `.gitmodules`, `.bashrc`, `.bash_profile`, `.zshrc`, `.zprofile`, `.profile`, `.ripgreprc`, `.vscode`, `.idea`, and `.mcp.json`.
+    `git add -A` fails on a device entry. The runner lists these names in the global Git exclude file of the task `HOME`, so `git add -A` skips them.
+    The runner does not hide `.agents` and `.claude`, so `git add -A` also stages the skill that the runner puts there. Stage each path by name when the commit must hold an exact set.
+  - Claude Code binds `.git/config` and `.git/hooks` read-only in each Bash command that starts after the repository exists. The runner cannot lift this.
+    `git config user.email` (repository-local) fails with `Device or resource busy` in such a command. It works only in the same Bash command as `git init`.
+  - Set the identity with `git config --global user.email ...` and `git config --global user.name ...`. The task `HOME` is the workspace `home` directory, and it is writable.
+    Do not write `home/.config/git/config`: Claude Code binds `home/.config` read-only. The forms `git -c user.name=... -c user.email=... commit` and the `GIT_AUTHOR_*` and `GIT_COMMITTER_*` variables also work.
+  - A hook cannot go into `.git/hooks`. Keep the hook in a visible directory such as `githooks/`, make it executable with `chmod +x`, and set `core.hooksPath` with `git config --global`.
+    Git skips a hook file that is not executable, and the runner writes fixture files without the execute bit.
 - `expected`: the reference answer as JSON. A `task` case needs it.
   A scored case whose kind uses a `judge`, `hybrid`, or `journey` grader also needs `expected.criteria`. Draft them with the criteria drafting reference that `SKILL.md` lists.
 - `source`: `skill` for a case that you drafted from the skill, or `session` for one from past analytics.
@@ -676,8 +694,18 @@ The runner adds the sources of an own target in this order:
 1. The target whose `.pyz` the contract helper names.
 2. Each other target for which `SKILL.md` names `scripts/NAME.pyz`, in `wedge.toml` order.
 
-A target joins only while the text total stays within the 1,000,000-character limit.
-The first target that does not fit stays frozen, and so does every later target.
+A target joins whole while the text total stays within the 1,000,000-character limit and its sources fit the wedge edit limit.
+A target that does not fit whole stays editable in part. The part holds these sources, in this order:
+
+1. The sources that an earlier editable target already offers.
+2. The own package: the sources in a directory named after the skill directory, such as `src/pkg/skills/cook` for `skills/cook`.
+3. Each other source that `SKILL.md` or a contract path names, by a path such as `shared/x.py` or a module such as `pkg.shared.x`.
+
+The part stops at the first source that does not fit.
+Every other source of the target stays a fixed file, and each rebuild stages it from the seed.
+Shared code is editable only when the skill names it. An edit to it changes the archives of other skills, and the holdout gate scores only this skill.
+The run record `own_targets.partial` says why a target is editable only in part. `own_targets.fixed` lists its fixed files.
+A target with no part that fits stays frozen, and so does every later target.
 A target also stays frozen when one source file is binary, is not UTF-8, or is over 262144 bytes.
 The files `wedge.toml`, `uv.lock`, and every `.pyz` are never editable.
 A contract helper path may name an own `.pyz`. The path then does not stop with `helper-file-missing`.
@@ -1148,6 +1176,10 @@ A criteria run from before this label is a different cohort. Start a new run dir
 A journey case tests a skill that asks the user questions across several turns.
 A simulator role plays the user. The task role runs one conversation per journey.
 
+Each turn adds one assistant entry to the transcript. On Claude Code and on Codex, that entry holds every assistant text of the turn, in order, joined with a newline.
+The judge therefore sees a contract text that the agent writes before its final summary.
+The simulator sees that text only when another turn is available. In both harnesses, `max_turns: 1` skips the simulator.
+
 A journey case has a kind that uses the `journey` grader. It also needs `expected`. Unlike a task case, it may omit `files`.
 It has these extra fields:
 
@@ -1161,7 +1193,7 @@ A contract declares the tool surface in a `surface` block. Every field is option
 - `tools`: extra tool names for the task role.
 - `mcp_config`: a `.json` file with the MCP servers.
 - `agents`: `.md` files. The frontmatter `name` of each file must equal the file stem.
-- `companions`: skill directories that the runner stages read-only. Search never edits them.
+- `companions`: skill directories that the runner stages read-only. Search never edits them. An entry `../<name>` names a sibling directory of the skill. The runner stages it at `.claude/skills/<name>`. The files of a sibling enter every hash that the files of the skill enter. A sibling that is missing, is not a directory, is a symlink, or has the name of the skill stops with `contract-surface`.
 
 Search never edits an agent file or the MCP config either. The contract cannot list them in `editable`.
 
@@ -1179,7 +1211,13 @@ Any kind that uses the `journey` grader is a journey kind, and its name is free 
 The `journey` grader runs a command gate first.
 The gate sees the case fixtures at the root, the agent files under `output/`, and the raw events in `trace/events.jsonl`.
 A gate score of 0 or less skips the judge and records `gate-failed`.
-Otherwise the judge sees the request, the brief, the transcript, the output files, and the reference.
+Otherwise the judge sees the request, the brief, the transcript, the output files, the reference, and the task trace.
+On the `claude` and `codex` harnesses, the `trace` field lists the task's messages and tool calls in order, each with its `turn`.
+A tool call shows its input, its output, and whether it failed; a Codex command also shows its `exit_code` and a file change shows its diff.
+The judge counts a step as done only when the trace, the transcript, or the output files show it. A claim in a reply is not evidence.
+The runner redacts credentials in the trace. It keeps the first 1000 and the last 3000 characters of a longer value.
+Past 48000 characters, it keeps the first and the last steps and marks the gap with `omitted_steps`.
+The simulator never sees the trace. A `command` harness journey has no trace.
 
 The `simulator` role answers from the brief with `{reply, done}`.
 It uses the judge role unless the harness configuration sets it.
@@ -1229,6 +1267,8 @@ Process-group cancellation enforces the deadline. The runner does not retry auto
 Changed frozen inputs require a new run directory.
 
 `run.json` holds the run checkpoint. `cases.json` holds the approved cases and the seed.
+Each `outcomes` row is one case evaluation or one reflection call. A reflection row has `split: "reflection"`, no `case_id`, and no `transcript`.
+Select the rows with a `case_id` before you measure transcripts. For example, `jq '.transcript | tostring'` gives the 4-character text `null` for a reflection row.
 `summary` and `report.json` carry `contract_hash` and `contract_source`.
 Exported outcomes carry `scores`.
 
@@ -1236,7 +1276,7 @@ Each run freezes a compatibility fingerprint in `run.json` as `compatibility`. `
 The fingerprint is the digest of `compatibility.fields`. The fields hold no case text.
 The fields are `contract_hash`, `skill`, `adapter`, `task_model`, `judge_model`, `claude_options`, `edit`, `repeats`, `statistics`, `split_digest`, `scoring_digest`, and `leakage_digest`.
 `judge_model` is `null` when no case kind is judged.
-`scoring_digest` covers the source of the scoring modules. An edit to the search, run, or harness code keeps it.
+`scoring_digest` covers the source of the scoring modules and of the judge trace renderer. Another edit to the search, run, or harness code keeps it.
 `leakage_digest` covers the source of the leakage check. A change to a rule or a threshold starts a new cohort.
 `run.compare(a, b)` names each field that differs between two run records.
 It returns `("missing-fingerprint",)` when either record has no fingerprint.
@@ -1283,6 +1323,27 @@ Run records contain private local inputs.
 Exports contain a candidate patch and measurements, not requests or expected answers.
 A candidate can memorize training content. Therefore, every export remains private and local.
 Review it before sharing. The runner never applies or installs a patch.
+
+### Trace export
+
+A run exports an OpenTelemetry trace when the standard OTLP variables name an endpoint.
+Set `OTEL_EXPORTER_OTLP_ENDPOINT` (the runner adds `/v1/traces`) or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (used as given).
+The runner also reads `OTEL_EXPORTER_OTLP_HEADERS`, `OTEL_EXPORTER_OTLP_TIMEOUT` (milliseconds), their `TRACES_` forms,
+`OTEL_SERVICE_NAME`, and `OTEL_RESOURCE_ATTRIBUTES`.
+`OTEL_SDK_DISABLED=true` or `OTEL_TRACES_EXPORTER=none` turns the export off. Without an endpoint, the runner exports nothing.
+The exporter uses only the Python standard library, so the archive needs no extra package.
+It sends OTLP/HTTP with a JSON body for the `http/json` and `http/protobuf` protocols. It does not support `grpc`.
+An unsupported protocol, a non-HTTP endpoint, or a failed export prints one warning on stderr. The run continues.
+
+The trace has one `skillz.run` span. Each phase gets a `skillz.phase` span: `preflight`, `cases`, `search`, `holdout`, and `replay`.
+The `search` span carries `skillz.stop_trigger`, `skillz.stop_reason`, and `skillz.retained_seed`.
+Each case evaluation gets a `skillz.case` span with the case id, arm, split, candidate hash, score, and verdict.
+Under it, `skillz.model_call` spans show the `task` call and, when the judge ran, the `judge` call.
+Each reflection call gets a `skillz.model_call` span under its phase.
+A model call span carries the role, harness, model, latency, and token usage. A judge span also carries the score, the verdict, and each criterion level.
+A journey task span covers every turn. The simulator token counts sit on it as `skillz.simulator.*`.
+The task span starts with its case, and the judge span ends with it: the outcome records their latencies, not their start times.
+Spans hold no prompt, transcript, judge reason, file, or header value.
 
 
 ## Inspection helper contract
@@ -1381,7 +1442,8 @@ A foreign `.pyz` bundle is a `.pyz` file below the skill that no own target buil
 A `.pyz` that a lower `wedge.toml` builds is own when that directory has no sibling `SKILL.md`. A nested skill has one.
 The wedge edit limit counts characters with the same rule as the run planner.
 The check tests each own target alone, because a run's combined budget depends on the targets it offers.
-An own target is frozen for the planner reasons in `### Editable sources`. Examples are a source file over 262144 bytes and sources over the wedge edit limit.
+The check reads no SKILL.md or contract names. So it reports an oversized target with no own package as frozen, even when a run can edit the files that SKILL.md names.
+An own target is frozen for the planner reasons in `### Editable sources`. Examples are a source file over 262144 bytes and an own package over the wedge edit limit.
 The `wedge.own-targets` detail marks each frozen target. This is not a failure.
 A `prose+cli` run cannot edit a frozen target. Use these checks to decide whether to wedge a skill before a run.
 A reference listed nowhere in `## References` reports `not-applicable` for `references.read-trigger`.

@@ -15,6 +15,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments._protocol import LEDGER_KEY
 from skillz_experiments._redact import redact
 from skillz_experiments.evaluation._memo import Checker, CheckMemo
+from skillz_experiments.evaluation._trace import judge_trace
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class Reply:
 
 
 Transcript = list[dict[str, str]]
+# Turn the raw events of a journey task into harness-neutral steps. The harness slice supplies one per task adapter.
+Steps = Callable[[list[dict[str, object]]], list[dict[str, object]]]
 SIMULATOR_SCHEMA: dict[str, object] = {
     "type": "object", "properties": {"reply": {"type": "string"}, "done": {"type": "boolean"}},
     "required": ["reply", "done"], "additionalProperties": False}
@@ -93,8 +96,11 @@ def _prompt(rules: Contract, instruction: str, case: Case) -> str:
 
 
 def evaluate(task: _Responder, judge_transport: _Responder, candidate: Candidate, case: Case, *, holdout: bool = False,
-             simulator: _Responder | None = None, checks: CheckMemo) -> dict[str, object]:
-    """Score `candidate` on `case`. `checks` reuses one contract check per candidate identity across a session."""
+             simulator: _Responder | None = None, checks: CheckMemo, steps: Steps | None = None) -> dict[str, object]:
+    """Score `candidate` on `case`. `checks` reuses one contract check per candidate identity across a session.
+
+    `steps` renders the raw events of a journey task. Its bounded result reaches the judge as `trace`.
+    """
     rules = resolve(candidate.contract)
     checked = checks.check(task, candidate)
     if not checked.passed:
@@ -126,7 +132,8 @@ def evaluate(task: _Responder, judge_transport: _Responder, candidate: Candidate
     if case.journey is not None:
         simulate = _simulator(simulator or judge_transport, case, holdout, spent)
         result = cast(Conversant, task).converse(prompt, candidate, case, holdout, simulate)
-        journey = {"transcript": result.pop("transcript"), "trace": result.pop("raw_events")}
+        raw = cast(list[dict[str, object]], result.pop("raw_events"))
+        journey = {"transcript": result.pop("transcript"), "trace": raw, "steps": None if steps is None else steps(raw)}
     else:
         result = task.invoke(prompt, candidate, case, holdout=holdout)
     files = _graders.output_files(result)
@@ -285,4 +292,6 @@ def answer_schema() -> dict[str, object]:
 def _judge_data(case: Case, journey: dict[str, object] | None) -> dict[str, object] | None:
     if journey is None or case.journey is None:
         return None
-    return {"brief": case.journey.brief, "transcript": journey["transcript"]}
+    data = {"brief": case.journey.brief, "transcript": journey["transcript"]}
+    rendered = journey.get("steps")
+    return data if rendered is None else data | {"trace": judge_trace(cast(list[dict[str, object]], rendered))}

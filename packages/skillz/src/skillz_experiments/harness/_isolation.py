@@ -1,4 +1,6 @@
+import os
 import socket
+import stat
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,6 +11,33 @@ from skillz_experiments.harness._seatbelt import XCRUN_ENVIRONMENT
 
 # Linux and macOS limit an AF_UNIX path to about 104-108 bytes, including the terminating NUL.
 SOCKET_PATH_LIMIT = 100
+
+
+def task_tmpdir(workspace: Path) -> Path:
+    """Return the Codex TMPDIR beside the workspace. Create nothing."""
+    if workspace.name != "workspace":
+        raise ValueError(f"a Codex workspace must be <private task directory>/workspace, not {workspace}")
+    return workspace.parent / "tmp"
+
+
+def private_task_tmpdir(workspace: Path) -> Path:
+    """Create the task TMPDIR and refuse it unless it is a real directory that only this user owns."""
+    tmpdir = task_tmpdir(workspace)
+    tmpdir.mkdir(mode=0o700, exist_ok=True)
+    status = tmpdir.lstat()
+    if not stat.S_ISDIR(status.st_mode) or status.st_uid != os.getuid() or stat.S_IMODE(status.st_mode) != 0o700:
+        raise ValueError(f"the Codex task TMPDIR {tmpdir} must be a private directory owned by this user")
+    return tmpdir
+
+
+def prepare_git_root(root: Path) -> None:
+    """Make a real mount point before Codex grants its `.git` write exception."""
+    try:
+        root.mkdir()
+    except FileExistsError:
+        pass
+    if not stat.S_ISDIR(root.lstat().st_mode):
+        raise ValueError(f"the Codex Git root {root} must be a real directory")
 
 
 @contextmanager

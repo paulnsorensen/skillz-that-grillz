@@ -26,7 +26,7 @@ from skillz_experiments.run._sizing import raised_cap
 from skillz_experiments.run._unspent import search_end, with_unspent
 from test_run_search import MODEL, Search
 
-pytestmark = pytest.mark.usefixtures("host_login")
+pytestmark = pytest.mark.usefixtures("host_login", "cheap_record_writes")
 
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
@@ -64,21 +64,6 @@ def test_a_plan_over_the_standard_cap_names_the_smallest_approval_that_fits(
     below = _refused(target, out, case_hash, repeats=3, approve_budget=smallest - 1)
     assert below.data["smallest_approval"] == smallest
     assert "statistics" in stop.data and "statistics" in below.data
-
-
-@pytest.mark.ac("gh-588:AC-1")
-def test_approve_budget_above_the_standard_cap_sizes_the_run_against_it(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter, headroom_off: None) -> None:
-    del headroom_off
-    target, out, case_hash = _start(tmp_path, make_target, write_draft, BIG)
-    smallest = cast(int, _refused(target, out, case_hash, repeats=3).data["smallest_approval"])
-    state = Search(target)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, repeats=3, approve_budget=smallest,
-                 factory=state.factory)
-    assert result["phase"] == "complete"
-    budget = cast(dict[str, object], read(out / "run.json")["budget"])
-    assert budget["maximum"] == smallest > APPROVED_CALLS and budget["cap"] == smallest
-    assert cast(int, budget["seconds"]) <= JOURNEY_SECONDS
 
 
 @pytest.mark.ac("gh-588:AC-1")

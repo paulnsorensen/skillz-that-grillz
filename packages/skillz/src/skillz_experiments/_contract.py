@@ -32,6 +32,7 @@ GRADER_FIELDS = ("grader", "argv", "gate", "rubric", "capture")
 HELPER_FIELDS = ("path", "input", "fixtures")
 SURFACE_FIELDS = ("tools", "mcp_config", "agents", "companions")
 SCHEMA_KEY = "$schema"
+SIBLING_PREFIX = "@sibling/"
 
 
 @dataclass(frozen=True)
@@ -60,7 +61,8 @@ class Surface:
     """The extra tool surface that a contract declares for the task role.
 
     Each path is relative to the skill root and names a captured candidate file. `mcp_config` is a JSON file, an agent is a
-    Markdown file named by its stem, and a companion is a skill directory named by its last part. Companions stay read-only.
+    Markdown file named by its stem, and a companion is a skill directory named by its last part, or `../<name>` for a sibling
+    directory, whose files sit under `@sibling/<name>/` in the candidate. Companions stay read-only.
     """
 
     tools: tuple[str, ...] = ()
@@ -68,17 +70,13 @@ class Surface:
     agents: tuple[str, ...] = ()
     companions: tuple[str, ...] = ()
 
+    @property
+    def companion_keys(self) -> tuple[str, ...]:
+        return tuple(SIBLING_PREFIX + root[3:] if root.startswith("../") else root for root in self.companions)
+
     def data(self) -> dict[str, object]:
-        document: dict[str, object] = {}
-        if self.tools:
-            document["tools"] = list(self.tools)
-        if self.mcp_config is not None:
-            document["mcp_config"] = self.mcp_config
-        if self.agents:
-            document["agents"] = list(self.agents)
-        if self.companions:
-            document["companions"] = list(self.companions)
-        return document
+        document = {"tools": list(self.tools), "mcp_config": self.mcp_config, "agents": list(self.agents), "companions": list(self.companions)}
+        return {key: value for key, value in document.items() if value}
 
 
 @dataclass(frozen=True)
@@ -96,7 +94,7 @@ class Contract:
 
     def in_companion(self, name: str) -> bool:
         """Return True when `name` is a companion directory or a file under one."""
-        return self.surface is not None and any(name == root or name.startswith(root + "/") for root in self.surface.companions)
+        return self.surface is not None and any(name == root or name.startswith(root + "/") for root in self.surface.companion_keys)
 
     def surface_fixed(self, name: str) -> bool:
         """Return True when `name` is a surface agent or the MCP config: the run never edits it."""
@@ -284,12 +282,14 @@ def _surface_list(item: Mapping[str, object], field: str) -> list[object]:
 
 def _surface_path(value: object, field: str, suffix: str = "") -> str:
     try:
-        path = relative(string(value, f"surface {field} entry"))
+        text = string(value, f"surface {field} entry")
+        sibling = field == "companions" and text.startswith("../") and "/" not in text[3:]
+        path = relative(text[3:] if sibling else text)
     except ValueError:
-        raise _surface_error(f"{field} entry {value!r} must be a relative, non-hidden path inside the skill") from None
+        raise _surface_error(f"{field} entry {value!r} must be a relative, non-hidden path inside the skill, or ../<name>") from None
     if not path.endswith(suffix):
         raise _surface_error(f"{field} entry {path!r} must end with {suffix}")
-    return path
+    return "../" + path if sibling else path
 
 
 def _surface(value: object) -> Surface:

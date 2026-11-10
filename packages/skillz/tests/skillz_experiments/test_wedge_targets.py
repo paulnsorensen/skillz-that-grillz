@@ -34,7 +34,8 @@ from skillz_experiments.harness import Configuration
 from skillz_experiments._records import read, write
 from skillz_experiments._budget import Budget
 from skillz_experiments.search import Edit
-from skillz_experiments.run._wedge_targets import WEDGE_EDIT_LIMIT, plan_targets
+from skillz_experiments.run._wedge_fit import WEDGE_EDIT_LIMIT
+from skillz_experiments.run._wedge_targets import plan_targets
 from skillz_experiments.run import Stop, export, run
 from fake_provider import FakeRunProvider
 
@@ -334,6 +335,7 @@ def test_a_project_outside_the_repo_root_keeps_its_targets_frozen(world: World) 
     assert plan.editable == () and set(plan.frozen) == {"scripts/alpha.pyz", "scripts/beta.pyz"}
 
 
+@pytest.mark.ac("gh-695:AC-2")
 def test_a_missing_pyz_or_a_broken_wedge_toml_stops_with_a_code(world: World) -> None:
     contract = world.contract()
     skeleton = Candidate.capture(world.skill, [], contract)
@@ -341,10 +343,12 @@ def test_a_missing_pyz_or_a_broken_wedge_toml_stops_with_a_code(world: World) ->
     with pytest.raises(CodedError) as missing:
         _ = plan_targets(world.skill, skeleton.files, contract, "prose")
     assert missing.value.code == "target-not-built" and "scripts/beta.pyz" in str(missing.value)
-    _ = (world.skill / "wedge.toml").write_text("name = [\n")
-    with pytest.raises(CodedError) as broken:
-        _ = plan_targets(world.skill, skeleton.files, contract, "prose")
-    assert broken.value.code == "wedge-config-invalid"
+    for text in ("name = [\n", '[[target]]\nname = "alpha"\n\n[[target]]\nentry = "beta:main"\n',
+                 'name = "../alpha"\n', 'name = "/absolute"\n', 'name = "alpha beta"\n'):
+        _ = (world.skill / "wedge.toml").write_text(text)
+        with pytest.raises(CodedError) as broken:
+            _ = plan_targets(world.skill, skeleton.files, contract, "prose")
+        assert broken.value.code == "wedge-config-invalid"
 
 
 # --- AC-6 to AC-8: host rebuild --------------------------------------------------------------------------------

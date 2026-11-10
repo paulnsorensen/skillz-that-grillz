@@ -10,7 +10,7 @@ import pytest
 from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._intake import case_hash, load_draft, split_cases, too_few
-from skillz_experiments.run import Stop, run
+from skillz_experiments.run import Stop, frozen_targets, run
 
 Maker = Callable[..., Path]
 REPO = Path(__file__).resolve().parents[4]
@@ -179,3 +179,114 @@ def test_validate_runs_offline_with_an_empty_home_and_no_agent_cli(
     code, report = _report(capsys, "--target", str(REPO / "skills/skillz"))
     assert code == 0 and report["ok"] is True
     assert list(home.iterdir()) == []
+
+
+def _fileless(target: Path) -> None:
+    """Give the target 12 task entries in 4 families with fixtures, and one prompt-only entry `no-fixture`."""
+    _entries(target, {family: 3 for family in "abcd"})
+    (target / "evals/files").mkdir(parents=True, exist_ok=True)
+    _ = (target / "evals/files/input.txt").write_text("hello\n")
+    document = cast(dict[str, list[dict[str, object]]], json.loads((target / "evals/evals.json").read_text()))
+    for entry in document["evals"]:
+        entry["files"] = ["evals/files/input.txt"]
+    document["evals"].append({"name": "no-fixture", "family": "a", "prompt": "Say hello.", "expected_output": "Says hello."})
+    _ = (target / "evals/evals.json").write_text(json.dumps(document))
+
+
+@pytest.mark.ac("gh-696:AC-1")
+def test_run_on_a_seed_copy_with_a_fileless_task_case_stops_as_cases_invalid_without_a_traceback(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    """Keep the case ID and fixture repair guidance in the coded stop, without a traceback."""
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _fileless(target)
+    command = ["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose"]
+    assert main(command) == 1
+    assert json.loads(capsys.readouterr().err)["code"] == "cases-missing"
+    _ = (out / "cases.draft.json").write_bytes((out / "cases.seed.json").read_bytes())
+    assert main(command) == 1
+    captured = capsys.readouterr()
+    error = cast(dict[str, object], json.loads(captured.err))
+    assert error["code"] == "cases-invalid" and "traceback" not in error, error
+    assert "case no-fixture" in str(error["error"]) and "files" in str(error["error"])
+    assert "evals/evals.json" in str(error["error"]) and "prompt" in str(error["error"])
+
+
+@pytest.mark.ac("gh-697:AC-1")
+def test_validate_reports_a_task_entry_without_files_that_run_refuses(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    """Report the fileless seed entry once, with its source file and repair guidance."""
+    target = make_target(tmp_path)
+    _fileless(target)
+    code, report = _report(capsys, "--target", str(target))
+    findings = cast(list[dict[str, object]], report["findings"])
+    found = [item for item in findings if item["code"] == "cases-invalid"]
+    assert code == 1 and report["ok"] is False and len(found) == 1, findings
+    assert found[0]["severity"] == "error" and found[0]["file"] == "evals/evals.json"
+    assert "no-fixture" in str(found[0]["message"]) and "evals/evals.json" in str(found[0]["fix"])
+    assert "prompt" in str(found[0]["fix"])
+
+
+@pytest.mark.ac("gh-697:AC-2")
+def test_validate_reports_a_fileless_draft_task_case_with_the_run_code(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    """Keep draft validation consistent with the run command at the fixture boundary."""
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _fileless(target)
+    with pytest.raises(Stop):
+        _ = run(target, out, "local-test", live=True)
+    draft = out / "cases.draft.json"
+    _ = draft.write_bytes((out / "cases.seed.json").read_bytes())
+    code, report = _report(capsys, "--target", str(target), "--draft", str(draft))
+    findings = cast(list[dict[str, object]], report["findings"])
+    assert code == 1 and [item["code"] for item in findings if item["file"] == str(draft)] == ["cases-invalid"], findings
+
+
+@pytest.mark.ac("gh-701:AC-4")
+def test_validate_with_an_unknown_kind_reports_it_and_keeps_the_task_checks_strict(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    """An invalid kind must not bypass scored-task fixture validation."""
+    target = make_target(tmp_path)
+    _fileless(target)
+    code, report = _report(capsys, "--target", str(target), "--kind", "no-such-kind")
+    findings = cast(list[dict[str, object]], report["findings"])
+    contract = [item for item in findings if item["file"] == "evals/autoimprove.json" and item["severity"] == "error"]
+    assert code == 1 and contract and "no-such-kind" in str(contract[0]["message"]), findings
+    assert [item["code"] for item in findings if item["code"] == "cases-invalid"] == ["cases-invalid"], findings
+
+
+@pytest.mark.parametrize(("config", "expected_code"), [
+    pytest.param("name = [", "wedge-config-invalid", marks=pytest.mark.ac("gh-718:AC-1"), id="invalid-toml"),
+    pytest.param('name = "../unsafe"\n', "wedge-config-invalid", marks=pytest.mark.ac("gh-718:AC-1"), id="unsafe-name"),
+    pytest.param('name = "echo"\n', "target-not-built", marks=pytest.mark.ac("gh-718:AC-2"), id="missing-archive"),
+])
+def test_validate_reports_frozen_target_errors_before_case_approval(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str], config: str, expected_code: str) -> None:
+    target = make_target(tmp_path)
+    _ = (target / "wedge.toml").write_text(config)
+    with pytest.raises(CodedError) as caught:
+        _ = frozen_targets(target, "prose")
+    assert caught.value.code == expected_code
+    code, report = _report(capsys, "--target", str(target))
+    findings = cast(list[dict[str, object]], report["findings"])
+    found = [item for item in findings if item["code"] == expected_code]
+    assert code == 1 and report["ok"] is False
+    assert found == [{"code": expected_code, "severity": "error", "file": "wedge.toml", "pointer": "",
+                      "message": str(caught.value), "fix": ""}], findings
+    if expected_code == "target-not-built":
+        assert found[0]["message"] == "scripts/echo.pyz is missing; run `wedge bundle` for the skill, then run again"
+
+
+@pytest.mark.ac("gh-718:AC-3")
+@pytest.mark.parametrize("own_config", [False, True])
+def test_validate_ignores_parent_wedge_config_and_leaves_built_targets_unchanged(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str], own_config: bool) -> None:
+    target = make_target(tmp_path)
+    before = _report(capsys, "--target", str(target))
+    _ = (tmp_path / "wedge.toml").write_text("name = [")
+    if own_config:
+        _ = (target / "wedge.toml").write_text('name = "echo"\n')
+        (target / "scripts").mkdir()
+        _ = (target / "scripts/echo.pyz").write_bytes(b"frozen archive")
+    snapshot = {path.relative_to(target): path.read_bytes() for path in target.rglob("*") if path.is_file()}
+    assert _report(capsys, "--target", str(target)) == before
+    assert {path.relative_to(target): path.read_bytes() for path in target.rglob("*") if path.is_file()} == snapshot

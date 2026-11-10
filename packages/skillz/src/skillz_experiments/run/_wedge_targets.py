@@ -21,20 +21,18 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import cast, final
 
-from wedge import (BuildPaths, ConfigError, SiteLayer, WedgeConfig, build_from_layer, bundle_path, defaults_path,
-                   first_party_files, layer_import_names, load_targets, open_site_layer, parse_targets,
-                   populate_site_layer, resolve_target, stage_sources)
+from wedge import (BuildPaths, ConfigError, SiteLayer, WedgeConfig, build_from_layer, bundle_path, defaults_path, first_party_files,
+                   layer_import_names, load_targets, open_site_layer, parse_targets, populate_site_layer, resolve_target, stage_sources)
 
-from skillz_experiments._candidate import (FROZEN_FILE_LIMIT, NEW_CLI, PACKAGE_LIMIT, WEDGE_PREFIX, Candidate, as_text,
-                                           ignored_files, is_skill_file)
+from skillz_experiments._candidate import FROZEN_FILE_LIMIT, NEW_CLI, WEDGE_PREFIX, Candidate, as_text, ignored_files, is_skill_file
 from skillz_experiments._cases import CodedError, digest, mapping, relative, repo_root
 from skillz_experiments._contract import Contract
 from skillz_experiments._new_cli import expand_files, fromargs_include, inherits_source_paths
+from skillz_experiments.run._prose_targets import frozen_targets
+from skillz_experiments.run._wedge_fit import WEDGE_EDIT_LIMIT, choose
 
 # A target never offers these as editable sources.
 NEVER_EDITABLE = frozenset({"wedge.toml", "uv.lock"})
-# The editable wedge sources of a run together stay within this many characters. A reflection echoes every one.
-WEDGE_EDIT_LIMIT = 100_000
 LayerId = tuple[Path, tuple[str, ...]]
 _DETAIL_LIMIT = 600
 # The rebuilder keeps this many built results.
@@ -122,13 +120,14 @@ class OwnTarget(Site):
     outside the repository root, a source file is binary, is not UTF-8, is over the text limit, or has a name
     that `relative` refuses, or git ignores a first-party file.
     `fixed` holds the first-party files that no proposal edits, such as a data `.pyz`. A rebuild stages them
-    from the seed. `names` holds every first-party file of the target.
+    from the seed. `names` holds every first-party file of the target. `partial` says why only some sources are editable.
     """
 
     built: bytes
     sources: dict[str, str] | None
     fixed: dict[str, bytes]
     names: frozenset[str]
+    partial: str = ""
 
 
 def _repo_names(paths: BuildPaths, repo: Path | None) -> frozenset[str]:
@@ -266,7 +265,7 @@ def _lower_bundles(root: Path) -> set[Path]:
 def audit_targets(skill_root: Path) -> WedgeAudit:
     """Return the wedge facts of a skill. Read the config and the first-party files only. Build nothing.
 
-    The edit limit follows the run planner: `_scan` for the sources, and `_choose` for each target alone, as if a run offers only it. A foreign `.pyz` is a
+    The edit limit follows the run planner: `_scan` for the sources, and `choose` for each target alone, as if a run offers only it. A foreign `.pyz` is a
     path relative to the skill root that no own config builds. A `.pyz` that a lower `wedge.toml` builds is own
     when that directory has no `SKILL.md`. Raise `CodedError` for an invalid `wedge.toml` or an unreadable source.
     """
@@ -286,7 +285,7 @@ def audit_targets(skill_root: Path) -> WedgeAudit:
         scanned.append(OwnTarget(site.config, site.paths, site.pyz, site.repo, b"", sources, fixed, names))
     nested = _nested_names(root, sites[0].repo) if sites else frozenset[str]()
     offered = {target.name for target in scanned}
-    chosen = {target.name for target in scanned if target.sources is not None and _choose(scanned, [target], nested, 0)}
+    chosen = {target.name for target in scanned if target.sources is not None and choose(scanned, [target], nested, 0)}
     blocked = nested.union(*(target.names for target in scanned if target.sources is None))
     audits: list[TargetAudit] = []
     for target in scanned:
@@ -332,7 +331,7 @@ class FromargsCapability:
 class TargetPlan:
     """The own targets of a skill, the ones whose sources the search edits in order, and why each other one is frozen.
 
-    `capable` is set when the skill can take a `@new-cli` target.
+    `capable` is set when the skill can take a `@new-cli` target. `built` holds the `.pyz` bytes of a plan without `targets`.
     """
 
     targets: tuple[OwnTarget, ...] = ()
@@ -340,10 +339,11 @@ class TargetPlan:
     reasons: Mapping[str, str] = field(default_factory=dict[str, str])
     capable: FromargsCapability | None = None
     dropped: str = ""
+    built: Mapping[str, bytes] = field(default_factory=dict[str, bytes])
 
     @property
     def frozen(self) -> dict[str, bytes]:
-        found = {target.pyz: target.built for target in self.targets}
+        found = {target.pyz: target.built for target in self.targets} | dict(self.built)
         for target in self.editable:
             found |= target.fixed
         if self.capable is not None:
@@ -370,11 +370,13 @@ class TargetPlan:
     def record(self) -> dict[str, object]:
         """Return the run record of the plan: the source names and the fixed file names of each editable target.
 
-        It also holds the reason that each other own target is frozen, and the include files of a `@new-cli` target.
+        It also holds why each other target is frozen, why a `partial` one keeps sources fixed, and the `@new-cli` includes.
         """
         found: dict[str, object] = {"editable": {target.name: sorted(target.sources or {}) for target in self.editable},
                                     "fixed": {target.name: sorted(target.fixed) for target in self.editable},
                                     "frozen": dict(self.reasons)}
+        if any(target.partial for target in self.editable):
+            found["partial"] = {target.name: target.partial for target in self.editable if target.partial}
         if self.capable is not None:
             found["new_cli"] = {"fixed": sorted(self.capable.fixed)}
         if self.dropped:
@@ -439,30 +441,6 @@ def _frozen_reason(target: OwnTarget, offered: set[str]) -> str:
     return "its wedge sources are shared with a frozen or nested target, or they exceed the size limits"
 
 
-def _fit(stage: Sequence[OwnTarget], blocked: frozenset[str], text: int) -> list[OwnTarget]:
-    """Return the targets of `stage` that fit, with their sources less the `blocked` names.
-
-    A target left with no source is frozen. The first target that does not fit, and every later one, stays frozen.
-    A blocked source stays in the build as a fixed file.
-    """
-    chosen: list[OwnTarget] = []
-    taken: dict[str, str] = {}
-    wedge = 0
-    for target in stage:
-        sources = target.sources or {}
-        mine = {name: source for name, source in sources.items() if name not in blocked}
-        if not mine:
-            continue
-        size = sum(len(source) for name, source in mine.items() if name not in taken)
-        if text + wedge + size > PACKAGE_LIMIT or wedge + size > WEDGE_EDIT_LIMIT:
-            break
-        wedge += size
-        taken |= mine
-        fixed = target.fixed | {name: source.encode("utf-8") for name, source in sources.items() if name in blocked}
-        chosen.append(replace(target, sources=mine, fixed=fixed))
-    return chosen
-
-
 def mcp_text(files: Mapping[str, str], contract: Contract) -> str:
     """Return the seed text of the contract's MCP config, or an empty string. A file that text names runs on the host."""
     config = contract.surface.mcp_config if contract.surface is not None else None
@@ -472,15 +450,15 @@ def mcp_text(files: Mapping[str, str], contract: Contract) -> str:
 def plan_targets(skill_root: Path, files: Mapping[str, str], contract: Contract, edit: str) -> TargetPlan:
     """Choose the editable targets: the helper's target, then the targets that SKILL.md names.
 
-    Only `prose+cli` edits sources. Targets join in order while the text total stays within `PACKAGE_LIMIT`
-    and the wedge source total stays within `WEDGE_EDIT_LIMIT`. The first target that does not fit, and every
-    later one, stays frozen built bytes. A source that a frozen target or a nested skill target also builds
-    from is never editable, and a target left with no source is frozen. A target whose `.pyz` the MCP config runs
-    stays frozen too (ADR-009). The plan records why each target is frozen.
+    Only `prose+cli` edits sources. Targets join in order while the text total stays within `PACKAGE_LIMIT` and the
+    wedge source total stays within `WEDGE_EDIT_LIMIT`. A target that does not fit keeps the part that `choose` fits;
+    the first one with no part that fits, and every later one, stays frozen built bytes. A source that a frozen target
+    or a nested skill target also builds from is never editable, and a target left with no source is frozen. A target
+    whose `.pyz` the MCP config runs stays frozen too (ADR-009). The plan records why each target is frozen.
     """
-    targets = own_targets(skill_root)
     if edit != "prose+cli":
-        return TargetPlan(targets, (), {target.name: f"--edit {edit} keeps every own target frozen" for target in targets})
+        return TargetPlan(**frozen_targets(skill_root, edit))  # no wedge config, only the target names (gh-695)
+    targets = own_targets(skill_root)
     if not targets:
         return TargetPlan()
     guide = files.get("SKILL.md", "")
@@ -492,7 +470,9 @@ def plan_targets(skill_root: Path, files: Mapping[str, str], contract: Contract,
     stage = [target for target in ([helper] if helper is not None else []) + named
              if target.sources is not None and target.name not in runs]
     nested = _nested_names(skill_root.resolve(), targets[0].repo)
-    chosen = _choose(targets, stage, nested, sum(len(source) for source in files.values()))
+    naming = "\n".join([guide, *contract.editable, *([contract.helper.path] if contract.helper is not None else [])])
+    chosen = [replace(fit.target, sources=fit.sources, fixed=fit.fixed, partial=fit.partial)
+              for fit in choose(targets, stage, nested, sum(len(source) for source in files.values()), naming)]
     kept = {target.name for target in chosen}
     reasons = {target.name: (f"the MCP config runs scripts/{target.name}.pyz on the host, so it is read-only"
                              if target.name in runs else _frozen_reason(target, offered))
@@ -503,19 +483,6 @@ def plan_targets(skill_root: Path, files: Mapping[str, str], contract: Contract,
 def _named(target: OwnTarget, guide: str) -> bool:
     """Return whether the SKILL.md text `guide` names `scripts/<target>.pyz`."""
     return re.search(rf"(?<![\w.-]){re.escape(target.name)}\.pyz(?![\w-]|\.\w)", guide) is not None
-
-
-def _choose(targets: Sequence[OwnTarget], stage: Sequence[OwnTarget], nested: frozenset[str], text: int) -> list[OwnTarget]:
-    """Return the staged targets that stay editable. Drop each target that does not fit, then fit the rest again."""
-    dropped: set[str] = set()
-    while True:
-        staged = {target.name for target in stage}
-        blocked = nested.union(*(target.names for target in targets if target.name not in staged or target.name in dropped))
-        chosen = _fit(stage, blocked, text)
-        live = [target.name for target in stage if target.name not in dropped]
-        if [target.name for target in chosen] == live:
-            return chosen
-        dropped |= set(live) - {target.name for target in chosen}
 
 
 def populate_layers(plan: TargetPlan, directory: Path) -> dict[LayerId, SiteLayer]:

@@ -235,6 +235,18 @@ def headroom_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_headroom, "HEADROOM_CEILING", 1.1)
 
 
+@pytest.fixture
+def cheap_record_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip the `fsync` of each record write: a 28-family run writes about 340 records, and a CI disk makes each sync slow.
+
+    Use it only where no test checks durability; `test_records.py` covers the atomic write.
+    """
+    def no_sync(descriptor: int) -> None:
+        del descriptor
+
+    monkeypatch.setattr(os, "fsync", no_sync)
+
+
 def _make_target(tmp_path: Path, *, helper: bool = False, surface: dict[str, object] | None = None) -> Path:
     """Copy the echo skill and give it a one-kind contract, so every drafted task case scores with `echo`."""
     target = tmp_path / "echo-skill"

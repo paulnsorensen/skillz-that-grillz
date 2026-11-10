@@ -60,7 +60,7 @@ jobs:
         # The gate uses `[script]` recipes, which require just >= 1.34 — newer
         # than distro apt packages ship. install-action fetches this pinned release
         # from its checksum manifest, with no GitHub releases-API lookup.
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: just@1.59.0
           fallback: none
@@ -132,7 +132,7 @@ jobs:
           version: "0.13.6"
 
       - name: Install just
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: just@1.59.0
           fallback: none
@@ -285,7 +285,7 @@ jobs:
           version: "0.11.32"
 
       - name: Install just
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: just@1.59.0
           fallback: none
@@ -309,7 +309,7 @@ jobs:
           version: "0.11.32"
 
       - name: Install just
-        uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2.88.0
+        uses: taiki-e/install-action@b80e2bb2635f28eb98b9fce1e2f0887e1535c6b2 # v2.90.0
         with:
           tool: just@1.59.0
           fallback: none
