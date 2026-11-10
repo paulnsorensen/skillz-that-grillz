@@ -11,7 +11,7 @@ Source: reconstructed from the run-observability task brief (2026-11-07), with e
 | AC-5 | test | WHEN the pack changes THE SYSTEM SHALL keep one `run-analytics.md` section per query, each with a `{RUN_JSON}` placeholder and no statement that writes |  |
 | AC-6 | test | WHEN a user runs `skillz-experiment watch <out>` from the source package or the bundled archive THE SYSTEM SHALL listen on 127.0.0.1 only, print a private capability URL as the first stdout line, exit 0 on an interrupt, and stop with a coded error for a port outside 0 to 65535 or a port in use |  |
 | AC-7 | test | WHEN the runner writes or rewrites `<out>/run.json` while `watch` runs THE SYSTEM SHALL serve, without a restart, the phase, calls and accumulated call seconds separate from the wall-clock budget, each role, the leaderboard, each case with its criteria and judge reasons, the reflections, and the newest outcomes |  |
-| AC-8 | test | WHEN a client calls the `watch` server THE SYSTEM SHALL answer only GET requests for the page, its script, its style, its two bundled PNG images, and `/api/run`, only for a Host header of its own loopback address, and require the printed private capability for run data, with a same-origin content security policy, without a transcript or candidate file in the data, and without a write under `<out>` |  |
+| AC-8 | test | WHEN a client calls the `watch` server THE SYSTEM SHALL answer only GET requests for the page, its script, its bundled styles, its Inter font, its two bundled PNG images, and `/api/run`, only for a Host header of its own loopback address, and require the printed private capability for run data, with a same-origin content security policy, without a transcript or candidate file in the data, and without a write under `<out>` |  |
 | AC-9 | test | WHEN `run.json` is absent, is not JSON, is a symlink, or holds malformed fields THE SYSTEM SHALL report the waiting or error state, or leave out the malformed parts, and SHALL show the record again once it is valid. Retained tables SHALL have a persistent stale-data warning after a failed refresh |  |
 
 ## Accounting and private access
@@ -46,6 +46,14 @@ Read errors, missing records, missing capabilities, and connection failures acti
 A valid response clears it before the unchanged-timestamp shortcut.
 Before any successful record, the notice stays hidden because no retained data exists.
 
+The user approves locally bundled Bulma 1.0.4 and Inter variable 5.3.0 for the minimalist appearance.
+Pico is not selected because its official maintenance page reports archival and no future releases.
+Only `font-src 'self'` extends the content security policy. External resources remain blocked.
+The CSS and Latin variable font use exact allowlisted routes. Bundled licenses and SHA-256 values record their provenance.[^7]
+
+The watcher header uses only the official favicon beside the title and status.
+The user excludes the README hero image from the page.[^8]
+
 Tables keep readable column widths and scroll inside their sections on mobile.
 [PR 691 browser evidence](../evidence/pr-691/README.md) records screenshot review and measured light and dark contrast.
 
@@ -57,4 +65,8 @@ Tables keep readable column widths and scroll inside their sections on mobile.
 
 [^6]: packages/skillz/src/skillz_experiments/run/_wedge_targets.py:144-174,450-485; packages/skillz/src/skillz_experiments/run/_wedge_fit.py:107-158; criteria/skillz-wedge-first-class.md:7,11,17.
 
-_Source: PR #691 review and approved branding and stale-data behavior · Updated: 2026-11-09_
+[^7]: packages/skillz/src/skillz_experiments/run/_assets/VENDOR.md; packages/skillz/src/skillz_experiments/run/_watch.py:25-30,96-99; https://picocss.com/docs/maintenance
+
+[^8]: User instruction, 2026-11-10: “use the favicon, not the hero part in the README”; packages/skillz/src/skillz_experiments/run/_watch_page.py:14-20; packages/skillz/tests/skillz_experiments/test_watch.py:168-169,238-239.
+
+_Source: PR #691 review and approved local styling, branding, and stale-data behavior · Updated: 2026-11-10_

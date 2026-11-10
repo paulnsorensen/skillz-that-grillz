@@ -164,7 +164,9 @@ def test_watch_serves_only_its_own_paths_to_its_own_host(watcher: Watcher) -> No
     page = watcher.get("/")
     assert page.status == 200 and '<script src="/app.js"></script>' in page.body
     assert '<link rel="icon" type="image/png" href="/favicon.png">' in page.body
-    assert '<img class="brand-art" src="/brand.png"' in page.body
+    assert '<link rel="stylesheet" href="/bulma.min.css">' in page.body
+    assert '<img src="/favicon.png" alt="" width="32" height="32">' in page.body
+    assert '/brand.png' not in page.body
     assert '<p id="stale" role="status" hidden>Stale data. Latest update unavailable.</p>' in page.body
     assets = Path(__file__).resolve().parents[2] / "src/skillz_experiments/run/_assets"
     for route, name, dimensions in (("/favicon.png", "favicon.png", (128, 128)),
@@ -174,13 +176,26 @@ def test_watch_serves_only_its_own_paths_to_its_own_host(watcher: Watcher) -> No
         assert body[:8] == b"\x89PNG\r\n\x1a\n"
         assert struct.unpack(">II", body[16:24]) == dimensions
         assert len(body) <= 200 * 1024
-    assert "script-src 'self'" in page.headers["content-security-policy"] and page.headers["cache-control"] == "no-store"
+    policy = page.headers["content-security-policy"]
+    assert "script-src 'self'" in policy and "font-src 'self'" in policy
+    assert "https:" not in policy and "data:" not in policy and page.headers["cache-control"] == "no-store"
+    bulma = watcher.get("/bulma.min.css")
+    assert (bulma.status, bulma.headers["content-type"]) == (200, "text/css; charset=utf-8")
+    assert bulma.body == (assets / "bulma.min.css").read_text()
+    assert "bulma.io v1.0.4" in bulma.body and "@import" not in bulma.body
+    font_status, font_headers, font = watcher.get_raw("/inter-latin-wght-normal.woff2")
+    assert (font_status, font_headers["content-type"], font[:4]) == (200, "font/woff2", b"wOF2")
+    assert font == (assets / "inter-latin-wght-normal.woff2").read_bytes()
+    assert len(font) > 10000
     assert "textContent" in watcher.get("/app.js").body and "innerHTML" not in watcher.get("/app.js").body
     style = watcher.get("/app.css")
     assert style.headers["content-type"] == "text/css; charset=utf-8"
     assert "#stale { position: sticky;" in style.body and "z-index: 2;" in style.body
+    assert 'url("/inter-latin-wght-normal.woff2") format("woff2")' in style.body
+    assert "font-variant-numeric: tabular-nums" in style.body
     assert PRIVATE not in watcher.get("/api/run").body and WINNER not in watcher.get("/api/run").body
-    assert [watcher.get(path).status for path in ("/run.json", "/cases.json", "/../run.json", "/api")] == [404] * 4
+    assert [watcher.get(path).status for path in ("/run.json", "/cases.json", "/../run.json", "/api",
+                                                     "/_assets/LICENSE", "/inter-cyrillic-wght-normal.woff2")] == [404] * 6
     assert watcher.get("/api/run", host="evil.example").status == 403
     assert watcher.get("/api/run", host=f"localhost:{watcher.port}").status == 200
     assert watcher.get("/api/run", authorized=False).status == 403
@@ -220,9 +235,17 @@ def test_the_bundled_archive_serves_the_watch_page(tmp_path: Path) -> None:
         page = started.get("/")
         assert page.status == 200
         assert '<link rel="icon" type="image/png" href="/favicon.png">' in page.body
-        assert '<img class="brand-art" src="/brand.png"' in page.body
+        assert '<img src="/favicon.png" alt="" width="32" height="32">' in page.body
+        assert '/brand.png' not in page.body
         assert '<p id="stale" role="status" hidden>Stale data. Latest update unavailable.</p>' in page.body
+        assert '<link rel="stylesheet" href="/bulma.min.css">' in page.body
+        bulma = started.get("/bulma.min.css")
+        assert (bulma.status, bulma.headers["content-type"]) == (200, "text/css; charset=utf-8")
+        font_status, font_headers, font = started.get_raw("/inter-latin-wght-normal.woff2")
+        assert (font_status, font_headers["content-type"], font[:4]) == (200, "font/woff2", b"wOF2")
         assets = Path(__file__).resolve().parents[2] / "src/skillz_experiments/run/_assets"
+        assert bulma.body == (assets / "bulma.min.css").read_text()
+        assert font == (assets / "inter-latin-wght-normal.woff2").read_bytes()
         for route, name, dimensions in (("/favicon.png", "favicon.png", (128, 128)),
                                         ("/brand.png", "brand.png", (560, 305))):
             status, headers, body = started.get_raw(route)

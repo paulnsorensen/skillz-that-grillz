@@ -7,6 +7,7 @@ PAGE = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Autoimprove run · skillz-that-grillz</title>
 <link rel="icon" type="image/png" href="/favicon.png">
+<link rel="stylesheet" href="/bulma.min.css">
 <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -16,7 +17,6 @@ PAGE = """<!doctype html>
     <h1>Autoimprove run</h1>
     <p id="state" role="status">Loading...</p>
   </div>
-  <img class="brand-art" src="/brand.png" alt="Grilled-cheese illustration and skillz-that-grillz wordmark" width="1000" height="545">
 </header>
 <p id="stale" role="status" hidden>Stale data. Latest update unavailable.</p>
 <main>
@@ -48,16 +48,16 @@ function el(tag, attributes, ...children) {
 const num = (value, digits = 0) => (value === null || value === undefined ? "-" : Number(value).toFixed(digits));
 const text = (value) => (value === null || value === undefined || value === "" ? "-" : String(value));
 
-function table(headers, rows) {
+function table(headers, rows, kind = "") {
   if (!rows.length) return el("p", {class: "empty"}, "No data yet.");
-  return el("div", {class: "table-scroll"}, el("table", {},
+  return el("div", {class: "table-scroll"}, el("table", {class: `table is-fullwidth ${kind}`},
     el("thead", {}, el("tr", {}, headers.map((h) => el("th", {}, h)))), el("tbody", {}, rows)));
 }
 
 const row = (cells, attributes) => el("tr", attributes, cells.map((cell) => el("td", {}, cell)));
 
 function meter(label, value, cap) {
-  const bar = el("progress", {max: cap || 1, value: Math.min(value || 0, cap || 1)});
+  const bar = el("progress", {class: "progress is-small", max: cap || 1, value: Math.min(value || 0, cap || 1)});
   return el("div", {class: "meter"}, el("span", {}, `${label}: ${num(value)} / ${num(cap)}`), bar);
 }
 
@@ -76,18 +76,19 @@ function status(s) {
     el("div", {class: "meter"}, el("span", {}, `Accumulated call seconds: ${num(s.seconds)}. Wall-clock budget: ${num(s.seconds_cap)} s.`))),
     el("p", {}, `Model ${text(s.model)}. Search stop: ${text(s.stop_trigger)} (${text(s.search_reason)}). Gate: ${gate}.`),
     el("h3", {}, "Validation comparisons"),
-    table(["Challenger", "Incumbent", "Verdict", "Delta", "SE"], comparisons)];
+    table(["Challenger", "Incumbent", "Verdict", "Delta", "SE"], comparisons, "comparison-table")];
 }
 
 function roles(items) {
   return table(["Role", "Calls", "Seconds", "Outcomes", "Input tokens", "Cached", "Output tokens", "Mean latency s"],
     items.map((r) => row([r.role, num(r.calls), num(r.seconds, 1), r.outcomes, num(r.input_tokens), num(r.cached_input_tokens),
-      num(r.output_tokens), num(r.mean_latency, 1)])));
+      num(r.output_tokens), num(r.mean_latency, 1)])), "roles-table");
 }
 
 function leaderboard(items) {
   return table(["Split", "Arm", "Candidate", "Cases", "Runs", "Scored", "Mean score", "Zero runs"],
-    items.map((r) => row([r.split, r.arm, r.candidate, r.cases, r.runs, r.scored, num(r.mean, 3), r.zero_runs])));
+    items.map((r) => row([r.split, r.arm, r.candidate, r.cases, r.runs, r.scored, num(r.mean, 3), r.zero_runs])),
+    "leaderboard-table");
 }
 
 function criteria(items, aggregated) {
@@ -95,7 +96,8 @@ function criteria(items, aggregated) {
     : ["Criterion", "Level", "Met", "Judge reason"];
   return table(headers, items.map((c) => row(aggregated
     ? [c.id, `${c.unmet} / ${c.runs}`, num(c.lowest_level), text(c.reason)]
-    : [c.id, num(c.level), c.met ? "yes" : "no", text(c.reason)], {class: (aggregated ? c.unmet : !c.met) ? "unmet" : ""})));
+    : [c.id, num(c.level), c.met ? "yes" : "no", text(c.reason)], {class: (aggregated ? c.unmet : !c.met) ? "unmet" : ""})),
+    "criteria-table");
 }
 
 function cases(items) {
@@ -175,68 +177,88 @@ async function poll() {
 poll();
 """
 
-STYLE = """:root {
-  color-scheme: light dark;
-  --page: #faf6ed; --card: #fffdf8; --ink: #2c261e; --muted: #665b4a;
-  --line: #dacdb6; --accent: #a95e09; --accent-soft: #fff0d0;
-  --bad: #fff0e9; --zero: #a83824; --focus: #a95e09;
+STYLE = """@font-face {
+  font-family: Inter;
+  src: url("/inter-latin-wght-normal.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root {
+  color-scheme: light;
+  --page: #f6f8fb; --surface: #fff; --ink: #172033; --muted: #556179;
+  --line: #dbe1ea; --accent: #2459a6; --tint: #edf3fc; --bad: #fff0ea;
+  --zero: #a63822; --focus: #2459a6;
+  --bulma-body-background-color: var(--page);
+  --bulma-text: var(--ink);
+  --bulma-table-background-color: var(--surface);
+  --bulma-table-color: var(--ink);
+  --bulma-table-cell-border-color: var(--line);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --page: #171a1b; --card: #222629; --ink: #f4ede1; --muted: #c7baa5;
-    --line: #474744; --accent: #ffca70; --accent-soft: #3b3325;
-    --bad: #402b28; --zero: #ffab96; --focus: #ffca70;
+    color-scheme: dark;
+    --page: #101722; --surface: #1a2432; --ink: #eaf0f8; --muted: #b5c1d3;
+    --line: #354358; --accent: #94bcff; --tint: #24354d; --bad: #3b2929;
+    --zero: #ffae9a; --focus: #94bcff;
   }
 }
-* { box-sizing: border-box; }
 html { background: var(--page); color: var(--ink); }
-body { font: 15px/1.5 system-ui, sans-serif; margin: 0 auto; max-width: 1240px; padding: 20px 20px 48px; }
-.masthead { display: flex; align-items: center; justify-content: space-between; gap: 24px;
-  min-width: 0; padding: 16px 20px; border: 1px solid var(--line); border-radius: 16px;
-  background: var(--card); box-shadow: 0 8px 28px #35250e12; }
+body { max-width: 1280px; margin: 0 auto; padding: 28px 24px 64px;
+  background: var(--page); color: var(--ink);
+  font: 15px/1.55 Inter, system-ui, sans-serif; }
+.masthead { display: flex; align-items: center; justify-content: space-between; gap: 32px;
+  min-width: 0; padding: 24px 28px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--surface); }
 .masthead-copy { min-width: 0; }
-.brand { display: flex; align-items: center; gap: 10px; color: var(--accent); font-weight: 750;
-  letter-spacing: .02em; }
-.brand img { width: 32px; height: 32px; border-radius: 8px; }
-h1 { font-size: clamp(1.45rem, 3vw, 2rem); line-height: 1.2; margin: 8px 0 4px; }
-.brand-art { display: block; width: min(32%, 280px); height: auto; max-height: 110px;
-  object-fit: contain; border-radius: 10px; }
+.brand { display: flex; align-items: center; gap: 10px; color: var(--accent);
+  font-size: .85rem; font-weight: 700; letter-spacing: .01em; }
+.brand img { width: 32px; height: 32px; border-radius: 7px; }
+h1 { color: var(--ink); font-size: clamp(1.55rem, 3vw, 2.15rem);
+  font-weight: 750; line-height: 1.2; margin: 12px 0 6px; }
 #state, .meta, .empty { color: var(--muted); overflow-wrap: anywhere; }
 #state { margin: 0; }
-#stale { position: sticky; top: 8px; z-index: 2; margin: 12px 0 0; padding: 8px 12px;
-  border: 1px solid var(--zero); border-radius: 8px; background: var(--bad); color: var(--ink);
+#stale { position: sticky; top: 8px; z-index: 2; margin: 12px 0 0; padding: 10px 14px;
+  border: 1px solid var(--zero); border-radius: 7px; background: var(--bad); color: var(--ink);
   font-weight: 700; overflow-wrap: anywhere; }
-main { display: grid; gap: 16px; margin-top: 16px; min-width: 0; }
-section { min-width: 0; padding: 18px 20px; border: 1px solid var(--line);
-  border-radius: 14px; background: var(--card); }
-h2 { color: var(--accent); font-size: 1.1rem; margin: 0 0 14px; }
-h3 { font-size: 1rem; margin: 16px 0 8px; }
+main { display: grid; gap: 18px; margin-top: 18px; min-width: 0; }
+section { min-width: 0; padding: 22px 26px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--surface); }
+h2 { color: var(--ink); font-size: 1.05rem; font-weight: 750; margin: 0 0 16px; }
+h3 { color: var(--ink); font-size: .95rem; font-weight: 700; margin: 20px 0 10px; }
 p { overflow-wrap: anywhere; }
 .table-scroll { max-width: 100%; overflow-x: auto; }
-table { border-collapse: collapse; table-layout: fixed; width: 100%; min-width: 760px; margin: 8px 0; }
-table:has(th:nth-child(8)) { min-width: 1120px; }
-table:has(th:nth-child(4):last-child) th:nth-child(1) { width: 20%; }
-table:has(th:nth-child(4):last-child) th:nth-child(2) { width: 18%; }
-table:has(th:nth-child(4):last-child) th:nth-child(3) { width: 17%; }
-th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
-th { background: var(--accent-soft); color: var(--ink); font-weight: 700; overflow-wrap: normal; }
-td { overflow-wrap: anywhere; }
-tbody tr:hover td { background: var(--accent-soft); }
-tr.unmet td, tr.unmet:hover td { background: var(--bad); }
-details { border-top: 1px solid var(--line); padding: 4px 0; }
+.table { min-width: 760px; table-layout: fixed; margin: 8px 0 0;
+  background: var(--surface); color: var(--ink); }
+.table th, .table td { padding: 10px 12px; border-color: var(--line);
+  vertical-align: top; line-height: 1.45; }
+.table th { color: var(--muted); background: var(--tint);
+  font-size: .76rem; font-weight: 750; letter-spacing: .025em; }
+.table td { color: var(--ink); overflow-wrap: anywhere; }
+.table tbody tr:hover td { background: var(--tint); }
+.table tr.unmet td, .table tr.unmet:hover td { background: var(--bad); }
+.roles-table, .leaderboard-table { min-width: 1080px; }
+.criteria-table th:nth-child(1) { width: 20%; }
+.criteria-table th:nth-child(2) { width: 18%; }
+.criteria-table th:nth-child(3) { width: 17%; }
+.roles-table :is(th, td):nth-child(n+2),
+.leaderboard-table :is(th, td):nth-child(n+4),
+.comparison-table :is(th, td):nth-child(n+4),
+.criteria-table :is(th, td):nth-child(2) {
+  text-align: right; font-variant-numeric: tabular-nums; }
+details { border-top: 1px solid var(--line); padding: 5px 0; }
 details.zero > summary { color: var(--zero); font-weight: 700; }
-summary { cursor: pointer; padding: 8px 6px; border-radius: 6px; overflow-wrap: anywhere; }
-summary:hover { background: var(--accent-soft); }
+summary { cursor: pointer; padding: 9px 6px; border-radius: 5px; overflow-wrap: anywhere; }
+summary:hover { background: var(--tint); }
 summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
-.meters { display: flex; flex-wrap: wrap; gap: 16px; }
-.meter { display: flex; flex-direction: column; gap: 4px; min-width: min(240px, 100%); }
-progress { width: 100%; accent-color: var(--accent); }
-li { margin-bottom: 12px; overflow-wrap: anywhere; }
-li p { margin: 2px 0; }
+.meters { display: flex; flex-wrap: wrap; gap: 20px; }
+.meter { display: flex; flex-direction: column; gap: 6px; min-width: min(240px, 100%); }
+.progress { width: 100%; accent-color: var(--accent); }
+li { margin-bottom: 14px; overflow-wrap: anywhere; }
+li p { margin: 3px 0; }
 @media (max-width: 600px) {
-  body { padding: 12px 12px 32px; }
-  .masthead { display: block; padding: 14px; }
-  .brand-art { width: min(100%, 250px); max-height: 72px; margin-top: 12px; }
-  section { padding: 14px; }
+  body { padding: 12px 12px 36px; }
+  .masthead { display: block; padding: 18px; }
+  section { padding: 17px; }
 }
 """

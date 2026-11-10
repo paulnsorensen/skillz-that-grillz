@@ -142,4 +142,70 @@ The original artwork files remain unchanged. The rebuilt archive measures 18,729
 
 [^1]: packages/skillz/tests/skillz_experiments/test_watch.py:169-176,225-232; packages/skillz/src/skillz_experiments/_candidate.py:21; local rebuilt archive measurement, 2026-11-09.
 
-_Source: PR #691 T3 browser checks and screenshot review · Updated: 2026-11-09 · Supersedes: the 18-capture final-source claim and header-only error presentation · 2026-11-08_
+## Minimalist local styling
+
+Captures 32–43 supersede the warm appearance in captures 19–31.
+Captures 44–47 supersede their headers: the final header uses the favicon, not the README hero image.
+The parent visually reviews all 12 new PNGs.
+Bulma 1.0.4 and Inter variable 5.3.0 load from the watcher, not a CDN.[^2]
+The real source CLI and rebuilt archive serve the same synthetic fixture.
+
+| PNG | Observable result |
+| --- | --- |
+| [32-modern-private-link](32-modern-private-link.png) | The private-link landing page uses the new local font and branding. |
+| [33-modern-desktop-overview](33-modern-desktop-overview.png) | Light desktop status and right-aligned numeric role columns. |
+| [34-modern-light-cases](34-modern-light-cases.png) | Expanded cases, unmet criteria, and long literal judge reasons. |
+| [35-modern-dark-cases](35-modern-dark-cases.png) | Dark expanded cases retain readable failure contrast. |
+| [36-modern-dark-reflections-outcomes](36-modern-dark-reflections-outcomes.png) | Dark accepted and rejected reflections, budget flag, and expanded outcomes. |
+| [37-modern-dark-mobile-overview](37-modern-dark-mobile-overview.png) | Dark mobile branding and status fit the viewport. |
+| [38-modern-light-mobile-tables](38-modern-light-mobile-tables.png) | Light mobile roles and leaderboard scroll within their cards. |
+| [39-modern-light-mobile-stale](39-modern-light-mobile-stale.png) | The light stale warning remains above retained, horizontally scrolled role columns. |
+| [40-modern-dark-mobile-stale-reasons](40-modern-dark-mobile-stale-reasons.png) | The dark stale warning remains above expanded cases and complete judge reasons. |
+| [41-modern-light-mobile-recovered](41-modern-light-mobile-recovered.png) | A valid rewrite clears the stale warning and restores the light mobile overview. |
+| [42-modern-archive-mobile](42-modern-archive-mobile.png) | The rebuilt archive loads local Inter and branding at mobile width. |
+| [43-modern-archive-desktop-dark](43-modern-archive-desktop-dark.png) | The rebuilt archive renders the dark desktop status and roles. |
+
+### Styling measurements before the favicon-only correction
+
+- The browser loads one Inter variable face with status `loaded` through `document.fonts.load`.
+- The old implementation loads zero Inter faces and returns 404 for both new resource paths.
+- `document.fonts.check` alone is not sufficient: it reports true when the requested family has no registered face.
+- External resource requests remain zero for the source and rebuilt archive.
+- Missing and incorrect capabilities return 403. The valid capability returns 200 without the private transcript marker.
+- The page contains six role rows and nine disclosures. Literal script-like text creates no inline script.
+- Numeric role columns align right and use tabular numerals.
+- Page scroll width equals its viewport: 1280 desktop and 390 mobile CSS pixels.
+- Mobile table containers are 330 pixels wide; their content scrolls across 760 or 1080 pixels.
+- Both official images load with natural widths of 128 and 560 pixels.
+- Invalid JSON retains six role rows and nine open disclosures.
+- Its stale warning stays at y=8 while the header ends above the viewport at y=-491.75.
+- A valid rewrite hides the warning and retains all nine open disclosures.
+- Dark zero-case text contrast is 8.77:1 against the section surface.
+- The rebuilt archive measures 19,443,221 bytes, below the unchanged 24 MiB ceiling.
+
+### Final favicon-only header
+
+The user excludes the README hero image from the watcher.
+The parent visually reviews these four replacement overviews.[^3]
+
+| PNG | Observable result |
+| --- | --- |
+| [44-favicon-source-desktop-light](44-favicon-source-desktop-light.png) | Source CLI: light desktop header uses the favicon beside the title and status. |
+| [45-favicon-source-mobile-dark](45-favicon-source-mobile-dark.png) | Source CLI: dark mobile header fits without the hero image. |
+| [46-favicon-archive-mobile-dark](46-favicon-archive-mobile-dark.png) | Rebuilt archive: dark mobile header uses only the favicon. |
+| [47-favicon-archive-desktop-light](47-favicon-archive-desktop-light.png) | Rebuilt archive: light desktop layout matches the source page. |
+
+The source and rebuilt archive render one image: `/favicon.png`, natural width 128 and displayed width 32.
+Neither page requests `/brand.png`. Both load Inter and make zero external resource requests.
+The page fits 1280-pixel desktop and 390-pixel mobile viewports.
+Source and archive assertions reject a page that still references the hero.
+The final rebuilt archive measures 19,441,918 bytes, below the unchanged 24 MiB ceiling.
+
+These checks cover Linux and the T3 browser only.
+The earlier functional transition series remains evidence for unchanged rendering behavior, not the current palette.
+
+[^2]: packages/skillz/src/skillz_experiments/run/_assets/VENDOR.md; packages/skillz/tests/skillz_experiments/test_watch.py; T3 browser checks, 2026-11-10.
+
+[^3]: User instruction, 2026-11-10; packages/skillz/src/skillz_experiments/run/_watch_page.py:14-20; packages/skillz/tests/skillz_experiments/test_watch.py:168-169,238-239; real source/archive T3 browser measurements and captures 44–47.
+
+_Source: PR #691 T3 browser checks and screenshot review · Updated: 2026-11-10_

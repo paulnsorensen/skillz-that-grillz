@@ -23,9 +23,11 @@ from skillz_experiments.run._watch_view import view
 HOST = "127.0.0.1"
 # Same-origin assets only, so a judge reason or a hypothesis in the data cannot run as a script.
 POLICY = ("default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; "
-          + "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+          + "font-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 ASSETS = {"/": ("text/html", PAGE), "/app.js": ("text/javascript", SCRIPT), "/app.css": ("text/css", STYLE)}
 IMAGE_ASSETS = {"/favicon.png": "favicon.png", "/brand.png": "brand.png"}
+FILE_ASSETS = {"/bulma.min.css": ("bulma.min.css", "text/css"),
+               "/inter-latin-wght-normal.woff2": ("inter-latin-wght-normal.woff2", "font/woff2")}
 
 
 @final
@@ -91,6 +93,10 @@ class _Handler(BaseHTTPRequestHandler):
         elif path in IMAGE_ASSETS:
             image = files("skillz_experiments.run").joinpath("_assets", IMAGE_ASSETS[path]).read_bytes()
             self._send(200, "image/png", image)
+        elif path in FILE_ASSETS:
+            name, kind = FILE_ASSETS[path]
+            asset = files("skillz_experiments.run").joinpath("_assets", name).read_bytes()
+            self._send(200, kind, asset.decode("utf-8") if kind == "text/css" else asset)
         else:
             self._send(404, "text/plain", "not found\n")
 
