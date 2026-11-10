@@ -48,6 +48,30 @@ def _git(arguments: list[str], cwd: Path, ceiling: Path) -> subprocess.Completed
     return subprocess.run(["git", *arguments], cwd=cwd, env=environment, capture_output=True, text=True, check=False)
 
 
+@pytest.mark.ac("gh-719:AC-1")
+def test_fixture_commit_excludes_runtime_directories(tmp_path: Path, adapter: Codex) -> None:
+    workspace = make_workspace(tmp_path / "task" / "workspace")
+    environment = adapter._environment(workspace)  # pyright: ignore[reportPrivateUsage]
+    for path in (workspace / "f", workspace / "home/cache", workspace / "tmp/cache", Path(environment["TMPDIR"]) / "cache"):
+        _ = path.write_text("fixture\n")
+    for arguments in (["init", "-q", "-b", "main"], ["config", "--global", "user.email", "t@t"],
+                      ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]):
+        _ = subprocess.run(["git", *arguments], cwd=workspace, env=environment, capture_output=True, text=True,
+                           check=True, timeout=10)
+    tracked = subprocess.run(["git", "ls-tree", "-r", "--name-only", "HEAD"], cwd=workspace, env=environment,
+                             capture_output=True, text=True, check=True, timeout=10)
+    assert tracked.stdout.splitlines() == ["f"]
+
+
+@pytest.mark.ac("gh-719:AC-2")
+def test_task_home_excludes_only_runtime_directories(tmp_path: Path, adapter: Codex) -> None:
+    workspace = make_workspace(tmp_path / "task" / "workspace")
+    environment = adapter._environment(workspace)  # pyright: ignore[reportPrivateUsage]
+    home = Path(environment["HOME"])
+    assert (home / ".config/git/ignore").read_text().splitlines() == ["/home/", "/tmp/"]
+    assert not (home / ".config/git/config").exists()
+
+
 @pytest.mark.ac("gh-305:AC-1")
 def test_task_temp_dirs_are_outside_git_discovery(tmp_path: Path, adapter: Codex) -> None:
     workspace = make_workspace(tmp_path / "task" / "workspace")

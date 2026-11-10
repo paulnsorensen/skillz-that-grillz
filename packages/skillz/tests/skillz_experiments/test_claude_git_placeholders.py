@@ -14,7 +14,8 @@ from skillz_experiments._budget import Budget
 from skillz_experiments._candidate import make_workspace
 from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._claude import ClaudeCode
-from skillz_experiments.harness._claude._git import PLACEHOLDERS, RUNTIME
+from skillz_experiments.harness._claude._git import PLACEHOLDERS
+from skillz_experiments.harness._git import RUNTIME
 
 pytestmark = pytest.mark.usefixtures("host_login", "claude_in_process")
 

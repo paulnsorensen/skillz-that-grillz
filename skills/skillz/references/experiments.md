@@ -341,11 +341,13 @@ Each case has these fields:
   A suffix does not clear a hidden part, so store a file such as `.env` under a name without the leading dot.
   The runner writes fixtures verbatim, so the request must tell the task to rename the file.
   When the contract declares a helper, each `task` case must list the contract helper input in `files`.
-  A fixture that rebuilds a Git repository runs under the Claude Code sandbox, and the sandbox has limits:
+  The Claude and Codex harnesses exclude runtime-owned `home/` and `tmp/` through the global Git exclude file in task `HOME`.
+  This keeps runtime files and a `git config --global` identity out of fixture commits.
+  Codex excludes only these directories. Claude also excludes the sandbox placeholders below.
+  The exclude file is global: its patterns also apply in a repository that a fixture creates in a subdirectory.
+  A fixture that rebuilds a Git repository under the Claude Code sandbox has these limits:
   - Claude Code binds `/dev/null` over the workspace root names `.gitconfig`, `.gitmodules`, `.bashrc`, `.bash_profile`, `.zshrc`, `.zprofile`, `.profile`, `.ripgreprc`, `.vscode`, `.idea`, and `.mcp.json`.
     `git add -A` fails on a device entry. The runner lists these names in the global Git exclude file of the task `HOME`, so `git add -A` skips them.
-    The same file hides the runtime-owned `home/` and `tmp/` directories, so the exclude file and a `git config --global` identity stay out of the fixture repository.
-    The exclude file is global: it also hides these root names in a repository that a fixture creates in a subdirectory.
     The runner does not hide `.agents` and `.claude`, so `git add -A` also stages the skill that the runner puts there. Stage each path by name when the commit must hold an exact set.
   - Claude Code binds `.git/config` and `.git/hooks` read-only in each Bash command that starts after the repository exists. The runner cannot lift this.
     `git config user.email` (repository-local) fails with `Device or resource busy` in such a command. It works only in the same Bash command as `git init`.
