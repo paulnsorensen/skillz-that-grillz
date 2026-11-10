@@ -20,7 +20,7 @@ from skillz_experiments._intake import (
     check_helper_input, intake_contract, load_draft, split_cases, too_few,
 )
 from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, fixture_error, fixture_misses, seed_cases, seed_family
-from skillz_experiments.run import DEFAULT_SEED, resolve_statistics, scored_kinds
+from skillz_experiments.run import DEFAULT_SEED, frozen_targets, resolve_statistics, scored_kinds
 
 Finding = dict[str, object]
 FAILURES = (CodedError, ValueError, OSError)
@@ -142,6 +142,10 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
              kinds: Sequence[str] = ()) -> dict[str, object]:
     """Report every problem of the target's eval files and the split that a run would build. Write nothing."""
     findings: list[Finding] = []
+    try:
+        _ = frozen_targets(target, "prose")
+    except FAILURES as error:
+        findings.append(_failure(error, "wedge.toml"))
     contract, status, source = _contract(target, findings)
     journeys = contract.journey_kinds() if contract is not None else ("journey",)
 
