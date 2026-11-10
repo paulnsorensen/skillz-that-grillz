@@ -27,7 +27,8 @@ from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._runtime import (SANDBOX_SECONDS, halve_call_slots, model_call, process, reset_call_slots,
                                          sandboxed)
 from skillz_experiments.harness._check import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, Check, credential_row, failed
-from skillz_experiments.harness._isolation import listening, prepare_git_root, private_task_tmpdir, probe, task_tmpdir
+from skillz_experiments.harness._isolation import listening, private_task_tmpdir, probe, task_tmpdir
+from skillz_experiments.harness._git import prepare_codex_git
 
 _events = parse_events
 MINIMUM_VERSION = (0, 154, 0)
@@ -203,8 +204,7 @@ class Codex:
 
     def _environment(self, workspace: Path) -> dict[str, str]:
         tmpdir = private_task_tmpdir(workspace)
-        prepare_git_root(workspace / ".git")
-        prepare_git_root(tmpdir / ".git")
+        prepare_codex_git(workspace, tmpdir)
         return {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                 "TMPDIR": str(tmpdir), "LANG": "C.UTF-8", "CODEX_HOME": str(self.codex_home)}
 
