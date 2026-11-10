@@ -15,6 +15,7 @@ def write_ignore(home: Path, placeholders: tuple[str, ...] = ()) -> None:
 
 
 def prepare_codex_git(workspace: Path, tmpdir: Path) -> None:
+    """Prepare the Codex Git write roots and the global exclude of the task `HOME` before the sandbox starts."""
     prepare_git_root(workspace / ".git")
     prepare_git_root(tmpdir / ".git")
     write_ignore(workspace / "home")

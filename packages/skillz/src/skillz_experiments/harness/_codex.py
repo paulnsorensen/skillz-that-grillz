@@ -27,8 +27,8 @@ from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._runtime import (SANDBOX_SECONDS, halve_call_slots, model_call, process, reset_call_slots,
                                          sandboxed)
 from skillz_experiments.harness._check import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, Check, credential_row, failed
-from skillz_experiments.harness._isolation import listening, private_task_tmpdir, probe, task_tmpdir
 from skillz_experiments.harness._git import prepare_codex_git
+from skillz_experiments.harness._isolation import listening, private_task_tmpdir, probe, task_tmpdir
 
 _events = parse_events
 MINIMUM_VERSION = (0, 154, 0)
