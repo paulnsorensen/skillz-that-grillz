@@ -171,3 +171,20 @@ def test_a_prose_cli_run_on_the_same_copy_stops_with_a_clear_code(
     _, stopped = _stop_errors(_staged(tmp_path), tmp_path, capsys, "prose+cli")
     assert stopped["code"] == "helper-frozen"
     assert "--edit prose" in str(stopped["error"])
+
+
+@pytest.mark.ac("gh-695:AC-1")
+@pytest.mark.parametrize("config", [
+    # The shape of a skill whose shared parent wedge.toml supplies source, include, project, and groups.
+    '[[target]]\nname = "skillz-experiment"\nentry = "skillz_experiments._cli:main"\nsource_paths = ["_cli.py"]\n',
+    # The shipped file, whose source and project paths leave the skill directory.
+    None,
+])
+def test_a_prose_journey_run_on_a_copy_with_a_wedge_toml_that_does_not_resolve_reaches_the_budget_stop(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str], config: str | None) -> None:
+    target = _staged(tmp_path)
+    _ = (target / "wedge.toml").write_text(config if config is not None else (SKILL / "wedge.toml").read_text())
+    (target / "scripts").mkdir(exist_ok=True)
+    for name in ("skillz-experiment", "inspect-skill", "wedge", "agent-session-analytics"):
+        _ = (target / f"scripts/{name}.pyz").write_bytes(b"PK\x05\x06" + bytes(18))
+    assert _stops(target, tmp_path, capsys, "prose") == ("cases-unapproved", "budget-unapproved")

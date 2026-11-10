@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast, final
 
-from skillz_experiments._budget import SEARCH_ROLES, Budget, BudgetExhausted, CallTimeout
+from skillz_experiments._budget import SEARCH_ROLES, BudgetExhausted, CallTimeout
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
 from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
 from skillz_experiments._contract import parse
@@ -31,7 +31,8 @@ from skillz_experiments.run._replay_phase import run_replay
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import Factory, HarnessName, Provider
 from skillz_experiments.run._stop import Stop, baseline_rejected, check_timeout, preflight_timeout
-from skillz_experiments.run._unspent import search_end, with_unspent
+from skillz_experiments.run._telemetry import Telemetry
+from skillz_experiments.run._unspent import ENGINE_TRIGGERS, budget_trigger, search_end, with_unspent
 from skillz_experiments.search import Edit
 from skillz_experiments.search import journal as build_journal
 from skillz_experiments.search import search as pareto_search
@@ -44,22 +45,6 @@ def _differences(recorded: object, observed: object, name: str = "") -> list[str
         return [line for key in sorted(set(before) | set(after))
                 for line in _differences(before.get(key), after.get(key), f"{name}.{key}" if name else key)]
     return [] if recorded == observed else [f"{name} (recorded {str(cast(object, recorded))[:80]!r}, observed {str(observed)[:80]!r})"]
-
-
-# The `search.stop_trigger` of each engine stop reason. Idle (no new evaluation for `skip_limit` iterations) is not a stall.
-_ENGINE_TRIGGERS: Mapping[str, str] = {"metric-count": "metric-count", "call-share": "call-share", "stall": "stall",
-                                      "idle": "idle"}
-
-
-def _budget_trigger(budget: Budget, timed_out: bool) -> str:
-    """Return the `search.stop_trigger` of a budget stop. The caller has given the reserved gate time back.
-
-    `timed_out` is whether the deadline had passed while the gate time was reserved. When the deadline is still
-    past without the reserve, the global deadline fired; else the search deadline did. Otherwise the call cap fired.
-    """
-    if not timed_out:
-        return "call-cap"
-    return "deadline" if budget.out_of_time() else "search-deadline"
 
 
 @final
@@ -100,7 +85,9 @@ class Session:
                                       built=lambda candidate: self._built(candidate))
         # Opened before the provider: a `Stop` here must not leave a provider, such as a Claude login, unclosed.
         self.rebuilder = self._open_rebuilder()
-        self.provider: Provider = (
+        # Opt-in through the OTLP variables; without them it is a no-op and leaves the provider unwrapped.
+        self.telemetry = Telemetry.from_environment(self.record)
+        self.provider: Provider = self.telemetry.wrap(
             factory(model, self.budget, self.checkpoint) if factory is not None else
             cast(Configuration, configuration).create(model, self.budget, self.checkpoint, out, self.contract.surface,
                                                       self.seed.files))
@@ -156,6 +143,7 @@ class Session:
             except BudgetExhausted:
                 # Past the deadline the replay makes no model call, so the live preflight has nothing to protect.
                 return
+        self.telemetry.phase("preflight")
         recorded = self.record.get("preflight")
         before = self.budget.calls
         try:
@@ -188,7 +176,7 @@ class Session:
         """Score one case. The model call runs outside the lock; the record update runs inside it."""
         self.faults.raise_held()
         try:
-            result = self.provider.evaluate(candidate, case, holdout=holdout, checks=self._checks)
+            result = self.telemetry.evaluate(self.provider, candidate, case, arm, holdout=holdout, checks=self._checks)
         except CodedError as error:
             self.faults.latch(error)
             raise
@@ -249,6 +237,7 @@ class Session:
 
     def headroom(self) -> None:
         """Score the seed on every train case and on each validation repeat. Stop with `cases-too-easy` when a family is saturated."""
+        self.telemetry.phase("cases")
         run_headroom(self, self._searching)
 
     def search(self, earlier: Sequence[Mapping[str, object]] = ()) -> None:
@@ -276,6 +265,7 @@ class Session:
             timed_out = self.budget.out_of_time()
         finally:
             self.budget.reserve_time(0.0)
+        self.telemetry.phase("search")
         files = {name: self.seed.files[name] for name in self.seed.editable}
         train = [case.identifier for case in self.cases_for("train")]
         validation = [case.identifier for case in self.cases_for("validation")]
@@ -300,7 +290,7 @@ class Session:
                                         validation_repeats=VALIDATION_REPEATS)
                 self.faults.raise_held()
                 reason = "converged-stalled" if stopped == "stall" else "validation-mean"
-                trigger = _ENGINE_TRIGGERS[stopped]
+                trigger = ENGINE_TRIGGERS[stopped]
             except BudgetExhausted:
                 self.take_budget_stop()
                 budget_stopped = True
@@ -310,7 +300,7 @@ class Session:
             finally:
                 self.budget.reserve_time(0.0)
         if budget_stopped:
-            trigger = _budget_trigger(self.budget, timed_out)
+            trigger = budget_trigger(self.budget, timed_out)
         winner = self._best_validated()
         if reason == "budget-exhausted-best-validated" and winner.identity == self.seed.identity:
             reason = "budget-exhausted-seed-retained"
@@ -336,6 +326,7 @@ class Session:
             "text_dropped": searching.text_dropped(),
             "journal": build_journal(self.outcomes),
         }
+        self.telemetry.annotate(stop_trigger=trigger, stop_reason=reason, retained_seed=winner.identity == self.seed.identity)
         if time_stop:
             with self.lock:
                 seconds = {role: round(self.budget.seconds_by_role.get(role, 0.0), 3) for role in SEARCH_ROLES}
@@ -345,10 +336,12 @@ class Session:
 
     def gate(self) -> None:
         """Score baseline and winner on the unseen holdout, `repeats` times per case, then record the verdict."""
+        self.telemetry.phase("holdout")
         run_gate(self, self._built)
 
     def replay(self, patches: PatchApplier) -> None:
         """Check that the exported patch reproduces the winner, then score the patched copy once on the holdout."""
+        self.telemetry.phase("replay")
         run_replay(self, self._built, patches)
 
     def finish(self) -> None:

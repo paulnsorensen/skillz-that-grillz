@@ -248,9 +248,18 @@ def login_failed(fix: str) -> CodedError:
 
 
 def check_ancestors(workspace: Path) -> None:
-    """Stop when Claude Code would load a `CLAUDE.md` or `CLAUDE.local.md` from an ancestor of `workspace`."""
+    """Stop when Claude Code would load a `CLAUDE.md` or `CLAUDE.local.md` from an ancestor of `workspace`.
+
+    Also stop when an ancestor holds a `.git` entry of any kind (gh-700). Claude Code takes the nearest such ancestor as
+    the repository of the workspace, and its sandbox then creates git protection entries in that `.git` on the host.
+    A shared `/tmp/.git` above the workspaces grew that way, and it kept the next Claude process on the same root.
+    """
     for directory in workspace.resolve().parents:
         for name in CLAUDE_MEMORY:
             if os.path.lexists(directory / name):
                 raise preflight_leak(f"Claude Code would load {directory / name}, an ancestor of the workspace; "
                                       + "move it out, or set TMPDIR to a directory without one")
+        if os.path.lexists(directory / ".git"):
+            raise preflight_leak(f"Claude Code would take {directory} as the git repository of the workspace and write "
+                                  + f"its sandbox git protections into {directory / '.git'}; remove that entry when no "
+                                  + "repository needs it, or set TMPDIR to a directory without a .git ancestor")

@@ -23,6 +23,24 @@ The runner stops with `case-criteria-invalid` when a `text` is not EARS or an `i
 }
 ```
 
+## Write criteria that the run can show
+
+The judge grades only what it sees. It sees the request, the case files, the final answer, the output files, and the reference.
+A journey judge also sees the brief and the transcript.
+On the `claude` and `codex` harnesses, it also sees the task trace: the task's messages and tool calls with their output, by turn.
+A `command` harness journey has no trace.
+A criterion about work that leaves no trace, no output file, and no reply text cannot pass. As a `must`, it scores the case 0.
+
+The task sandbox has no network. It also limits sub-agents:
+
+- The Codex task role cannot start a sub-agent. The runner sets `features.multi_agent=false`, and a contract `surface` agent stops the run with `contract-surface-unsupported`.
+- The Claude task role has only the `Bash`, `Read`, and `Skill` tools by default. A sub-agent needs the contract `surface` to declare the `Agent` tool in `tools` and the agent files in `agents`, and the run needs `--harness claude`.
+  The runner has no live test of a sub-agent in the sandbox yet.
+
+Do not write a criterion that needs a sub-agent, such as a review round in a fresh agent.
+The exception is a run on the Claude task role whose contract declares that surface.
+Otherwise, grade what the skill can show without one, such as a declared inline fallback and its result.
+
 ## Steps
 
 1. **Convert the source fields.** Turn each `assertions` item, the `expected_output`, and each journey `must`, `must_not`, `questions`, and `final_stop` item into a criterion.

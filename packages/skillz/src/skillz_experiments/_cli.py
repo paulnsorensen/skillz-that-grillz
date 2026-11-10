@@ -282,12 +282,12 @@ def self_test(*, model: str | None = None, preflight_only: bool = False, simulat
         raise ValueError("--metric requires --simulate")
     if simulate:
         return _simulation_report() if metric is None else _simulation_figure(metric)
-    if model is None:
-        raise ValueError("--preflight-only requires --model")
     with _coded():
+        if model is None and harness_config is None:
+            raise CodedError("usage", "--preflight-only needs models for task, reflection, judge; pass --model or a --harness-config with each model")
         configuration = (Configuration.load(harness_config, model) if harness_config is not None
-                         else Configuration.single("claude", model))
-        adapter = configuration.create(model, Budget(max_invocations, max_seconds, reserve=0), lambda: None)
+                         else Configuration.single("claude", cast(str, model)))
+        adapter = configuration.create(model or "", Budget(max_invocations, max_seconds, reserve=0), lambda: None)
         warning: str | None = None
         try:
             result = adapter.preflight()

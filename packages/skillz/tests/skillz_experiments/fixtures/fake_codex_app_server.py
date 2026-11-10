@@ -143,8 +143,11 @@ for line in sys.stdin:
                         "command": f"/bin/bash -lc {json.dumps(command)}", "cwd": cwd,
                         "exitCode": 1 if turns == 1 else 0, "status": "completed", "aggregatedOutput": output}
                 send({"method": "item/completed", "params": {"threadId": thread, "turnId": turn, "item": item}})
+        if mode == "two_messages":
+            first = {"id": f"preface-{turns}", "type": "agentMessage", "text": "contract text"}
+            send({"method": "item/completed", "params": {"threadId": thread, "turnId": turn, "item": first}})
         message = {"id": f"message-{turns}", "type": "agentMessage", "text": (f"Approve {('ab' * 32)}?" if mode.startswith("gate_journey") and turns == 1
-                                                                   else f"turn={turns} previous={previous}")}
+                                                                   else "summary" if mode == "two_messages" else f"turn={turns} previous={previous}")}
         if mode != "no_answer":
             send({"method": "item/completed", "params": {"threadId": thread, "turnId": turn, "item": message,
                                                              "completedAtMs": 1}})

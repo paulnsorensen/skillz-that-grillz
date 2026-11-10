@@ -17,6 +17,8 @@ SOURCES = ("skill", "session")
 FIXTURES = "evals/files/"
 EVAL_FIELDS = ("id", "name", "prompt", "expected_output", "files", "assertions", "kind", "family", "expected_skill")
 _TEXT_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
+TASK_FIXTURE = ("add a starting fixture to the files of its evals/evals.json entry, name the fixture in the entry prompt, "
+                "and copy the new seed case into the draft; the draft cannot change a seed request")
 
 
 @dataclass(frozen=True)
