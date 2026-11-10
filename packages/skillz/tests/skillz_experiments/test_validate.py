@@ -10,7 +10,7 @@ import pytest
 from skillz_experiments._cases import CodedError
 from skillz_experiments._cli import main
 from skillz_experiments._intake import case_hash, load_draft, split_cases, too_few
-from skillz_experiments.run import Stop, run
+from skillz_experiments.run import Stop, frozen_targets, run
 
 Maker = Callable[..., Path]
 REPO = Path(__file__).resolve().parents[4]
@@ -252,3 +252,41 @@ def test_validate_with_an_unknown_kind_reports_it_and_keeps_the_task_checks_stri
     contract = [item for item in findings if item["file"] == "evals/autoimprove.json" and item["severity"] == "error"]
     assert code == 1 and contract and "no-such-kind" in str(contract[0]["message"]), findings
     assert [item["code"] for item in findings if item["code"] == "cases-invalid"] == ["cases-invalid"], findings
+
+
+@pytest.mark.parametrize(("config", "expected_code"), [
+    pytest.param("name = [", "wedge-config-invalid", marks=pytest.mark.ac("gh-718:AC-1"), id="invalid-toml"),
+    pytest.param('name = "../unsafe"\n', "wedge-config-invalid", marks=pytest.mark.ac("gh-718:AC-1"), id="unsafe-name"),
+    pytest.param('name = "echo"\n', "target-not-built", marks=pytest.mark.ac("gh-718:AC-2"), id="missing-archive"),
+])
+def test_validate_reports_frozen_target_errors_before_case_approval(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str], config: str, expected_code: str) -> None:
+    target = make_target(tmp_path)
+    _ = (target / "wedge.toml").write_text(config)
+    with pytest.raises(CodedError) as caught:
+        _ = frozen_targets(target, "prose")
+    assert caught.value.code == expected_code
+    code, report = _report(capsys, "--target", str(target))
+    findings = cast(list[dict[str, object]], report["findings"])
+    found = [item for item in findings if item["code"] == expected_code]
+    assert code == 1 and report["ok"] is False
+    assert found == [{"code": expected_code, "severity": "error", "file": "wedge.toml", "pointer": "",
+                      "message": str(caught.value), "fix": ""}], findings
+    if expected_code == "target-not-built":
+        assert found[0]["message"] == "scripts/echo.pyz is missing; run `wedge bundle` for the skill, then run again"
+
+
+@pytest.mark.ac("gh-718:AC-3")
+@pytest.mark.parametrize("own_config", [False, True])
+def test_validate_ignores_parent_wedge_config_and_leaves_built_targets_unchanged(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str], own_config: bool) -> None:
+    target = make_target(tmp_path)
+    before = _report(capsys, "--target", str(target))
+    _ = (tmp_path / "wedge.toml").write_text("name = [")
+    if own_config:
+        _ = (target / "wedge.toml").write_text('name = "echo"\n')
+        (target / "scripts").mkdir()
+        _ = (target / "scripts/echo.pyz").write_bytes(b"frozen archive")
+    snapshot = {path.relative_to(target): path.read_bytes() for path in target.rglob("*") if path.is_file()}
+    assert _report(capsys, "--target", str(target)) == before
+    assert {path.relative_to(target): path.read_bytes() for path in target.rglob("*") if path.is_file()} == snapshot

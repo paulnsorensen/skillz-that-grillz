@@ -161,6 +161,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-702](./gh-702.md) — gh-702: a Claude surface file tool may write in the workspace only
 - [gh-703](./gh-703.md) — gh-703: a journey fixture can rebuild a Git repository under the Claude Code sandbox
 - [gh-707](./gh-707.md) — gh-707: self-test takes each role model from the role file
+- [gh-718](./gh-718.md) — gh-718: validate checks frozen targets before case approval
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [kit-harder-journeys](./kit-harder-journeys.md) — kit-harder-journeys: harder journeys for the self-autoimprove kit
 - [proposer-cli-early](./proposer-cli-early.md) — proposer-cli-early: the reflection prompt offers @new-cli early and keeps room for its two edits
