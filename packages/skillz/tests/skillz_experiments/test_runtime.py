@@ -15,10 +15,23 @@ from skillz_experiments._budget import BudgetExhausted
 from skillz_experiments._runtime import process
 
 
-def test_deadline_kills_process_group(tmp_path: Path) -> None:
-    script = ("import subprocess,sys,time,pathlib; "
+@pytest.mark.parametrize("startup_delay", [0, 1])
+def test_deadline_kills_process_group(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, startup_delay: float) -> None:
+    script = (f"import subprocess,sys,time,pathlib;time.sleep({startup_delay}); "
               + "child=subprocess.Popen([sys.executable,'-c','import time;time.sleep(30)']); "
-              + "pathlib.Path('descendant.pid').write_text(str(child.pid));time.sleep(30)")
+              + "pathlib.Path('descendant.pid').write_text(str(child.pid));"
+              + "pathlib.Path('ready').touch();time.sleep(30)")
+    real = cast(Callable[..., tuple[str, str]], subprocess.Popen.communicate)
+
+    def after_ready(self: subprocess.Popen[str], *args: object, **kwargs: object) -> tuple[str, str]:
+        # Start the real timeout only after the process group exists.
+        deadline = time.monotonic() + 10
+        while not (tmp_path / "ready").exists() and self.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+        assert (tmp_path / "ready").exists(), "descendant did not start"
+        return real(self, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess.Popen, "communicate", after_ready)
     with pytest.raises(BudgetExhausted, match="terminated"):
         _ = process([sys.executable, "-c", script], cwd=tmp_path,
                     timeout=0.5, environment={"PATH": os.defpath})
