@@ -126,6 +126,23 @@ The scheduler sets `UV_PYTHON_INSTALL_BIN=0` to prevent compiler installation fr
 Existing archive preparation provisions the compiler matrix; the scheduler adds no installation step.
 Tests that deliberately override the compiler root still use their isolated cold roots.[^13]
 
+### Codex sandbox commands and temporary Git markers
+
+Local skillz tests can report `preflight-leak` for `/tmp/.git` during concurrent Codex sandbox commands.
+On this Linux host, a controlled sandbox command exposes a temporary Git marker to host processes.
+The host marker disappears when the sandbox command exits.
+The real Claude ancestor check rejects the marker while present and passes after removal.[^14]
+
+A full quality gate started outside the Codex sandbox still shares this host path.
+Run host verification without concurrent sandbox commands.
+Keep all gate lanes and ancestor checks enabled.
+Changing `TMPDIR` alone does not move the scheduler's fixed `/tmp` test base.
+Do not delete a shared Git entry without ownership evidence.
+
+A private `/tmp` bubblewrap wrapper is not a verified workaround on this host.
+Its nested sandbox cannot create a namespace under the host security policy.
+Do not weaken that policy or replace the real boundary checks.
+
 ## Dependencies and artifact keys
 
 pytest-xdist remains a development dependency in both workspace packages.
@@ -170,4 +187,6 @@ A still-live descendant fails after the observation deadline.[^9]
 [^12]: .github/workflows/pr-title.yml; .github/workflows/validate.yml; .github/scripts/test_pr_title_workflow.py. The user approves this narrow queue exception on 2026-11-01.
 [^13]: .github/scripts/run_gate.py (`_pin_compiler_root`, `main`, `_environment`); .github/scripts/test_run_gate.py; packages/skillz/tests/skillz_experiments/conftest.py:114-138; decisions/wedge-skill-packaging.md (ADR-014).
 
-_Source: Approved parallel-build contract, workspace rebase, local verification, Linux CI finding, and approved queue-title exception · Updated: 2026-11-01 · Supersedes: immediate descendant-state observation_
+[^14]: Local gate investigation, 2026-11-11, PRs #691 and #725. Five controlled sandbox calls accompany six observed marker cycles. All six present states fail the real `check_ancestors`; all six absent states pass. packages/skillz/src/skillz_experiments/harness/_claude/_login.py:250-265.
+
+_Source: Approved parallel-build contract, workspace rebase, local verification, Linux CI finding, approved queue-title exception, and Linux sandbox-marker reproduction · Updated: 2026-11-11 · Supersedes: immediate descendant-state observation_

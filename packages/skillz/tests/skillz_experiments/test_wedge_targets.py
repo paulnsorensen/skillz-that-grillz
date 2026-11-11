@@ -403,19 +403,25 @@ def test_the_rebuilt_pyz_runs_in_the_production_sandbox(
 REAL_SKILL = Path(__file__).resolve().parents[4] / "skills/skillz"
 
 
-def test_the_real_skill_plans_the_inspector_as_the_only_editable_target() -> None:
+def test_the_real_skill_plans_named_text_targets_and_freezes_binary_experiment() -> None:
     contract = load_contract(REAL_SKILL)
     assert contract.helper is not None and contract.helper.path == "scripts/inspect-skill.pyz"
     skeleton = Candidate.capture(REAL_SKILL, [], contract)
     plan = plan_targets(REAL_SKILL, skeleton.files, contract, "prose+cli")
-    assert [target.name for target in plan.editable] == ["inspect-skill"]
-    assert {name.rsplit("/", 1)[-1] for name in plan.sources} >= {"__init__.py", "_cli.py", "_inspect.py"}
-    assert all(name.startswith("@wedge/packages/skillz/src/skillz_inspect/") for name in plan.sources)
+    assert [target.name for target in plan.editable] == ["inspect-skill", "agent-session-analytics"]
+    inspector = "@wedge/packages/skillz/src/skillz_inspect/"
+    analytics = "@wedge/packages/agent-session-analytics/src/agent_session_analytics/"
+    assert {name.rsplit("/", 1)[-1] for name in plan.sources if name.startswith(inspector)} >= {
+        "__init__.py", "_cli.py", "_inspect.py"}
+    assert any(name.startswith(analytics) for name in plan.sources)
+    assert all(name.startswith((inspector, analytics)) for name in plan.sources)
     assert sum(len(text) for text in plan.sources.values()) <= WEDGE_EDIT_LIMIT
     fixed = {name for name in plan.frozen if name.startswith("@wedge/packages/fromargs/")}
     assert fixed and not fixed & set(plan.sources)
-    assert {"scripts/skillz-experiment.pyz", "scripts/inspect-skill.pyz"} <= set(plan.frozen)
-    assert "skillz-experiment" in plan.reasons
+    for name in ("scripts/skillz-experiment.pyz", "scripts/inspect-skill.pyz"):
+        assert plan.frozen[name] == skeleton.frozen[name]
+    assert "binary" in plan.reasons["skillz-experiment"]
+    assert not any(name.startswith("@wedge/packages/skillz/src/skillz_experiments/") for name in plan.sources)
     assert plan.capable is not None
     names = _plan.editable_files(skeleton.files | plan.sources | {NEW_CLI: ""}, contract, "prose+cli", skeleton.frozen.keys(), plan)
     assert set(plan.sources) | {NEW_CLI} <= set(names)
