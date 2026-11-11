@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
@@ -27,6 +29,96 @@ def _report(capsys: pytest.CaptureFixture[str], *arguments: str) -> tuple[int, d
     code = main(["validate", *arguments])
     return code, cast(dict[str, object], json.loads(capsys.readouterr().out))
 
+
+@pytest.mark.ac("gh-721:AC-5")
+def test_plan_without_a_draft_reports_partial_results(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    code = main(["plan", "--target", str(target), "--edit", "prose"])
+    report = cast(dict[str, object], json.loads(capsys.readouterr().out))
+    preview = cast(dict[str, object], report["preview"])
+    assert code == 0 and report["ok"] is True
+    assert preview["estimate"] is None
+    assert preview["editable_files"] == ["SKILL.md"]
+    assert "estimate" in cast(dict[str, object], preview["unavailable"])
+
+
+@pytest.mark.ac("gh-297:AC-1")
+def test_plan_and_validate_default_to_the_run_free_fallback(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    code = main(["plan", "--target", str(target)])
+    report = cast(dict[str, object], json.loads(capsys.readouterr().out))
+    preview = cast(dict[str, object], report["preview"])
+    assert code == 0 and cast(dict[str, object], preview["edit"])["resolved"] == "prose"
+    assert "needs a helper script" in str(cast(dict[str, object], preview["edit"])["fallback_reason"])
+    code, validated = _report(capsys, "--target", str(target))
+    assert code == 0 and "preview" not in validated
+    assert [item["code"] for item in cast(list[dict[str, object]], validated["findings"])] == ["edit-warning"]
+
+
+@pytest.mark.ac("gh-297:AC-2")
+@pytest.mark.ac("gh-297:AC-3")
+@pytest.mark.ac("gh-297:AC-16")
+def test_validate_explicit_prose_is_portable_but_explicit_cli_does_not_fall_back(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    code, prose = _report(capsys, "--target", str(target), "--edit", "prose")
+    assert code == 0 and prose["ok"] is True and "preview" not in prose and prose["findings"] == []
+    code, cli = _report(capsys, "--target", str(target), "--edit", "prose+cli")
+    assert code == 1 and cli["ok"] is False and "preview" not in cli
+    assert [item["code"] for item in cast(list[dict[str, object]], cli["findings"])] == ["helper-missing"]
+
+
+@pytest.mark.ac("gh-297:AC-3")
+def test_invalid_draft_does_not_hide_explicit_cli_failure(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target, draft = make_target(tmp_path), tmp_path / "broken.json"
+    _ = draft.write_text("{")
+    code, report = _report(capsys, "--target", str(target), "--draft", str(draft), "--edit", "prose+cli")
+    assert code == 1 and report["ok"] is False
+    assert {item["code"] for item in cast(list[dict[str, object]], report["findings"])} == {
+        "invalid", "helper-missing"}
+
+
+@pytest.mark.ac("gh-721:AC-6")
+@pytest.mark.ac("gh-721:AC-9")
+@pytest.mark.ac("gh-721:AC-11")
+@pytest.mark.ac("gh-721:AC-12")
+def test_installed_plan_sizes_a_draft_with_offline_configuration(
+        tmp_path: Path, make_target: Maker, write_draft: Callable[[Path], list[str]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    contract_path = target / "evals/autoimprove.json"
+    contract = cast(dict[str, object], json.loads(contract_path.read_text()))
+    contract["kinds"] = {"task": {"grader": "command", "argv": ["/bin/true"]}}
+    _ = contract_path.write_text(json.dumps(contract))
+    ids = write_draft(out)
+    config = tmp_path / "harness.json"
+    _ = config.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": ["absent-executable"],
+                                      "sandbox_seconds": 60}))
+    before = {path.relative_to(target): path.read_bytes() for path in target.rglob("*") if path.is_file()}
+    entrypoint = Path(sys.executable).with_name("skillz-experiment")
+    result = subprocess.run([str(entrypoint), "plan", "--target", str(target), "--draft", str(out / "cases.draft.json"),
+                             "--harness-config", str(config), "--edit", "prose"],
+                            capture_output=True, text=True, check=False, timeout=30)
+    assert result.returncode == 0, result.stderr
+    report = cast(dict[str, object], json.loads(result.stdout))
+    preview = cast(dict[str, object], report["preview"])
+    inputs = cast(dict[str, object], preview["inputs"])
+    assignments = cast(list[dict[str, object]], preview["assignments"])
+    estimate = cast(dict[str, object], preview["estimate"])
+    assert inputs["task_timeout"] == 60 and len(assignments) == len(ids)
+    assert {item["id"] for item in assignments} == set(ids)
+    assert isinstance(estimate["calls"], int) and estimate["calls"] > 0
+    assert isinstance(estimate["sandbox_seconds"], int) and estimate["sandbox_seconds"] > 0
+    default = subprocess.run([str(entrypoint), "plan", "--target", str(target), "--draft", str(out / "cases.draft.json"),
+                              "--edit", "prose"], capture_output=True, text=True, check=False, timeout=30)
+    assert default.returncode == 0, default.stderr
+    default_estimate = cast(dict[str, object], cast(dict[str, object], json.loads(default.stdout)["preview"])["estimate"])
+    assert cast(int, estimate["seconds"]) > cast(int, default_estimate["seconds"])
+    assert preview["editable_files"] == ["SKILL.md"]
+    assert not (out / "cases.json").exists() and not (out / "run.json").exists()
+    assert {path.relative_to(target): path.read_bytes() for path in target.rglob("*") if path.is_file()} == before
 
 @pytest.mark.ac("gh-370:AC-1")
 def test_validate_accepts_the_shipped_skillz_skill_with_a_full_holdout(capsys: pytest.CaptureFixture[str]) -> None:
@@ -266,7 +358,7 @@ def test_validate_reports_frozen_target_errors_before_case_approval(
     with pytest.raises(CodedError) as caught:
         _ = frozen_targets(target, "prose")
     assert caught.value.code == expected_code
-    code, report = _report(capsys, "--target", str(target))
+    code, report = _report(capsys, "--target", str(target), "--edit", "prose")
     findings = cast(list[dict[str, object]], report["findings"])
     found = [item for item in findings if item["code"] == expected_code]
     assert code == 1 and report["ok"] is False
@@ -281,12 +373,12 @@ def test_validate_reports_frozen_target_errors_before_case_approval(
 def test_validate_ignores_parent_wedge_config_and_leaves_built_targets_unchanged(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str], own_config: bool) -> None:
     target = make_target(tmp_path)
-    before = _report(capsys, "--target", str(target))
+    before = _report(capsys, "--target", str(target), "--edit", "prose")
     _ = (tmp_path / "wedge.toml").write_text("name = [")
     if own_config:
         _ = (target / "wedge.toml").write_text('name = "echo"\n')
         (target / "scripts").mkdir()
         _ = (target / "scripts/echo.pyz").write_bytes(b"frozen archive")
     snapshot = {path.relative_to(target): path.read_bytes() for path in target.rglob("*") if path.is_file()}
-    assert _report(capsys, "--target", str(target)) == before
+    assert _report(capsys, "--target", str(target), "--edit", "prose") == before
     assert {path.relative_to(target): path.read_bytes() for path in target.rglob("*") if path.is_file()} == snapshot
