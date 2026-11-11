@@ -28,7 +28,7 @@ Issues = "https://github.com/paulnsorensen/skillz-that-grillz/issues"
 wedge = "wedge:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-timeout>=2.4.0", "pytest-xdist>=3", "basedpyright==1.40.2", "typing-extensions==4.16.0", "hypothesis>=6.170.13"]
+dev = ["pytest>=8", "pytest-timeout>=2.4.0", "pytest-xdist>=3", "basedpyright==1.40.2", "typing-extensions==4.16.0", "hypothesis>=6.170.14"]
 
 [build-system]
 requires = ["hatchling>=1.33.0"]
