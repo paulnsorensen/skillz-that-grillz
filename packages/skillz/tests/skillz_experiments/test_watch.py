@@ -312,6 +312,46 @@ def test_watch_projects_synthetic_run_without_private_data(watcher: Watcher) -> 
     assert cast(list[Json], shown["reflections"])[1]["rejected"] == "budget limit"
 
 
+@pytest.mark.ac("run-observability:AC-2")
+def test_watch_excludes_retryable_holdout_timeouts_from_scores(watcher: Watcher) -> None:
+    outcomes: list[Json] = []
+    for arm in ("baseline", "winner", "replay"):
+        case = f"{arm}-timeout"
+        timeout = _outcome(case, 0.0, arm[0])
+        timeout.update({"split": "holdout", "arm": arm, "repeat": 0, "status": "candidate-contract-rejected",
+                        "rejection_kind": "timeout"})
+        retry = _outcome(case, 0.75, arm[0])
+        retry.update({"split": "holdout", "arm": arm, "repeat": 0})
+        outcomes.extend((timeout, retry))
+    real_zero = _outcome("real-zero", 0.0, "z")
+    real_zero.update({"split": "holdout", "arm": "baseline"})
+    search_timeout = _outcome("search-timeout", 0.0, "s")
+    search_timeout.update({"status": "candidate-contract-rejected", "rejection_kind": "timeout"})
+    ordinary_rejection = _outcome("ordinary-rejection", 0.0, "o")
+    ordinary_rejection.update({"split": "holdout", "arm": "winner", "status": "candidate-contract-rejected",
+                               "rejection_kind": "criteria"})
+    outcomes.extend((real_zero, search_timeout, ordinary_rejection))
+    write(watcher.out / "run.json", _record("complete", outcomes))
+
+    shown = watcher.run()
+    cases = {row["case_id"]: row for row in cast(list[Json], shown["cases"])}
+    board = {(row["split"], row["arm"], row["candidate"]): row
+             for row in cast(list[Json], shown["leaderboard"])}
+    rows = cast(list[Json], shown["outcomes"])
+    assert shown["outcome_count"] == len(outcomes) == len(rows)
+    for arm in ("baseline", "winner", "replay"):
+        case = f"{arm}-timeout"
+        timeout = next(row for row in rows if row["case_id"] == case and row["status"] == "candidate-contract-rejected")
+        retry = next(row for row in rows if row["case_id"] == case and row["status"] is None)
+        assert (timeout["score"], retry["score"]) == (None, 0.75)
+        for summary in (cases[case], board[("holdout", arm, arm[0] * 12)]):
+            assert (summary["runs"], summary["scored"], summary["zero_runs"], summary["mean"]) == (2, 1, 0, 0.75)
+    for case in ("real-zero", "search-timeout", "ordinary-rejection"):
+        assert next(row for row in rows if row["case_id"] == case)["score"] == 0.0
+        assert (cases[case]["runs"], cases[case]["scored"], cases[case]["zero_runs"], cases[case]["mean"]) == (
+            1, 1, 1, 0.0)
+
+
 @pytest.mark.ac("run-observability:AC-9")
 @pytest.mark.parametrize("record", [
     '{"outcomes":[{"case_id":["not","hashable"],"split":"train","score":1}]}',

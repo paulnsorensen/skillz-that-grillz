@@ -9,6 +9,8 @@ from collections.abc import Iterable, Mapping
 from math import isfinite
 from typing import cast
 
+from skillz_experiments.run._outcomes import holdout_unscored, is_failed
+
 # The newest outcomes that the view lists one by one. The cases and the leaderboard count every outcome.
 OUTCOME_ROWS = 200
 SHORT = 12
@@ -118,8 +120,16 @@ def _leaderboard(judged: list[Record]) -> list[dict[str, object]]:
                                          str(row["candidate"])))
 
 
+def _score(outcome: Record) -> float | None:
+    holdout = outcome.get("split") == "holdout" and outcome.get("arm") in ("baseline", "winner", "replay")
+    unscored = holdout_unscored(outcome) if holdout else is_failed(outcome)
+    if unscored:
+        return None
+    return _number(outcome.get("score"))
+
+
 def _scores(row: dict[str, object], items: list[Record]) -> dict[str, object]:
-    scores = [_number(item.get("score")) if item.get("status") != "evaluation-failed" else None for item in items]
+    scores = [_score(item) for item in items]
     return row | {"cases": len({_text(item.get("case_id")) or "?" for item in items}), "runs": len(items),
                   "scored": sum(score is not None for score in scores), "mean": _mean(scores),
                   "zero_runs": sum(score == 0 for score in scores)}
@@ -169,7 +179,7 @@ def _outcome(index: int, outcome: Record) -> dict[str, object]:
     return {"index": index, "case_id": _text(outcome.get("case_id")), "split": _text(outcome.get("split")),
             "arm": _text(outcome.get("arm")), "candidate": _short(outcome.get("search_candidate")) or _short(outcome.get("candidate_hash")),
             "repeat": _number(outcome.get("repeat")),
-            "score": None if outcome.get("status") == "evaluation-failed" else _number(outcome.get("score")),
+            "score": _score(outcome),
             "status": _text(outcome.get("status")), "latency": _number(outcome.get("latency_seconds")),
             "task_tokens": _number(_mapping(outcome.get("task_usage" if "task_usage" in outcome else "usage")).get("input_tokens"))
             if outcome.get("status") != "candidate-contract-rejected" else None,
