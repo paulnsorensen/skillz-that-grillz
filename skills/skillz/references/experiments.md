@@ -930,6 +930,33 @@ The runner rebuilds the observations from the run record, so a resumed run gets 
 A resumed run that already reached a streak of 8 skips the search.
 ADR-016 in `docs/agents/decisions/skillz-autoimprove.md` records the thresholds.
 
+### Validation policy study (#245)
+
+`run --val-policy full` remains the default. It scores every validation case twice during search.
+`run --val-policy subset` scores a fixed seeded half of validation cases, rounded up, twice during search.
+The runner reserves remaining-case calls for each proposal before more search calls.
+After search, it screens proposals in order against the fully validated incumbent's mean on that subset.
+A tie qualifies. A qualifying proposal scores remaining validation cases twice before the existing two-SE promotion check.
+An incomplete proposal cannot win. Planning, estimates, and full headroom remain based on full validation.
+The policy freezes in `run.json`. An explicit changed policy on resume stops with `run-config-differs`.
+
+The controlled `Search` provider runs without paid model calls. The command is
+`TMPDIR=/var/tmp eatmydata uv run pytest -q packages/skillz/tests/skillz_experiments/test_val_policy.py::test_five_seed_policy_measurement`.
+Metric calls count actual `Search` provider calls on train and validation cases, including repeats.
+`S` names the seed identity `9b157e5f3ad5c5d75f733b73999e488fe9e3844940659e4e41d0d73d606422e9`.
+
+| seed | full calls | full winner | subset calls | subset winner | calls saved | agreement |
+| --- | ---: | --- | ---: | --- | ---: | --- |
+| 0 | 86 | S | 62 | S | 24 | yes |
+| 1 | 84 | S | 62 | S | 22 | yes |
+| 2 | 108 | S | 60 | S | 48 | yes |
+| 3 | 95 | S | 68 | S | 27 | yes |
+| 4 | 68 | S | 70 | S | -2 | yes |
+| total | 441 | | 322 | | 119 | 5/5 |
+
+The measured saving is 119/441, or 26.98%. It is below the 30% default-change threshold.
+The default stays `full`; C8 is the next candidate to study, not part of this change.
+
 ### Exploration
 
 From a streak of 5, before the stop at 8, the runner picks a focus component for the next proposal.

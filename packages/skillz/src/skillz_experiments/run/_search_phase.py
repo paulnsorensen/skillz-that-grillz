@@ -17,7 +17,7 @@ from skillz_experiments.run._outcomes import (
     case_ids, fault_reason, failed_outcome, is_failed, is_unscored, mean_tokens, reflection_fault, repeat_feedback,
     search_fault, stall_observations,
 )
-from skillz_experiments.run._record_fields import field, int_field
+from skillz_experiments.run._record_fields import field, int_field, recorded_rejections
 from skillz_experiments.run._reflections import ReflectionLog
 from skillz_experiments.run._state import RunState
 from skillz_experiments.search import FOCUS_REASON, HYPOTHESIS, NOTES, Denylist, Edit, Progress, Signal, assess
@@ -33,17 +33,6 @@ from skillz_experiments.search import rejected as rejected_memory
 from skillz_experiments.search import request as reflection_request
 
 LEAKAGE_REJECTED = "candidate-leakage-rejected"
-
-
-def recorded_rejections(record: dict[str, object]) -> dict[str, set[str]]:
-    """Load the rejected proposal digests per rule from the record. They hold no case text."""
-    recorded = mapping(record.get("leakage_rejected", {}))
-    found: dict[str, set[str]] = {}
-    for rule, keys in recorded.items():
-        if not isinstance(keys, list) or not all(isinstance(key, str) for key in cast(list[object], keys)):
-            raise ValueError("run record field leakage_rejected must map rules to lists of text")
-        found[rule] = set(cast(list[str], keys))
-    return found
 
 
 @final
@@ -70,7 +59,6 @@ class SearchPhase:
         self._reusable: dict[tuple[str, str, str, object], list[dict[str, object]]] = {}
         # The built identity of each admitted component map, by its digest. `cheaper` reads it.
         self._identities: dict[str, str] = {}
-        # The live search evaluations of the running search. Reused outcomes do not count.
         self._live = 0
         # The count of recorded search evaluations when this session started its search. The fault rule counts after it.
         self.fault_base = 0
@@ -221,7 +209,8 @@ class SearchPhase:
         with state.lock:
             self._identities[digest(components)] = candidate.identity
         results = [self._run(candidate, case, repeat) for repeat in repeat_indices(case.split)]
-        Leaderboard(state).keep_if_best(candidate, case)
+        if state.record.get("val_policy", "full") != "subset":
+            Leaderboard(state).keep_if_best(candidate, case)
         score, feedback = repeat_feedback(results, case, self._denylist.harness, candidate)
         return score, feedback if is_unscored(feedback) else feedback | self._token_fields(case, results)
 
@@ -404,10 +393,8 @@ class SearchPhase:
         try:
             admitted = self._admit(proposal)
         except Exception as error:
-            # GEPA catches every proposer exception, retries once, and then skips the proposal. The latch ends the run at the next fault check.
             fault = CodedError("proposal-build-failed", f"the proposal build failed: {error}; fix the cause in that error, then resume")
             with state.lock:
-                # The stall signal reads this proposal as unknown, because its candidate never got a score.
                 outcome["status"] = "proposal-build-failed"
                 outcome["rejected"] = "proposal-build-failed"
                 outcome["rejected_coded"] = True
@@ -417,6 +404,8 @@ class SearchPhase:
         with state.lock:
             if isinstance(admitted, Candidate):
                 outcome["proposed"] = admitted.identity
+                if state.record.get("val_policy", "full") == "subset":
+                    outcome["components"] = proposal
             else:
                 outcome["rejected"] = str(admitted.get("reason") or admitted["rejected"])
                 outcome["rejected_coded"] = admitted.get("reason") is not None

@@ -49,6 +49,7 @@ from skillz_experiments.run._plan import scored_kinds
 from skillz_experiments.run._sizing import Sizer, raised_cap
 from skillz_experiments.run._resume import (
     check_resume,
+    check_val_policy,
     check_statistics,
     frozen_statistics,
     open_lock,
@@ -77,13 +78,11 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
              approve_cases: str | None, approve_budget: int | None, *, resolve_harness: bool = False,
              options: ClaudeOptions, configuration: Configuration | None = None,
              statistics_given: Mapping[str, float] | None = None, judge_model: str | None,
-             repeats_given: bool = True, history: bool = True, requested_kinds: Sequence[str] = ()) -> Statistics:
+             repeats_given: bool = True, history: bool = True, requested_kinds: Sequence[str] = (),
+             val_policy: str = "full") -> Statistics:
     """Run the two approvals and write the prepared record. No model call happens here.
 
-    The case approval covers the resolved statistics, so a changed or dropped flag stops at the case approval.
-
-    A fresh run with a built-in harness first runs the free host checks, so a host problem stops the run
-    before the user drafts or approves any case.
+    Case approval covers statistics. A fresh built-in harness checks the host before case approval.
     """
     draft = out / DRAFT_NAME
     if not draft.is_file():
@@ -188,7 +187,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         "seed_frozen": seed_frozen, "own_targets": owned,
         "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
         "estimate": shown, "engine_hash": engine_hash(), "statistics": resolved.data(),
-        "validation_policy": validation_policy(),
+        "validation_policy": validation_policy(), "val_policy": val_policy,
         "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
                    "reserve_seconds": budget.reserve_seconds, "approved": budget.approved,
                    **({"journey": True} if budget.journey else {}), **({"cap": budget.cap} if budget.cap else {})},
@@ -338,19 +337,11 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         factory: Factory | None = None, configuration: Configuration | None = None,
         statistics: Mapping[str, float] | None = None,
         judge_model: str | None = None, history: bool | None = None, kinds: Sequence[str] = (),
+        val_policy: str | None = None,
         ports: Ports | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
-    `judge_model` sets the model of the judge calls. Task and reflection calls use `model`. The first run records it,
-    and a resume that passes another value stops with `run-config-differs`.
-
-    `effort`, `sandbox_read`, and `sandbox_seconds` set the Claude options of every role. The first run records
-    them. A resume uses the recorded options. A value that a resume passes must match the record.
-
-    `history` turns the private cross-run attempt history on or off. It is on by default. The first run records it,
-    and a resume that passes another value stops with `run-config-differs`.
-
-    `ports` replaces the default infrastructure adapters: `git apply` for the replay and the XDG history store.
+    An explicit resume option must match its frozen value. `ports` replaces replay and history adapters.
     """
     requested, given = _check_arguments(
         adapter, configuration, factory, edit, repeats,
@@ -361,6 +352,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
     if judge_model is not None and (configuration is not None or factory is not None):
         raise ValueError("--judge-model applies only to the built-in harness; set the judge model in the supplied "
                          + "configuration")
+    if val_policy is not None and val_policy not in ("full", "subset"):
+        raise ValueError("--val-policy must be full or subset")
     statistics_given = _check_statistics_flags(statistics)
     if is_inside(out, target):
         raise CodedError("out-inside-target", f"{out} is inside the target skill directory; "
@@ -379,7 +372,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             refuse_terminated(record)
             refuse_too_easy(record, out)
             if record.get("phase") == "complete":
-                # A completed run summarises without reading its statistics unless a flag asks to compare them.
+                check_val_policy(record, val_policy)
                 if statistics_given:
                     check_statistics(statistics_given, frozen_statistics(record))
                 return summary(record, out)
@@ -387,13 +380,14 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             frozen = frozen_statistics(record)
             check_statistics(statistics_given, frozen)
             check_resume(record, target, edit, repeats, seed, model, adapter, given, configuration is not None,
-                         judge_model, history)
+                         judge_model, history, val_policy)
         else:
             frozen = _prepare(target, out, model, adapter, edit, repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
                               options=requested, configuration=configuration,
                               statistics_given=statistics_given, judge_model=judge_model, repeats_given=repeats is not None,
-                              history=True if history is None else history, requested_kinds=kinds)
+                              history=True if history is None else history, requested_kinds=kinds,
+                              val_policy="full" if val_policy is None else val_policy)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)

@@ -101,7 +101,7 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
                 max_token_increase_per_gain: float | None = None,
                 min_token_saving: float | None = None, min_coverage: float | None = None,
                 max_quality_loss: float | None = None, history: bool | None = None,
-                kind: list[str] | None = None) -> dict[str, object]:
+                kind: list[str] | None = None, val_policy: Literal["full", "subset"] | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
 
     Parameters
@@ -158,7 +158,7 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
                             approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
                             sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read],
                             sandbox_seconds=sandbox_seconds, statistics=statistics or None,
-                            judge_model=judge_model, history=history, kinds=kind or ())
+                            judge_model=judge_model, history=history, kinds=kind or (), val_policy=val_policy)
 
 
 @app.command(name="doctor")

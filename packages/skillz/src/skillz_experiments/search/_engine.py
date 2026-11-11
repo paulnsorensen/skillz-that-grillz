@@ -11,6 +11,7 @@ from typing import Literal, Protocol, cast, final, get_args
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS
 from skillz_experiments._cases import CodedError
+from skillz_experiments.search._policy import FixedSubset
 
 REFLECTION_MINIBATCH = 2
 Edit = Literal["prose", "prose+cli"]
@@ -96,7 +97,7 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
            evaluate: Evaluate, propose: Propose, *, metric_calls: int,
            workers: int = MAX_CONCURRENT_CALLS, stalled: Callable[[], bool] | None = None,
            spent: Callable[[], bool] | None = None, cheaper: Cheaper | None = None,
-           validation_repeats: int = 1) -> StopReason:
+           validation_repeats: int = 1, val_policy: str = "full", val_subset: tuple[int, ...] = ()) -> StopReason:
     """Run one GEPA search over `seed`, which holds only the editable components.
 
     `metric_calls` bounds the physical runs of the distinct candidate and case evaluations. A new train pair costs 1,
@@ -120,6 +121,8 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
         raise ValueError("search needs at least one metric call")
     if validation_repeats < 1:
         raise ValueError("search needs at least one run per validation case")
+    if val_policy not in ("full", "subset") or (val_policy == "subset" and not val_subset):
+        raise ValueError("--val-policy must be full or have a validation subset")
     try:
         version = importlib.metadata.version("gepa")
     except importlib.metadata.PackageNotFoundError:
@@ -194,6 +197,8 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
                                 max_workers=max(1, min(workers, MAX_CONCURRENT_CALLS)),
                                 use_cloudpickle=False, cache_evaluation=False, raise_on_exception=True,
                                 candidate_selection_strategy="pareto",
+                                val_evaluation_policy=("full_eval" if val_policy == "full" else
+                                                       FixedSubset(val_subset)),
                                 acceptance_criterion=("strict_improvement" if cheaper is None
                                                       else CheaperTie(cheaper, train))),
         reflection=api.ReflectionConfig(custom_candidate_proposer=guarded, reflection_lm=None,
