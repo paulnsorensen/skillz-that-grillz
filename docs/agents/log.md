@@ -161,6 +161,7 @@
 
 - 2026-11-02 · harness-ergonomics-recovery · added · decisions/skillz-harness-ergonomics.md · Recovered the four harness ergonomics ADRs from the 2026-10-11 Mold session, with current paths for the Codex version gate and the `run` options.
 
+- 2026-11-08 · 93ff65cfccd58cb14 · merged · decisions/wedge-skill-packaging.md · Record metadata-action human control, failure cleanup, deferred maintainer-push race, and exclusive dist publication. Frozen probes return the page at ranks 1, 1, and 1. Index reconciliation remains pending.
 
 - 2026-11-08 · cb1a4af886af04e5 · merged · criteria/run-observability.md · Record private watcher capabilities and producer-aligned accounting. Three frozen retrieval probes rank first.
 
@@ -168,3 +169,5 @@
 
 
 2026-11-08 · 696842941e9097bb · merged · decisions/harness-module-interface.md · Codex prepares real Git grant roots before launch; AC-1 checks Git non-discovery. All three frozen retrieval probes return the target at rank 1.
+
+- 2026-11-11 · 7b88a43470a98010 · merged · parallel-quality-gate.md · Record the reproduced host-visible Codex sandbox Git-marker race. Keep ancestor guards and full gate lanes enabled. Frozen retrieval probes pass at ranks 1, 2, and 1.

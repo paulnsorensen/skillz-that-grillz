@@ -394,6 +394,7 @@ def _test_jobs(test_workers: int, cache_root: Path, data_dir: Path | None = None
         ("coverage-tests", root + ["python", ".github/scripts/test_check_coverage.py"]),
         ("gate-runner-tests", root + ["python", ".github/scripts/test_run_gate.py"]),
         ("pr-title-workflow-tests", root + ["python", ".github/scripts/test_pr_title_workflow.py"]),
+        ("dependabot-automerge-tests", root + ["python", ".github/scripts/test_dependabot_automerge.py"]),
         ("dist-publisher-tests", root + ["python", ".github/scripts/test_publish_dist.py"]),
         ("durations-merge-tests", root + ["python", ".github/scripts/test_merge_durations.py"]),
         ("durations-check-tests", root + ["python", ".github/scripts/test_check_test_durations.py"]),
