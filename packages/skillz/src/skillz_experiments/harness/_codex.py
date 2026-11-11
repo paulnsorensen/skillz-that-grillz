@@ -5,7 +5,6 @@ import os
 import math
 import re
 import shutil
-import stat
 import subprocess
 import tempfile
 import time
@@ -28,7 +27,8 @@ from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._runtime import (SANDBOX_SECONDS, halve_call_slots, model_call, process, reset_call_slots,
                                          sandboxed)
 from skillz_experiments.harness._check import API_KEY, MISSING_CREDENTIAL, SUBSCRIPTION_LOGIN, Check, credential_row, failed
-from skillz_experiments.harness._isolation import listening, probe
+from skillz_experiments.harness._git import prepare_codex_git
+from skillz_experiments.harness._isolation import listening, private_task_tmpdir, probe, task_tmpdir
 
 _events = parse_events
 MINIMUM_VERSION = (0, 154, 0)
@@ -133,27 +133,10 @@ def _inline(values: dict[str, str]) -> str:
     return "{" + ",".join(f"{json.dumps(key)}={json.dumps(value)}" for key, value in values.items()) + "}"
 
 
-def task_tmpdir(workspace: Path) -> Path:
-    """Return the Codex TMPDIR beside the workspace, so it has no `.git` ancestor. Create nothing."""
-    if workspace.name != "workspace":
-        raise ValueError(f"a Codex workspace must be <private task directory>/workspace, not {workspace}")
-    return workspace.parent / "tmp"
-
-
-def private_task_tmpdir(workspace: Path) -> Path:
-    """Create the task TMPDIR and refuse it unless it is a real directory that only this user owns."""
-    tmpdir = task_tmpdir(workspace)
-    tmpdir.mkdir(mode=0o700, exist_ok=True)
-    status = tmpdir.lstat()
-    if not stat.S_ISDIR(status.st_mode) or status.st_uid != os.getuid() or stat.S_IMODE(status.st_mode) != 0o700:
-        raise ValueError(f"the Codex task TMPDIR {tmpdir} must be a private directory owned by this user")
-    return tmpdir
-
-
 def configuration(workspace: Path, executable: Path, disabled: list[Path]) -> list[str]:
     tmpdir = task_tmpdir(workspace)
     filesystem = {":root": "deny", ":minimal": "read", ":slash_tmp": "deny",
-                  str(workspace): "write", str(workspace / ".agents"): "read",
+                  str(workspace): "write", str(workspace / ".agents"): "read", str(workspace / ".git"): "write",
                   str(tmpdir): "write", str(tmpdir / ".git"): "write", str(executable): "read"}
     environment = {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                    "TMPDIR": str(tmpdir), "LANG": "C.UTF-8"}
@@ -221,6 +204,7 @@ class Codex:
 
     def _environment(self, workspace: Path) -> dict[str, str]:
         tmpdir = private_task_tmpdir(workspace)
+        prepare_codex_git(workspace, tmpdir)
         return {"PATH": "/usr/bin:/bin", "HOME": str(workspace / "home"),
                 "TMPDIR": str(tmpdir), "LANG": "C.UTF-8", "CODEX_HOME": str(self.codex_home)}
 

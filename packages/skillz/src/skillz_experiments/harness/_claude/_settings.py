@@ -5,6 +5,7 @@ import tempfile
 from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import cast
 
 from skillz_experiments._cases import CodedError, loads_untrusted, mapping
 from skillz_experiments._contract import Surface
@@ -22,6 +23,10 @@ RUNTIME_READ = ("/usr", "/bin", "/lib", "/lib32", "/lib64", "/libx32", "/proc/se
 
 
 MACOS_READ = ("/System", "/Library")
+
+
+FILE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+"""The Claude Code tools that `Edit(...)` permission rules govern. A contract surface can add them to the task role (gh-702)."""
 
 
 MACOS_DENY_READ = ("/Volumes", "/private/var/folders", "/var/folders")
@@ -68,6 +73,22 @@ def settings(workspace: Path, out: Path | None = None, *, config: Path | None = 
     return floor
 
 
+def with_file_tools(floor: dict[str, object], workspace: Path, tools: Collection[str]) -> dict[str, object]:
+    """Let each surface file tool in `tools` (`FILE_TOOLS`) write in `workspace` only, and return `floor` (gh-702).
+
+    The allow rule names the workspace, and deny rules keep `.agents` and `.claude` out of reach, as the sandbox does for
+    commands. Claude Code 2.1.319 applies `Edit(...)` rules to every file tool and does not grant a write outside the
+    allowed path. Without a file tool, `floor` stays unchanged.
+    """
+    if FILE_TOOLS.isdisjoint(tools):
+        return floor
+    roots = unique([str(workspace), str(workspace.resolve())])
+    permissions = cast(dict[str, list[str]], floor["permissions"])
+    permissions["allow"] = [*permissions["allow"], *(f"Edit(/{root}/**)" for root in roots)]
+    permissions["deny"] = [*permissions["deny"], *(f"Edit(/{root}/{name}/**)" for root in roots for name in (".agents", ".claude"))]
+    return floor
+
+
 def _deny_read(hidden: list[str]) -> list[str]:
     """Return the `denyRead` list of the sandbox floor: `/` on Linux, and a root list on macOS.
 
@@ -106,7 +127,7 @@ def declared_names(surface: Surface | None, files: Mapping[str, str] | None) -> 
     found = files or {}
     missing = [path for path in (*surface.agents, *([] if surface.mcp_config is None else [surface.mcp_config]))
                if path not in found]
-    missing += [f"{path}/SKILL.md" for path in surface.companions if f"{path}/SKILL.md" not in found]
+    missing += [f"{path}/SKILL.md" for path in surface.companion_keys if f"{path}/SKILL.md" not in found]
     if missing:
         raise CodedError("contract-surface-missing", f"the contract surface names files that the skill lacks: {', '.join(missing)}")
     for path in surface.agents:

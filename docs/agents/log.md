@@ -160,3 +160,7 @@
 - 2026-11-01 · 94d1d3fbd5485a92 · merged · decisions/wedge-skill-packaging.md · Record bundled .pth and .egg-info initialization, literal keyword imports, private writable compilation copies, verified interpreter candidates, and format-10 invalidation. Frozen probes return the page at ranks 1, 2, and 3. Index reconciliation remains pending.
 
 - 2026-11-02 · harness-ergonomics-recovery · added · decisions/skillz-harness-ergonomics.md · Recovered the four harness ergonomics ADRs from the 2026-10-11 Mold session, with current paths for the Codex version gate and the `run` options.
+
+- 2026-11-08 · 93ff65cfccd58cb14 · merged · decisions/wedge-skill-packaging.md · Record metadata-action human control, failure cleanup, deferred maintainer-push race, and exclusive dist publication. Frozen probes return the page at ranks 1, 1, and 1. Index reconciliation remains pending.
+
+2026-11-08 · 696842941e9097bb · merged · decisions/harness-module-interface.md · Codex prepares real Git grant roots before launch; AC-1 checks Git non-discovery. All three frozen retrieval probes return the target at rank 1.

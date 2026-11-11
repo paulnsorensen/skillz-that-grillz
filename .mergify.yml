@@ -1,0 +1,38 @@
+shared:
+  dependabot_policy: &dependabot_policy
+    - author = dependabot[bot]
+    - base = main
+    - -from-fork
+    - head-repo-full-name = paulnsorensen/skillz-that-grillz
+    - "#commits = 1"
+    - commits[*].author = dependabot[bot]
+    - commits[*].email_author = 49699333+dependabot[bot]@users.noreply.github.com
+    - commits[*].commit_verification_verified
+    - "#dependabot-dependency-name > 0"
+    - "#dependabot-dependency-type > 0"
+    - "#dependabot-update-type > 0"
+    - 'dependabot-update-type != version-update:semver-major'
+    - '-dependabot-update-type ~= ^(?!version-update:semver-(?:patch|minor)$)'
+    - '-dependabot-dependency-name ~= (?i)^(?:rust|node|nodejs|python|go|golang|dependabot/fetch-metadata)$'
+    - 'commits[*].commit_message ~= (?m)^updated-dependencies:\n(?:- dependency-name: [^\n]+\n  dependency-version: v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?\n  dependency-type: [^\n]+\n  update-type: version-update:semver-(?:patch|minor)\n(?:  dependency-group: [^\n]+\n)?)+\.\.\.$'
+    - 'commits[*].commit_message ~= (?m)^(?:Bumps [^\n]* from|Updates `[^`]+` from) v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)? to v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?\.?$'
+    - '-commits[*].commit_message ~= (?m)^(?:Bumps [^\n]* from|Updates `[^`]+` from) (?!v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)? to v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?\.?$)'
+    - '-commits[*].commit_message ~= (?m)^  dependency-version: v?0\.[0-9]+\.[0-9]+[^\n]*\n  dependency-type: [^\n]+\n  update-type: version-update:semver-minor$'
+
+queue_rules:
+  - name: default
+    batch_size: 1
+    batch_max_wait_time: 30s
+    queue_conditions:
+      - base = main
+      - or:
+          - author != dependabot[bot]
+          - and: *dependabot_policy
+    merge_conditions:
+      - base = main
+      - or:
+          - author != dependabot[bot]
+          - and: *dependabot_policy
+
+merge_protections_settings:
+  auto_merge_conditions: *dependabot_policy

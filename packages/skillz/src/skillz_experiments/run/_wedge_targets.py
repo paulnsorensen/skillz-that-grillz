@@ -21,15 +21,14 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path, PurePosixPath
 from typing import cast, final
 
-from wedge import (BuildPaths, ConfigError, SiteLayer, WedgeConfig, build_from_layer, bundle_path, defaults_path,
-                   first_party_files, layer_import_names, load_targets, open_site_layer, parse_targets,
-                   populate_site_layer, resolve_target, stage_sources)
+from wedge import (BuildPaths, ConfigError, SiteLayer, WedgeConfig, build_from_layer, bundle_path, defaults_path, first_party_files,
+                   layer_import_names, load_targets, open_site_layer, parse_targets, populate_site_layer, resolve_target, stage_sources)
 
-from skillz_experiments._candidate import (FROZEN_FILE_LIMIT, NEW_CLI, WEDGE_PREFIX, Candidate, as_text, ignored_files,
-                                           is_skill_file)
+from skillz_experiments._candidate import FROZEN_FILE_LIMIT, NEW_CLI, WEDGE_PREFIX, Candidate, as_text, ignored_files, is_skill_file
 from skillz_experiments._cases import CodedError, digest, mapping, relative, repo_root
 from skillz_experiments._contract import Contract
 from skillz_experiments._new_cli import expand_files, fromargs_include, inherits_source_paths
+from skillz_experiments.run._prose_targets import frozen_targets
 from skillz_experiments.run._wedge_fit import WEDGE_EDIT_LIMIT, choose
 
 # A target never offers these as editable sources.
@@ -332,7 +331,7 @@ class FromargsCapability:
 class TargetPlan:
     """The own targets of a skill, the ones whose sources the search edits in order, and why each other one is frozen.
 
-    `capable` is set when the skill can take a `@new-cli` target.
+    `capable` is set when the skill can take a `@new-cli` target. `built` holds the `.pyz` bytes of a plan without `targets`.
     """
 
     targets: tuple[OwnTarget, ...] = ()
@@ -340,10 +339,11 @@ class TargetPlan:
     reasons: Mapping[str, str] = field(default_factory=dict[str, str])
     capable: FromargsCapability | None = None
     dropped: str = ""
+    built: Mapping[str, bytes] = field(default_factory=dict[str, bytes])
 
     @property
     def frozen(self) -> dict[str, bytes]:
-        found = {target.pyz: target.built for target in self.targets}
+        found = {target.pyz: target.built for target in self.targets} | dict(self.built)
         for target in self.editable:
             found |= target.fixed
         if self.capable is not None:
@@ -456,9 +456,9 @@ def plan_targets(skill_root: Path, files: Mapping[str, str], contract: Contract,
     or a nested skill target also builds from is never editable, and a target left with no source is frozen. A target
     whose `.pyz` the MCP config runs stays frozen too (ADR-009). The plan records why each target is frozen.
     """
-    targets = own_targets(skill_root)
     if edit != "prose+cli":
-        return TargetPlan(targets, (), {target.name: f"--edit {edit} keeps every own target frozen" for target in targets})
+        return TargetPlan(**frozen_targets(skill_root, edit))  # no wedge config, only the target names (gh-695)
+    targets = own_targets(skill_root)
     if not targets:
         return TargetPlan()
     guide = files.get("SKILL.md", "")

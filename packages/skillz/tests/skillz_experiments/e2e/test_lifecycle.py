@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import cast
@@ -67,14 +68,16 @@ def _advance(process: subprocess.Popen[str], pause_dir: Path, checkpoint: Path,
                         for item in cast(list[dict[str, object]], record.get("outcomes", [])))
                 and _held_tasks(pause_dir)):
             return record, "", ""
-        if process.poll() is not None:
-            output, error = process.communicate(timeout=5)
-            final_record = _record(checkpoint)
-            assert final_record is not None, (process.returncode, output, error)
-            return final_record, output, error
         for path in pending:
             _ = path.with_suffix(".release").touch()
-        time.sleep(0.01)
+        # Drain both pipes while the CLI runs; its result can exceed the pipe capacity.
+        try:
+            output, error = process.communicate(timeout=0.01)
+        except subprocess.TimeoutExpired:
+            continue
+        final_record = _record(checkpoint)
+        assert final_record is not None, (process.returncode, output, error)
+        return final_record, output, error
     raise AssertionError("CLI did not reach the bounded checkpoint or exit")
 
 
@@ -92,7 +95,14 @@ def _await_event(out: Path, pid: int) -> None:
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-8")
-def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp_path: Path) -> None:
+@pytest.mark.parametrize("pipesize", [
+    pytest.param(-1, id="default-pipes"),
+    pytest.param(4096, id="small-pipes", marks=pytest.mark.skipif(
+        sys.platform != "linux", reason="Explicit pipe sizing requires Linux.")),
+])
+def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(
+    tmp_path: Path, pipesize: int,
+) -> None:
     scenario = make_scenario(tmp_path)
     pause_dir = tmp_path / "pause"
     pause_dir.mkdir()
@@ -113,7 +123,7 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
 
     process = subprocess.Popen([str(CLI), *approved], cwd=tmp_path, env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               text=True, start_new_session=True)
+                               text=True, start_new_session=True, pipesize=pipesize)
     try:
         _, output, error = _advance(process, pause_dir, checkpoint, stop_at_holdout=True)
         assert process.poll() is None, (process.returncode, output, error)
@@ -136,7 +146,7 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
 
     resumed = subprocess.Popen([str(CLI), *approved], cwd=tmp_path, env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                               text=True, start_new_session=True)
+                               text=True, start_new_session=True, pipesize=pipesize)
     try:
         after, output, error = _advance(resumed, pause_dir, checkpoint, stop_at_holdout=False)
         assert resumed.returncode == 0, (resumed.returncode, output, error)
@@ -145,6 +155,8 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(tmp
             os.killpg(resumed.pid, signal.SIGKILL)
             _ = resumed.communicate(timeout=5)
 
+    if pipesize > 0:
+        assert len(output.encode()) > pipesize
     result = cast(dict[str, object], json.loads(output))
     assert result["phase"] == after["phase"] == "complete"
     for key in ("cases_hash", "seed_hash", "best_validated", "started", "started_monotonic"):
