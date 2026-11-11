@@ -1,4 +1,4 @@
-"""Check a skill's eval files offline: no model call, no host check, no write.
+"""Check a skill's eval files offline without model or host checks or planner-controlled writes.
 
 Every stage runs on its own and reports its findings, so one report shows all the problems at once.
 """
@@ -19,8 +19,10 @@ from skillz_experiments._intake import (
     HOLDOUT_MINIMUM, MINIMUM_FAMILIES, TRAIN_FAMILIES_MINIMUM, TRAIN_MINIMUM, DraftCase, IntakeCase, check_criteria,
     check_helper_input, intake_contract, load_draft, split_cases, too_few,
 )
-from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, fixture_error, fixture_misses, seed_cases, seed_family
-from skillz_experiments.run import DEFAULT_SEED, frozen_targets, resolve_statistics, scored_kinds
+from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, fixture_error, fixture_misses, seed_cases, seed_family, seed_projection
+from skillz_experiments.harness import ClaudeOptions, Configuration
+from skillz_experiments.run import DEFAULT_SEED, frozen_targets, plan, resolve_statistics, scored_kinds
+from skillz_experiments.search import Edit
 
 Finding = dict[str, object]
 FAILURES = (CodedError, ValueError, OSError)
@@ -139,14 +141,17 @@ def _gate_findings(target: Path, journeys: Sequence[str], drafted: Sequence[Draf
 
 
 def validate(target: Path, draft: Path | None = None, seed: int | None = None,
-             kinds: Sequence[str] = ()) -> dict[str, object]:
-    """Report every problem of the target's eval files and the split that a run would build. Write nothing."""
+             kinds: Sequence[str] = (), edit: Edit | None = None, *, preview: bool = False,
+             repeats: int | None = None, planning_call_cap: int | None = None,
+             harness_config: Path | None = None, sandbox_seconds: int | None = None) -> dict[str, object]:
+    """Report eval problems and the projected split. Trusted gate probes can write files."""
     findings: list[Finding] = []
-    try:
-        _ = frozen_targets(target, "prose")
-    except FAILURES as error:
-        findings.append(_failure(error, "wedge.toml"))
     contract, status, source = _contract(target, findings)
+    if contract is None:
+        try:
+            _ = frozen_targets(target, edit or "prose+cli")
+        except FAILURES as error:
+            findings.append(_failure(error, "wedge.toml"))
     journeys = contract.journey_kinds() if contract is not None else ("journey",)
 
     chosen: tuple[str, ...] | None = None
@@ -190,13 +195,11 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
         else:
             _fixture_findings(target, drafted, lambda case: JOURNEYS if case.journey is not None else EVALS, findings)
 
-    if contract is not None:
-        findings.extend(_gate_findings(target, journeys, drafted))
-
     split_seed = DEFAULT_SEED if seed is None else seed
     split: dict[str, object] = {"seed": split_seed, "train": None, "validation": None, "holdout": None,
                                 "holdout_minimum": HOLDOUT_MINIMUM, "families_minimum": MINIMUM_FAMILIES,
                                 "train_minimum": TRAIN_MINIMUM, "train_families_minimum": TRAIN_FAMILIES_MINIMUM}
+    planned: list[IntakeCase] | None = None
     if contract is not None and chosen is not None and drafted is not None:
         names = set(contract.journey_kinds())
         plain = [kind for kind in chosen if kind not in names]
@@ -228,8 +231,61 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
                     f"the contract family_budgets names no case family: {name}; the case families are {', '.join(sorted(families))}",
                     "rename the family_budgets entry to a case family, or remove it", f"/statistics/family_budgets/{name}"))
 
-    return {"ok": not any(found["severity"] == "error" for found in findings),
+    blocking = next((str(found["code"]) for found in findings if found["severity"] == "error"), None)
+    sizing_ready = draft is not None and planned is not None and blocking is None
+    preview_data: dict[str, object] | None = None
+    unavailable_reason = "valid-draft-required" if draft is None else blocking or "sizing-prerequisite-failed"
+    if contract is not None:
+        options = ClaudeOptions()
+        try:
+            if harness_config is not None and sandbox_seconds is not None:
+                raise CodedError("usage", "--harness-config cannot combine with --sandbox-seconds")
+            if harness_config is not None:
+                if harness_config.resolve().is_relative_to(target.resolve()):
+                    raise ValueError("harness configuration must stay outside the candidate")
+                evaluated: set[str] = set(chosen or ()) | (set(journeys) if not kinds else set[str]())
+                conversation = drafted is not None and any(case.journey is not None and case.kind in evaluated for case in drafted)
+                capture = chosen is not None and any(contract.kinds[kind].capture for kind in chosen)
+                options = Configuration.sizing_options_from_file(harness_config, require_conversation=conversation,
+                                                                 require_capture=capture)
+            elif sandbox_seconds is not None:
+                options = ClaudeOptions.parse({"sandbox_seconds": sandbox_seconds})
+        except FAILURES as error:
+            findings.append(_failure(error, str(harness_config) if harness_config is not None else ""))
+            sizing_ready = False
+            unavailable_reason = "configuration-invalid"
+        try:
+            preview_data = plan(target, contract, planned if sizing_ready else None, edit=edit, repeats=repeats,
+                                planning_call_cap=planning_call_cap, options=options)
+            if failure := preview_data.pop("_failure", None):
+                detail = cast(dict[str, str], failure)
+                findings.append(_finding(detail["code"], "error", detail.get("file", ""), detail["message"]))
+            elif not sizing_ready:
+                cast(dict[str, object], preview_data["unavailable"])["estimate"] = unavailable_reason
+            for warning in cast(list[str], preview_data["warnings"]):
+                findings.append(_finding("edit-warning", "warning", "wedge.toml", warning))
+        except FAILURES as error:
+            findings.append(_failure(error, "wedge.toml"))
+    if contract is not None:
+        findings.extend(_gate_findings(target, journeys, drafted))
+    report: dict[str, object] = {"ok": not any(found["severity"] == "error" for found in findings),
             "contract": {"source": source, "status": status, "kinds": sorted(contract.kinds) if contract else [],
                          "hash": contract.identity if contract else None},
             "cases": {"source": origin} | _counts(drafted or []),
             "split": split, "findings": findings}
+    if preview:
+        unavailable = {"estimate": unavailable_reason}
+        report["preview"] = (preview_data if preview_data is not None else {
+            "edit": {"requested": edit, "resolved": None, "fallback_reason": None}, "editable_files": None,
+            "estimate": None, "inputs": {}, "unavailable": unavailable, "not_checked": []})
+        shown = cast(dict[str, object], report["preview"])
+        shown["seed"] = None if seeded is None else {"count": len(seeded),
+                                                     "split": seed_projection(seeded, chosen or (), journeys)}
+        if seeded is None:
+            cast(dict[str, object], shown["unavailable"])["seed"] = "seed-not-present"
+        shown["assignments"] = [] if planned is None else [
+            {"id": case.identifier, "kind": case.kind, "family": case.family, "split": case.split,
+             "scored": case.scored, "source": origin} for case in planned]
+        cast(dict[str, object], shown["inputs"]).update({"seed": split_seed, "kinds": list(chosen or ()),
+                                                            "config_source": str(harness_config) if harness_config else None})
+    return report

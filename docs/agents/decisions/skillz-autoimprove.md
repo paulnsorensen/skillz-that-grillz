@@ -279,4 +279,46 @@ _Source: PR #579 guard review and approved repair · Updated: 2026-10-30_
 - **Alternatives:** Accept any binary file (no limit on type or size, and the judge prompt could carry bytes). A side file next to the seed (the seed and the case hash would no longer cover the bytes). Show the image to the judge (a new attachment path for every grader).
 - **Consequences:** A judge cannot see an image fixture; a command grader reads it from the workspace. Magic bytes prove the type, not that the image decodes. SVG stays refused, because it is text that can carry script.
 
+### ADR-031: Validation and preview share run's free edit planning  [status: accepted]
+
+- **Context:** Validation used prose target checks, but run could select another edit mode and apply free fallback rules.[^free-plan-current]
+- **Decision:** F-1 selects one shared free planner for run, validate, and plan. Explicit prose remains portable.[^free-plan-design]
+- **Alternatives:** Copy validation checks and approximate run behavior. This lets selected modes and fallback rules drift.
+- **Consequences:** Private calculations stay in existing mapped packages. Runtime error order, warnings, build handling, and execution controls stay unchanged.
+
+### ADR-032: Plan owns the full free preview  [status: accepted]
+
+- **Context:** A full preview adds edit mode, editable files, assignments, and estimates beyond the diagnostic report.[^free-plan-current]
+- **Decision:** F-2 adds plan for this preview. Validate keeps its diagnostic report. Both use shared planning.[^free-plan-design]
+- **Alternatives:** Expand validate into the full preview. This changes its reporting contract.
+- **Consequences:** Plan adds a nested preview and identifies unavailable results. Existing gate diagnostics still execute trusted local code.
+- **Consequences:** Free means no model calls, not a new sandbox or execution-readiness guarantee.
+
+### ADR-033: Numeric estimates require a valid case draft  [status: accepted]
+
+- **Context:** A seed can support diagnostics and usable split information before a valid case draft exists.[^free-plan-design]
+- **Decision:** F-3 permits partial preview before drafting. Numeric estimates require the draft and free sizing prerequisites, but not approval.[^free-plan-design]
+- **Alternatives:** Estimate from the seed. This can present draft-dependent family counts and call budgets as settled.
+- **Consequences:** Show diagnostics, usable seed splits, and editable files when available. Keep the estimate null when prerequisites fail.
+
+### ADR-034: A planning-only cap does not approve execution  [status: accepted]
+
+- **Context:** Users need to preview a raised task call limit before choosing whether to approve a run.[^free-plan-design]
+- **Decision:** F-16 adds `--planning-call-cap`. It changes preview sizing only.[^free-plan-design]
+- **Alternatives:** Reuse runtime approval input, or show only the default ceiling. The first blurs consent.
+- **Consequences:** Report the requested cap and effective ceiling. Keep runtime limits and separate approval unchanged.
+
+### ADR-035: Harness configuration supplies sizing settings offline  [status: accepted]
+
+- **Context:** The runtime Configuration loader resolves executables before it exposes task sizing options.[^free-plan-config]
+- **Decision:** F-18 reads `--harness-config` through shared structural parsing without executable lookup or harness invocation.[^free-plan-design]
+- **Alternatives:** Copy timeout settings into plan. This can drift from the configured run.
+- **Consequences:** Reuse defaults and validate all roles, including unused roles. Check static journey and capture capabilities.
+- **Consequences:** Preserve runtime model, executable, boundary, and host checks. Report unchecked execution conditions separately.
+- **Consequences:** Parsing adds no facade export or guard relaxation.
+
+[^free-plan-current]: packages/skillz/src/skillz_experiments/_validate.py:141-235; run/_edit_plan.py:95-145; run/_run.py:138-195 at 47cf6e548d6d90a58107338da99f91ea4fdc3058.
+[^free-plan-config]: packages/skillz/src/skillz_experiments/harness/_harness.py:35-53,103-128; harness/_roles.py:97-116,145-172 at 47cf6e548d6d90a58107338da99f91ea4fdc3058.
+[^free-plan-design]: User decisions F-1, F-2, F-3, F-16, and F-18, Mold session 2026-11-11. Reviewed original contract: `specs/skillz-free-plan.md` in the durable project corpus, SHA256 `ca378af4abc15df71fd305946848477730565a975ba59513b8865a0cc11de645`.
+
 _Source: Mold session 2026-10-03, Mold sessions 2026-10-10, PR #118 Affinage review, PR #203 merge review, the issue #168 and #169 research, and the spec skillz-autoimprove-claims (approved 2026-10-15) · Updated: 2026-10-18 (ADR-005 amendment, inspector path; ADR-007 superseded by the nono removal; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets; ADR-009 nono text amendment; ADR-011 to ADR-013 module layout; ADR-014 run compatibility fingerprint and its 2026-10-14 val_policy and merge amendment; ADR-015 reflection sentence limit, W4.4 attempt history, W4.5 rejected memory and notes, and W4.7 stall focus; ADR-016 stall stop; gh-302 prose+cli policy and default edit mode; ADR-017 three claims and the replay phase; ADR-008 kit families and ADR-010 460-call allowance amendments; ADR-018 headroom stop and the ADR-010 headroom amendment; ADR-019 scaffold and session mining; ADR-020 cross-run attempt history; ADR-021 eval kinds; ADR-022 gate files; ADR-023 typed journey expected; ADR-008 files amendment; ADR-024 journey kinds and run --kind; ADR-025 checked-in journeys; ADR-026 shipped skillz journeys; 2026-10-19 Mold session judge-criteria-verdicts: ADR-027 criteria verdicts, ADR-028 criteria drafting and flags, ADR-029 no kind criteria and pillars removed, ADR-023 criteria amendment; gh-589 ADR-030 image fixtures)_

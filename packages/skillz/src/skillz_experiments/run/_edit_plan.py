@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from skillz_experiments._budget import ESTIMATE_SECONDS_PER_CALL, PROMPT_CHARS_PER_SECOND, Estimate, ceilings, estimate
-from skillz_experiments._candidate import Candidate
+from skillz_experiments._candidate import NEW_CLI, Candidate
 from skillz_experiments._cases import CodedError
 from skillz_experiments._contract import Contract
 from skillz_experiments.run._plan import editable_files
@@ -91,11 +91,12 @@ class ReflectionNotes:
     edit: Edit
     offer_prose: bool
     warnings: dict[str, str] = field(default_factory=dict[str, str])
+    emit: bool = True
 
     @classmethod
-    def size(cls, seed: Candidate, edit: Edit, *, offer_prose: bool) -> ReflectionNotes:
+    def size(cls, seed: Candidate, edit: Edit, *, offer_prose: bool, emit: bool = True) -> ReflectionNotes:
         """Return the notes of `seed` with its size warning, if any."""
-        notes = cls(editable_chars(seed.files, seed.editable), edit, offer_prose)
+        notes = cls(editable_chars(seed.files, seed.editable), edit, offer_prose, emit=emit)
         notes._add("reflection_warning", reflection_warning(notes.chars, edit, offer_prose=offer_prose))
         return notes
 
@@ -109,23 +110,29 @@ class ReflectionNotes:
     def _add(self, key: str, text: str | None) -> None:
         if text is not None:
             self.warnings[key] = text
-            print(f"skillz-experiment: warning: {text}", file=sys.stderr)
+            if self.emit:
+                print(f"skillz-experiment: warning: {text}", file=sys.stderr)
 
 
 def _fall_back_to_prose(target: Path, skeleton: Candidate, contract: Contract,
-                        reason: str) -> tuple[TargetPlan, Candidate]:
+                        reason: str, warnings: list[str] | None = None) -> tuple[TargetPlan, Candidate]:
     """Plan an omitted `--edit` as `prose` after `prose+cli` could not plan, and say why on stderr."""
     wedge = plan_targets(target, skeleton.files, contract, "prose")
     files = skeleton.files | wedge.sources
     frozen = skeleton.frozen | wedge.frozen
     planned = wedge, Candidate(files, tuple(editable_files(files, contract, "prose", frozen.keys(), wedge)), contract, frozen=frozen)
     # Print only after the prose plan succeeds: the size fallback suppresses a failed plan and keeps prose+cli.
-    print(f"skillz-experiment: {reason}; this run uses --edit prose", file=sys.stderr)
+    message = f"{reason}; this run uses --edit prose"
+    if warnings is None:
+        print(f"skillz-experiment: {message}", file=sys.stderr)
+    else:
+        warnings.append(message)
     return planned
 
 
 def seed_or_prose(target: Path, skeleton: Candidate, contract: Contract, edit: Edit | None, mode: Edit, wedge: TargetPlan,
-                  files: dict[str, str], frozen: dict[str, bytes]) -> tuple[Edit, TargetPlan, Candidate, bool]:
+                  files: dict[str, str], frozen: dict[str, bytes],
+                  warnings: list[str] | None = None) -> tuple[Edit, TargetPlan, Candidate, bool]:
     """Build the seed candidate. Without an explicit `--edit`, `prose+cli` falls back to `prose`.
 
     The fallback happens when no helper is editable, or when the editable text exceeds `REFLECTION_TEXT_LIMIT`
@@ -136,10 +143,28 @@ def seed_or_prose(target: Path, skeleton: Candidate, contract: Contract, edit: E
     except CodedError as error:
         if edit is not None or error.code != "helper-missing":
             raise
-        return ("prose", *_fall_back_to_prose(target, skeleton, contract, str(error)), True)
+        return ("prose", *_fall_back_to_prose(target, skeleton, contract, str(error), warnings), True)
     reason = reflection_excess(editable_chars(seed.files, seed.editable))
     if edit is None and mode == "prose+cli" and reason is not None:
         # A prose plan that fails, such as explicit non-Markdown editable names, keeps prose+cli and its warning.
         with suppress(CodedError):
-            return ("prose", *_fall_back_to_prose(target, skeleton, contract, f"the prose+cli plan: {reason}"), True)
+            return ("prose", *_fall_back_to_prose(target, skeleton, contract, f"the prose+cli plan: {reason}", warnings), True)
     return mode, wedge, seed, False
+
+
+@dataclass(frozen=True)
+class FreeEdit:
+    mode: Edit
+    wedge: TargetPlan
+    skeleton: Candidate
+    seed: Candidate
+
+
+def plan_edit(target: Path, contract: Contract, edit: Edit | None, warnings: list[str] | None = None) -> FreeEdit:
+    skeleton = Candidate.capture(target, [], contract)
+    mode: Edit = edit or "prose+cli"
+    wedge = plan_targets(target, skeleton.files, contract, mode)
+    files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
+    frozen = skeleton.frozen | wedge.frozen
+    mode, wedge, seed, _ = seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen, warnings)
+    return FreeEdit(mode, wedge, skeleton, seed)
