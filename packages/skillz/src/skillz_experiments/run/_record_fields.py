@@ -4,11 +4,22 @@ from __future__ import annotations
 
 from typing import cast
 
+from skillz_experiments._cases import mapping
+
 # The phases in order. The phase of a record is one of them.
 PHASES = ("prepared", "searched", "gated", "replayed", "complete")
 
 # The phases after the gate. A run in one of them makes no model call without a deadline check.
 POST_GATE_PHASES = ("gated", "replayed")
+
+
+def differences(recorded: object, observed: object, name: str = "") -> list[str]:
+    """Name each preflight evidence key whose value differs, with both values. Keys sit in dotted paths."""
+    if isinstance(recorded, dict) and isinstance(observed, dict):
+        before, after = cast(dict[str, object], recorded), cast(dict[str, object], observed)
+        return [line for key in sorted(set(before) | set(after))
+                for line in differences(before.get(key), after.get(key), f"{name}.{key}" if name else key)]
+    return [] if recorded == observed else [f"{name} (recorded {str(cast(object, recorded))[:80]!r}, observed {str(observed)[:80]!r})"]
 
 
 def field(record: dict[str, object], key: str) -> object:
@@ -58,6 +69,17 @@ def count_map(value: object) -> dict[str, float]:
             raise ValueError("run record role counts must map roles to nonnegative numbers")
         loaded[key] = float(cast(float, item))
     return loaded
+
+
+def recorded_rejections(record: dict[str, object]) -> dict[str, set[str]]:
+    """Load the rejected proposal digests per rule from the record. They hold no case text."""
+    recorded = mapping(record.get("leakage_rejected", {}))
+    found: dict[str, set[str]] = {}
+    for rule, keys in recorded.items():
+        if not isinstance(keys, list) or not all(isinstance(key, str) for key in cast(list[object], keys)):
+            raise ValueError("run record field leakage_rejected must map rules to lists of text")
+        found[rule] = set(cast(list[str], keys))
+    return found
 
 
 def record_outcomes(record: dict[str, object]) -> list[dict[str, object]]:
