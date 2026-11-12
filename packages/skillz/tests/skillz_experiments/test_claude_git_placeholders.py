@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -71,7 +72,9 @@ def _sandboxed(workspace: Path, environment: dict[str, str], command: str) -> su
 @pytest.mark.ac("gh-703:AC-1")
 def test_the_task_home_excludes_every_root_placeholder_and_no_runner_directory(tmp_path: Path) -> None:
     workspace, environment = _launch(tmp_path)
-    ignore = Path(environment["HOME"]) / ".config/git/ignore"
+    # macOS keeps the real `HOME` for the Keychain login (`keychain_environment`), so read the task home directly.
+    assert environment["HOME"] == str(workspace / "home") or sys.platform == "darwin"
+    ignore = workspace / "home/.config/git/ignore"
     lines = ignore.read_text().splitlines()
     assert lines == [f"/{name}" for name in PLACEHOLDERS] + ["/home/", "/tmp/"]
     assert {".gitconfig", ".bashrc", ".bash_profile", ".vscode", ".idea"} <= set(PLACEHOLDERS)
