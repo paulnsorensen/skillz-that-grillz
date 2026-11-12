@@ -51,6 +51,40 @@ your agent harness:
 `/skillz` is user-only. A phrase such as "audit this skill" does not invoke it.
 Type the command.
 
+### Install without a terminal
+
+You do not need `npx` or a terminal agent. Each release attaches
+[`skillz-desktop.zip`](https://github.com/paulnsorensen/skillz-that-grillz/releases/latest/download/skillz-desktop.zip).
+It holds one `skillz` folder: the skill and its helper scripts. The helper
+scripts ship as source only, so the ZIP stays under the 30 MB upload limit.
+Each helper starts about 0.25 s slower than in a terminal install. The
+[requirements](#requirements) still apply.
+
+**Claude desktop app and claude.ai chat.** This path is untested.
+
+1. Turn on code execution in **Settings > Capabilities**.
+2. Go to **Customize > Skills**, select **+**, then **Create skill > Upload a skill**.
+3. Upload `skillz-desktop.zip` as it is, and turn the skill on.
+4. Attach the `SKILL.md` that you want to check. Ask Claude to "use the skillz
+   skill to audit this skill".
+
+Chat runs in a sandbox, not on your computer, so only `audit` and `improve`
+apply there. `wedge` and `autoimprove` need a coding app. The chat app does not
+document user-only skills such as `skillz`, so Claude can ignore it.
+
+**Coding apps.** Unzip `skillz-desktop.zip`. Copy the `skillz` folder into the
+skills folder of your app, then restart the app:
+
+| App | Skills folder |
+| --- | --- |
+| Claude Code desktop app, VS Code, or JetBrains extension | `~/.claude/skills/` |
+| Codex app and other Agent Skills hosts | `~/.agents/skills/` |
+
+The result must be `~/.claude/skills/skillz/SKILL.md` or
+`~/.agents/skills/skillz/SKILL.md`. `~` is your home folder, for example
+`C:\Users\<you>` on Windows. In the macOS Finder, press Cmd+Shift+. to show
+hidden folders such as `.claude`. Then type `/skillz audit <path>`.
+
 ### What an audit looks like
 
 This trimmed example shows the report format. The skill name and findings are

@@ -10,7 +10,7 @@ on:
     tags: ["v[0-9]*"]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -20,6 +20,8 @@ jobs:
   release:
     name: publish github release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -131,3 +133,67 @@ jobs:
           # internally. Create the release directly against the existing tag;
           # the already_published guard keeps re-runs idempotent.
           gh release create "$TAG" --title "$TAG" --generate-notes --latest
+
+  desktop-zip:
+    name: attach desktop skill zip
+    # The Claude desktop app and claude.ai accept a skill ZIP of 30 MB or less.
+    # Bytecode trees for five Python versions fill about 70% of each archive, so
+    # this build is source only (wedge-skill-packaging.md ADR-014). The dist
+    # branch keeps its bytecode archives for terminal installs.
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.13.6"
+          enable-cache: false
+
+      - name: Build source-only archives
+        run: |
+          set -euo pipefail
+          # A top-level key sets the default for every target (ADR-011).
+          sed -i '1i bytecode = []' skills/skillz/wedge.toml
+          uv run --locked --project packages/wedge wedge bundle skills/skillz
+          for archive in skills/skillz/scripts/*.pyz; do
+            python3 -I "$archive" --help >/dev/null
+          done
+
+      - name: Package skill zip
+        run: |
+          set -euo pipefail
+          limit=30000000
+          (cd skills && zip -q -r -X ../skillz-desktop.zip skillz)
+          size=$(unzip -Zt skillz-desktop.zip | awk '{print $3}')
+          echo "skillz-desktop.zip unpacks to $size bytes; the limit is $limit."
+          if [ "$size" -gt "$limit" ]; then
+            echo "::error::skillz-desktop.zip unpacks to $size bytes, over the $limit-byte upload limit."
+            exit 1
+          fi
+
+      - name: Install pinned gh CLI
+        env:
+          GH_VERSION: "2.92.0"
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_amd64.tar.gz" | tar -xz -C /tmp
+          sudo install -m 755 "/tmp/gh_${GH_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+
+      - name: Attach zip to release
+        # `--clobber` lets a re-run replace the asset.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" skillz-desktop.zip --clobber
