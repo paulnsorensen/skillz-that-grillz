@@ -13,6 +13,14 @@ Each package keeps its own history:
 
 ## [Unreleased]
 
+### Added
+
+- `skillz-desktop.zip` on each GitHub release: the `skillz` skill with
+  source-only helper scripts, under the 30 MB upload limit of the Claude
+  desktop app and claude.ai.
+- README install steps for the Claude desktop app, claude.ai, and coding apps,
+  without a terminal.
+
 ## [0.4.0] - 2026-10-25
 
 This release turns the repository into a library repository. It publishes one
