@@ -279,4 +279,58 @@ _Source: PR #579 guard review and approved repair · Updated: 2026-10-30_
 - **Alternatives:** Accept any binary file (no limit on type or size, and the judge prompt could carry bytes). A side file next to the seed (the seed and the case hash would no longer cover the bytes). Show the image to the judge (a new attachment path for every grader).
 - **Consequences:** A judge cannot see an image fixture; a command grader reads it from the workspace. Magic bytes prove the type, not that the image decodes. SVG stays refused, because it is text that can carry script.
 
+### ADR-031: Keep per-case proof separate from free planning  [status: accepted]
+- **Context:** Gate-wide fixtures test a gate path, not each authored case (#657).
+- **Decision:** Check proof per selected case. Preserve the legacy gate-wide probe. Keep #721/#297 separate.
+- **Consequences:** A shared gate can name the case with failed proof.
+
+### ADR-032: Case proof stays optional  [status: accepted]
+- **Context:** Existing cases have no proof references.
+- **Decision:** Warn for missing pass or fail proof. Reject supplied invalid proof.
+- **Consequences:** Incomplete coverage stays visible without invalidating older cases.
+
+### ADR-033: Case proof stays outside approval and frozen data  [status: accepted]
+- **Context:** Approval hashes canonical case data; proof files can change later.
+- **Decision:** Treat proof as diagnostic-only. Exclude it from approval and frozen runs.
+- **Consequences:** A report covers only the proof checked at its creation time.
+
+### ADR-034: Each authored case holds its proof references  [status: accepted]
+- **Context:** Seed and draft formats already carry case authoring data.
+- **Decision:** Add optional proof references to seed and draft cases, but not task inputs or frozen cases.
+- **Consequences:** Schemas and authoring guidance include proof.
+
+### ADR-035: Pass proof needs full score and fail proof needs zero  [status: accepted]
+- **Context:** Partial credit cannot prove full acceptance.
+- **Decision:** Require pass=1 and fail=0 after a valid exit-zero JSON score.
+- **Consequences:** Invalid execution, booleans, and non-finite scores never certify fail proof.
+
+### ADR-036: This case-proof delivery makes no model calls  [status: accepted]
+- **Context:** A local gate result cannot establish a model-judge verdict.
+- **Decision:** Check offline case gates. Defer paid judge checks outside #657.
+- **Consequences:** No model call or judge verdict enters proof validation.
+
+### ADR-037: Case proof supports both gate files and argv  [status: accepted]
+- **Context:** Existing graders use resolved gate-file argv or direct command argv.
+- **Decision:** Run both forms through the same per-case probe controls.
+- **Consequences:** Result validity is separate from numeric score. Legacy probes stay unchanged.
+
+### ADR-038: Case probes use bounded local execution  [status: accepted]
+- **Context:** A temporary workspace does not isolate host files or the network.
+- **Decision:** Use a clean environment, time and output limits, and process-group cleanup for trusted local graders.
+- **Consequences:** These controls are not an OS sandbox.
+
+### ADR-039: Case proof uses actual case inputs  [status: accepted]
+- **Context:** A complete fixture workspace could replace the approved case inputs.
+- **Decision:** Stage actual case files plus text proof output. Require an explicit journey trace.
+- **Consequences:** Reject other fixture-root files. Journey proof replaces a case trace; ordinary proof does not.
+
+### ADR-040: Case probes use caller tool paths  [status: accepted]
+- **Context:** Local tools can live outside the system default path.
+- **Decision:** Snapshot caller PATH once. Honor explicit executable paths and preserve argv tokens.
+- **Consequences:** Tool versions can affect results, but other caller environment variables do not pass through.
+
+### ADR-041: Malformed proof stays diagnostic-only  [status: accepted]
+- **Context:** Shared parsers serve both run loading and strict static validation.
+- **Decision:** Reject malformed proof in validate and strict checks, not normal loading.
+- **Consequences:** Check metadata on every loaded case. Check files and commands only for selected cases. Preserve author pointers.
 _Source: Mold session 2026-10-03, Mold sessions 2026-10-10, PR #118 Affinage review, PR #203 merge review, the issue #168 and #169 research, and the spec skillz-autoimprove-claims (approved 2026-10-15) · Updated: 2026-10-18 (ADR-005 amendment, inspector path; ADR-007 superseded by the nono removal; ADR-008 to ADR-010; ADR-008 simulator tokens and ADR-009 own wedge targets; ADR-009 nono text amendment; ADR-011 to ADR-013 module layout; ADR-014 run compatibility fingerprint and its 2026-10-14 val_policy and merge amendment; ADR-015 reflection sentence limit, W4.4 attempt history, W4.5 rejected memory and notes, and W4.7 stall focus; ADR-016 stall stop; gh-302 prose+cli policy and default edit mode; ADR-017 three claims and the replay phase; ADR-008 kit families and ADR-010 460-call allowance amendments; ADR-018 headroom stop and the ADR-010 headroom amendment; ADR-019 scaffold and session mining; ADR-020 cross-run attempt history; ADR-021 eval kinds; ADR-022 gate files; ADR-023 typed journey expected; ADR-008 files amendment; ADR-024 journey kinds and run --kind; ADR-025 checked-in journeys; ADR-026 shipped skillz journeys; 2026-10-19 Mold session judge-criteria-verdicts: ADR-027 criteria verdicts, ADR-028 criteria drafting and flags, ADR-029 no kind criteria and pillars removed, ADR-023 criteria amendment; gh-589 ADR-030 image fixtures)_

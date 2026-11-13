@@ -7,6 +7,7 @@ handles the flat `key: value` shape that these files use and rejects what it can
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 BLOCK_SCALAR = re.compile(r"[|>](?:[+-]?\d?|\d[+-])")
 COMMENT = re.compile(r"(?:^|\s)#.*$")
@@ -70,3 +71,13 @@ def read_frontmatter(text: str) -> dict[str, str]:
         else:
             fields[key] = _unquote(line.partition(":")[2]) if separator else ""
     return fields
+
+
+def skill_frontmatter(target: Path) -> dict[str, str]:
+    """Return nonempty top-level fields of the target's SKILL.md, or no fields when unreadable."""
+    skill = target / "SKILL.md"
+    try:
+        fields = read_frontmatter(skill.read_text(encoding="utf-8")) if skill.is_file() else {}
+    except ValueError:
+        return {}
+    return {key: value for key, value in fields.items() if value}

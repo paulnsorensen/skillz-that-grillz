@@ -175,6 +175,20 @@
         "minimum": 1,
         "default": 8
       },
+      "proof": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "pass": {
+            "type": "string",
+            "pattern": "^evals/(?!\\.|[\\s\\S]*/\\.)(?![\\s\\S]*\\\\)(?![\\s\\S]*\\x00)[^/]+(?:/[^/]+)*$"
+          },
+          "fail": {
+            "type": "string",
+            "pattern": "^evals/(?!\\.|[\\s\\S]*/\\.)(?![\\s\\S]*\\\\)(?![\\s\\S]*\\x00)[^/]+(?:/[^/]+)*$"
+          }
+        }
+      },
       "regression": {
         "type": "boolean",
         "description": "A case drafted from a field failure. Needs source: session. The headroom pass records whether the seed fails it."

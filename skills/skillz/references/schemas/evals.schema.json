@@ -82,6 +82,20 @@
               "null"
             ],
             "description": "The skill that must start, or null for a near-miss."
+          },
+          "proof": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "pass": {
+                "type": "string",
+                "pattern": "^evals/(?!\\.|[\\s\\S]*/\\.)(?![\\s\\S]*\\\\)(?![\\s\\S]*\\x00)[^/]+(?:/[^/]+)*$"
+              },
+              "fail": {
+                "type": "string",
+                "pattern": "^evals/(?!\\.|[\\s\\S]*/\\.)(?![\\s\\S]*\\\\)(?![\\s\\S]*\\x00)[^/]+(?:/[^/]+)*$"
+              }
+            }
           }
         },
         "allOf": [

@@ -32,7 +32,12 @@ def _report(capsys: pytest.CaptureFixture[str], *arguments: str) -> tuple[int, d
 def test_validate_accepts_the_shipped_skillz_skill_with_a_full_holdout(capsys: pytest.CaptureFixture[str]) -> None:
     code, report = _report(capsys, "--target", str(REPO / "skills/skillz"))
     split = cast(dict[str, int], report["split"])
-    assert code == 0 and report["ok"] is True and report["findings"] == []
+    findings = cast(list[dict[str, object]], report["findings"])
+    cases = cast(dict[str, dict[str, int]], report["cases"])
+    assert code == 0 and report["ok"] is True
+    assert len(findings) == 2 * cases["kinds"]["task"]
+    assert all(item["code"] == "case-proof-missing" and item["severity"] == "warning"
+               and str(item["pointer"]).endswith(("/proof/pass", "/proof/fail")) for item in findings)
     assert split["holdout"] >= 6 and split["seed"] == SEED
 
 
