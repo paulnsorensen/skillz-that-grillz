@@ -171,3 +171,6 @@
 2026-11-08 · 696842941e9097bb · merged · decisions/harness-module-interface.md · Codex prepares real Git grant roots before launch; AC-1 checks Git non-discovery. All three frozen retrieval probes return the target at rank 1.
 
 - 2026-11-11 · 7b88a43470a98010 · merged · parallel-quality-gate.md · Record the reproduced host-visible Codex sandbox Git-marker race. Keep ancestor guards and full gate lanes enabled. Frozen retrieval probes pass at ranks 1, 2, and 1.
+
+
+- 2026-11-13 · 6b2fb496e7c0e5b3 · merged · criteria/gh-657.md · Record loaded-source metadata, decoder recursion, unreadable traversal, and newline schema parity pitfalls. Preserve all acceptance criteria. Frozen exact and natural probes return rank 1.

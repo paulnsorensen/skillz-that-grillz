@@ -7,15 +7,16 @@ resolve the case kind and the case id with the same code. This module uses the s
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
-from skillz_experiments._cases import JOURNEY_FIELDS, CodedError, journey_of, relative, string, text_map
+from skillz_experiments._cases import JOURNEY_FIELDS, CodedError, journey_of, string, text_map
+from skillz_experiments._records import fixture_problem, proof_problem
 
 EVAL_KINDS = ("trigger", "near-miss", "task")
 SOURCES = ("skill", "session")
 FIXTURES = "evals/files/"
-EVAL_FIELDS = ("id", "name", "prompt", "expected_output", "files", "assertions", "kind", "family", "expected_skill")
+EVAL_FIELDS = ("id", "name", "prompt", "expected_output", "files", "assertions", "kind", "family", "expected_skill", "proof")
 _TEXT_ID = re.compile(r"[A-Za-z0-9._-]{1,128}")
 TASK_FIXTURE = ("add a starting fixture to the files of its evals/evals.json entry, name the fixture in the entry prompt, "
                 "and copy the new seed case into the draft; the draft cannot change a seed request")
@@ -34,6 +35,7 @@ class EvalEntry:
     files: tuple[str, ...]
     expected_output: str
     assertions: tuple[str, ...]
+    proof: object = field(default_factory=dict[str, object])
 
 
 @dataclass(frozen=True)
@@ -127,14 +129,6 @@ def _kind(item: dict[str, object], strict: bool, assertions: tuple[str, ...], ex
     return "task", True
 
 
-def _fixture_problem(path: str) -> bool:
-    try:
-        _ = relative(path)
-    except ValueError:
-        return True
-    return not path.startswith(FIXTURES)
-
-
 def _entry(item: dict[str, object], index: int, strict: bool, problems: list[str]) -> EvalEntry | None:
     name, ident = _identity(item, strict, problems)
     prompt = _text(item.get("prompt"), "prompt", problems)
@@ -152,13 +146,16 @@ def _entry(item: dict[str, object], index: int, strict: bool, problems: list[str
     files = _texts(item, "files", problems)
     if strict:
         problems.extend(f"files: {path!r} must be a plain path under {FIXTURES}" for path in files
-                        if _fixture_problem(path))
+                        if fixture_problem(path))
+        if "proof" in item and (problem := proof_problem(item["proof"])) is not None:
+            problems.append(f"proof{problem[0]}: {problem[1]}")
     family = _text(item["family"], "family", problems) if "family" in item else None
     kind, inferred = _kind(item, strict, assertions, expected_output, problems)
     identifier = name if name is not None else f"eval-{ident}" if ident is not None else None
     if problems or prompt is None or kind is None or identifier is None:
         return None
-    return EvalEntry(index, identifier, prompt, kind, inferred, family, files, expected_output, assertions)
+    return EvalEntry(index, identifier, prompt, kind, inferred, family, files, expected_output, assertions,
+                     item.get("proof", {}))
 
 
 def parse_evals(document: object, *, strict: bool) -> ParsedEvals:
@@ -207,7 +204,7 @@ def parse_evals(document: object, *, strict: bool) -> ParsedEvals:
     return ParsedEvals(tuple(entries), tuple(errors))
 
 
-JOURNEY_KEYS = {"id", "family", "kind", "request", "files", "expected", "source", "regression"} | JOURNEY_FIELDS
+JOURNEY_KEYS = {"id", "family", "kind", "request", "files", "expected", "source", "regression", "proof"} | JOURNEY_FIELDS
 JOURNEY_REQUIRED = ("id", "family", "kind", "request", "brief", "expected", "source")
 
 
@@ -264,10 +261,14 @@ def _journey(item: dict[str, object], strict: bool) -> dict[str, object]:
     if "files" in item:
         case["files"] = text_map(item["files"])
     case["expected"] = item["expected"]
+    if "proof" in item and item["proof"] != {}:
+        case["proof"] = item["proof"]
+    if strict and "proof" in item and (problem := proof_problem(item["proof"])) is not None:
+        raise ValueError(f"proof{problem[0]}: {problem[1]}")
     return case
 
 
-def parse_journeys(document: object, *, strict: bool) -> ParsedJourneys:
+def parse_journeys(document: object, *, strict: bool, indices: list[int] | None = None) -> ParsedJourneys:
     """Check an `evals/journeys.json` document: a list of journey cases in the draft-case shape.
 
     Return the valid cases and every error, each with its `journeys[i]` location. A case `kind` is any
@@ -275,13 +276,12 @@ def parse_journeys(document: object, *, strict: bool) -> ParsedJourneys:
     """
     if not isinstance(document, list):
         return ParsedJourneys((), ("expected a JSON list of journey cases",))
-    items = cast(list[object], document)
-    if strict and not items:
+    if strict and not document:
         return ParsedJourneys((), ("the list must contain at least one journey case",))
     cases: list[dict[str, object]] = []
     errors: list[str] = []
     seen: set[str] = set()
-    for index, raw in enumerate(items):
+    for index, raw in enumerate(cast(list[object], document)):
         if not isinstance(raw, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], raw)):
             errors.append(f"journeys[{index}]: expected a JSON object")
             continue
@@ -295,4 +295,6 @@ def parse_journeys(document: object, *, strict: bool) -> ParsedJourneys:
             continue
         seen.add(cast(str, case["id"]))
         cases.append(case)
+        if indices is not None:
+            indices.append(index)
     return ParsedJourneys(tuple(cases), tuple(errors))

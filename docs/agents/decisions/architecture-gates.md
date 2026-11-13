@@ -43,5 +43,11 @@ All other depth limits stay unchanged.
 - **Decision:** `check --base auto` uses `$GATE_BASE`, else `HEAD^1` in GitHub Actions, else the merge base with `origin/main`. The CI gate job checks out with `fetch-depth: 2`; in a pull request run, `HEAD^1` of the merge commit is the base branch tip.
 - **Consequences:** A clone without `origin/main` must set `GATE_BASE`. The guard is an input error (exit 2) when it cannot find the base. A base without `slices.toml` marks the adoption change, which may add the baseline.
 
+### ADR-006: The proof slice has one export and no facade logic  [status: accepted]
+
+- **Context:** #657 adds one dedicated slice for offline case proof. Its approved facade is a single function re-export.
+- **Decision:** Map only `proof/` as a new slice and allow only the app-to-proof edge. Set the initial proof depth baseline to one public name and zero crust statements, complexity, and unused exports. No existing cap increases.
+- **Consequences:** The slice guard and depth ratchet enforce the new seam. The facade stays free of function bodies.
+
 [^pr-691-surface]: User approval, 2026-11-10: “Approve the limit increase to 11”; `depth-ratchet.json:46-52`; PR #691.
 [^pr-691-callers]: `packages/skillz/src/skillz_experiments/run/__init__.py:1-11`; `packages/skillz/src/skillz_experiments/_cli.py`; `packages/skillz/src/skillz_experiments/_validate.py:23,146`.

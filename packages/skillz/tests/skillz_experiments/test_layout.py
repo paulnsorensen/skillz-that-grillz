@@ -29,6 +29,7 @@ SLICES: dict[str, str] = {
     "harness": ADR_011,
     "wrapper": "harness-module-interface:ADR-002",
     "evaluation": ADR_011,
+    "proof": "skillz-autoimprove:ADR-031",
 }
 # Each module at the package root, with the decision that keeps it there. A new flat module goes into a slice (ADR-011).
 ROOT_MODULES: dict[str, str] = {

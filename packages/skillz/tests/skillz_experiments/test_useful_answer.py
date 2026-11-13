@@ -218,8 +218,14 @@ def test_a_request_that_names_a_sibling_fixture_stops_before_the_case_question_a
     assert built == [] and started == [] and not (out / "cases.json").exists() and not (out / "run.json").exists()
     report = validate(target, out / DRAFT_NAME)
     findings = cast(list[Json], report["findings"])
-    assert not report["ok"] and [(found["code"], found["file"]) for found in findings] == [
+    assert not report["ok"]
+    errors = [found for found in findings if found["severity"] == "error"]
+    warnings = [found for found in findings if found["severity"] == "warning"]
+    assert [(found["code"], found["file"]) for found in errors] == [
         ("case-fixture-missing", str(out / DRAFT_NAME))]
+    assert len(warnings) == 24
+    assert all(found["code"] == "case-proof-missing" and found["file"] == str(out / DRAFT_NAME)
+               and cast(dict[str, object], found["data"])["side"] in {"pass", "fail"} for found in warnings)
 
 
 @pytest.mark.ac("autoimprove-useful-answer:AC-5")

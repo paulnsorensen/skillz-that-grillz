@@ -46,6 +46,7 @@ Each entry in `evals` has these fields:
 | `assertions` | Checks for a `task` entry. A `trigger` or `near-miss` entry has none. |
 | `family` | A group of related cases. A `task` entry needs it for the split. |
 | `expected_skill` | The skill that must start. `null` marks a `near-miss`. |
+| `proof` | Optional case-local `pass` and `fail` directory references below `evals/`. See "Case proof" below. |
 
 The three kinds differ in what they check:
 
@@ -70,6 +71,7 @@ The file is a JSON list with at least one case. Each case has these fields:
 | `expected` | The closed reference object below. |
 | `source` | `skill` for a case drafted from the skill, or `session` for a case mined from past sessions. The seed uses `skill` when it is absent. |
 | `regression` | Optional. `true` marks a case that comes from a field failure. It is valid only with `source: session`. A draft `trigger` or `near-miss` case cannot take it, because the run does not score it. The default is `false`, and a false value is not stored. |
+| `proof` | Optional case-local `pass` and `fail` directory references below `evals/`. See "Case proof" below. |
 
 CI requires `id`, `family`, `kind`, `request`, `brief`, `expected`, and `source`. Any other key is an error.
 
@@ -210,6 +212,52 @@ A seed case has no criteria until you draft them, so `validate` without `--draft
 Each finding has `code`, `severity`, `file`, `pointer`, `message`, and `fix`.
 The command exits 1 when any finding has severity `error`.
 
+### Case proof
+
+An eval, journey, or draft case may hold `"proof": {"pass": "evals/proofs/case/pass", "fail": "evals/proofs/case/fail"}`.
+The `proof` object accepts only `pass` and `fail` keys.
+Each value must be a canonical target-relative directory path below `evals/`.
+Do not use absolute paths, hidden components, `..`, backslashes, empty components, or trailing slashes.
+An absent `proof` object or `{}` leaves both sides missing.
+`null`, unknown keys, and invalid paths are errors in strict author checks and `validate`.
+Normal run loading does not reject a case for malformed proof metadata.
+Both static checks inspect metadata only. They do not read proof trees or run graders.
+
+Each referenced directory may hold only an `output/` tree with UTF-8 text files.
+An empty `output/` tree is valid.
+A journey proof must also hold `trace/events.jsonl`; an empty trace is valid.
+An ordinary proof must not hold a `trace/` tree.
+No other fixture-root entry is valid.
+Proof paths must have plain directories and regular files, with no symbolic links or hidden components.
+One proof tree may hold at most 200 files and 4 MiB of text.
+The validator stages the case's actual `files` before it adds proof output.
+Proof output cannot replace a case input; only a journey proof may replace a case trace.
+The validator does not stage expected answers or rubrics.
+
+`validate` warns for each missing side of a selected case.
+It checks each supplied side with that case's selected grader command, including resolved gate files.
+A pass proof must score exactly 1, and a fail proof must score exactly 0.
+The command must exit 0 and print a JSON object with a finite numeric `score` from 0 to 1.
+A failed command cannot certify a fail proof.
+A selected case without an executable grader reports an unsupported-proof error.
+Malformed metadata is checked on every loaded case, including unselected cases.
+Proof files and commands are checked only for selected cases.
+Findings name the author file, exact JSON Pointer, case id, kind, side, and reference when available.
+
+Proof checks make no model call and no judge verdict.
+They use a private temporary workspace, a clean environment, a private `HOME`, and `LC_ALL=C.UTF-8`.
+They use the caller's `PATH` for executable lookup and for the child process.
+A missing caller `PATH` uses the standard system path.
+An empty or relative path component resolves in the staged workspace.
+Explicit executable paths stay explicit, and argv tokens stay separate.
+The process has a 20-second timeout, a 64 KiB stdout limit, and a 4 MiB file-size limit.
+The validator removes the process group and temporary workspace after every outcome.
+These controls do not isolate the process from host files or the network.
+Run proof only for trusted targets.
+
+Proof does not change approval hashes, frozen cases, candidate inputs, or contract identity.
+A report describes the proof files checked at that time; edit proof, then run `validate` again.
+
 ## The files the runner writes
 
 The run directory `RUN` holds files that the runner writes. Edit only the draft.
@@ -223,6 +271,8 @@ A draft case has the same fields as a journey case, with these differences.
 The `kind` may also be `trigger`, `near-miss`, or `task`.
 A `trigger` or `near-miss` case needs neither `brief` nor `expected`.
 A `task` case needs `files` and `expected` but no `brief`.
+The optional `proof` field follows the same case-local format in a draft.
+The runner does not copy seed proof references into the draft automatically.
 
 The seed, the draft, and `RUN/cases.json` keep each fixture text once.
 The seed and `RUN/cases.json` are objects with a `fixtures` map (path to text) and a `cases` list.

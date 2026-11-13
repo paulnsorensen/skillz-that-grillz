@@ -95,6 +95,13 @@ crust = ["packages/skillz/src/skillz_experiments/evaluation/__init__.py"]
 shape = "thin-facade"
 may_depend_on = ["skillz-core"]
 
+[[slice]]
+name = "proof"
+paths = ["packages/skillz/src/skillz_experiments/proof"]
+crust = ["packages/skillz/src/skillz_experiments/proof/__init__.py"]
+shape = "thin-facade"
+may_depend_on = ["skillz-core"]
+
 # The skillz_experiments root modules. `skillz-core` holds the KERNEL modules of test_layout.py
 # plus the root modules that they import; `skillz-app` holds the CLI modules that import the slices.
 
@@ -132,4 +139,4 @@ paths = [
   "packages/skillz/src/skillz_experiments/_schemas.py",
   "packages/skillz/src/skillz_experiments/_validate.py",
 ]
-may_depend_on = ["fromargs", "gate", "harness", "run", "search", "skillz-core", "wrapper"]
+may_depend_on = ["fromargs", "gate", "harness", "proof", "run", "search", "skillz-core", "wrapper"]
