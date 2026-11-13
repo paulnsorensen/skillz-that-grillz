@@ -2296,7 +2296,7 @@ def short_tempdir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """
     if not LINUX_HOST:
         pytest.skip("abstract Unix sockets exist only on Linux")
-    directory = Path(tempfile.mkdtemp(prefix="skz", dir="/tmp"))
+    directory = Path(tempfile.mkdtemp(prefix="skz", dir=os.environ.get("TMPDIR", "/tmp")))
     monkeypatch.setattr(tempfile, "tempdir", str(directory))
     yield directory
     shutil.rmtree(directory, ignore_errors=True)
@@ -2499,7 +2499,10 @@ def test_settings_deny_bash_writes_to_project_settings(tmp_path: Path) -> None:
 
 def test_blocked_nested_namespace_turns_off_the_socket_filter_and_probes_a_host_socket(
         tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    del sandbox_passes, short_tempdir
+    del sandbox_passes
+    assert short_tempdir.parent == Path(os.environ.get("TMPDIR", "/tmp"))
+    with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as socket_root:
+        assert len(os.fsencode(Path(socket_root) / "s")) < 104
     monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
     executable = in_process_claude(tmp_path)
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)

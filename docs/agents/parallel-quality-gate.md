@@ -112,7 +112,8 @@ Code checks remain unchanged for queue drafts.[^12]
 
 ## Resource ownership
 
-The scheduler creates a unique short directory under `/tmp`.
+The scheduler creates a unique private short directory under `/var/tmp`.
+It sets child `TMPDIR` to this owned root for every gate mode and restores the caller value when the gate returns.
 Each pytest suite receives a separate base directory and cache.
 Short bases avoid the Mac Unix-socket path limit after xdist adds worker directories.
 The scheduler stops owned process groups before it deletes the temporary root on interruption.[^6]
@@ -128,15 +129,16 @@ Tests that deliberately override the compiler root still use their isolated cold
 
 ### Codex sandbox commands and temporary Git markers
 
-Local skillz tests can report `preflight-leak` for `/tmp/.git` during concurrent Codex sandbox commands.
+The former shared `/tmp` test base could report `preflight-leak` for `/tmp/.git` during concurrent Codex sandbox commands.
 On this Linux host, a controlled sandbox command exposes a temporary Git marker to host processes.
 The host marker disappears when the sandbox command exits.
 The real Claude ancestor check rejects the marker while present and passes after removal.[^14]
 
-A full quality gate started outside the Codex sandbox still shares this host path.
-Run host verification without concurrent sandbox commands.
+The scheduler now uses its owned `/var/tmp` root for test bases and child temporary files.
+The `short_tempdir` fixture uses child `TMPDIR` and keeps real preflight Unix-socket paths short.
+This avoids the shared `/tmp` marker without changing sandbox or ancestor checks.
 Keep all gate lanes and ancestor checks enabled.
-Changing `TMPDIR` alone does not move the scheduler's fixed `/tmp` test base.
+Changing `TMPDIR` alone would not have moved the former fixed `/tmp` test base.
 Do not delete a shared Git entry without ownership evidence.
 
 A private `/tmp` bubblewrap wrapper is not a verified workaround on this host.
@@ -176,7 +178,7 @@ A still-live descendant fails after the observation deadline.[^9]
 [^3]: justfile:1-34.
 [^4]: .github/scripts/run_gate.py:110-161; pyproject.toml:17-24.
 [^5]: .github/scripts/run_gate.py:164-172; CONTRIBUTING.md:60-65.
-[^6]: .github/scripts/run_gate.py:89-107,196-217; .github/scripts/test_run_gate.py:82-127.
+[^6]: .github/scripts/run_gate.py:69-85,198-212,527-594; .github/scripts/test_run_gate.py:368-408; packages/skillz/tests/skillz_experiments/test_claude.py:2291-2302,2500-2516.
 [^7]: packages/wedge/pyproject.toml:37-38; packages/fromargs/pyproject.toml:28-29; uv.lock; packages/wedge/src/wedge/_key.py:134-152; packages/wedge/examples/skills/cheese-cave/scripts/cheese-cave.wedge.json.
 
 [^8]: [Linux CI run 38102417849](https://github.com/paulnsorensen/skillz-that-grillz/actions/runs/38102417849); .context/parallelism/linux-ci-failure.log. The local log is gitignored.
@@ -189,4 +191,4 @@ A still-live descendant fails after the observation deadline.[^9]
 
 [^14]: Local gate investigation, 2026-11-11, PRs #691 and #725. Five controlled sandbox calls accompany six observed marker cycles. All six present states fail the real `check_ancestors`; all six absent states pass. packages/skillz/src/skillz_experiments/harness/_claude/_login.py:250-265.
 
-_Source: Approved parallel-build contract, workspace rebase, local verification, Linux CI finding, approved queue-title exception, and Linux sandbox-marker reproduction · Updated: 2026-11-11 · Supersedes: immediate descendant-state observation_
+_Source: Approved parallel-build contract, workspace rebase, local verification, Linux CI finding, approved queue-title exception, Linux sandbox-marker reproduction, and 2026-11-13 gate-temp fixture regression · Updated: 2026-11-13 · Supersedes: immediate descendant-state observation_
