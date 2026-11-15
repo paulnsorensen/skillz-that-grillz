@@ -351,7 +351,7 @@ def _journey_target(tmp_path: Path) -> Path:
 def test_journey_only_target_without_draft_keeps_the_journey_ceiling(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = _journey_target(tmp_path)
-    code, report = _plan(capsys, "--target", str(target), "--edit", "prose", "--planning-call-cap", "1001")
+    _, report = _plan(capsys, "--target", str(target), "--edit", "prose", "--planning-call-cap", "1001")
     preview = cast(dict[str, object], report["preview"])
     inputs = cast(dict[str, object], preview["inputs"])
     codes = [item["code"] for item in cast(list[dict[str, object]], report["findings"])]
@@ -370,7 +370,7 @@ def test_mixed_kinds_without_draft_leave_the_ceiling_unresolved(
                          "--planning-call-cap", "1001")
     inputs = cast(dict[str, object], cast(dict[str, object], report["preview"])["inputs"])
     codes = [item["code"] for item in cast(list[dict[str, object]], report["findings"])]
-    assert "budget-cap-exceeded" not in codes, codes
+    assert code == 0 and "budget-cap-exceeded" not in codes, codes
     assert inputs["effective_ceiling_calls"] is None and inputs["effective_ceiling_seconds"] is None
 
 
