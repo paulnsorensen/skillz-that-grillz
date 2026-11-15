@@ -25,7 +25,7 @@ RUNNER = Path(run_gate.__file__).resolve()
 # A hang guard, not a speed check: a starved host can take far longer than 10 s to start a child.
 HANG_GUARD = 120
 FAKE_TOOL = """#!/usr/bin/env python3
-import os, pathlib, signal, subprocess, sys, time
+import os, pathlib, signal, stat, subprocess, sys, tempfile, time
 args = sys.argv[1:]
 with open(os.environ['EVENT_LOG'], 'a') as log:
     log.write(pathlib.Path(sys.argv[0]).name + ' ' + ' '.join(args) + '\\n')
@@ -33,6 +33,11 @@ with open(os.environ['EVENT_LOG'], 'a') as log:
         log.write('live-flag-leaked\\n')
     if 'COVERAGE_FILE' in os.environ:
         log.write('coverage-file ' + os.environ['COVERAGE_FILE'] + '\\n')
+if os.environ.get('TEMP_PROBE_LOG'):
+    with tempfile.TemporaryDirectory() as child:
+        with open(os.environ['TEMP_PROBE_LOG'], 'a') as log:
+            log.write(os.environ['TMPDIR'] + '|' + child + '|' +
+                      oct(stat.S_IMODE(os.stat(os.environ['TMPDIR']).st_mode)) + '\\n')
 if args == ['python', 'dir']:
     print(os.environ.get('FAKE_PYTHON_DIR',
                          os.environ.get('UV_PYTHON_INSTALL_DIR', str(pathlib.Path.home() / 'managed-python'))))
@@ -140,8 +145,12 @@ class GateRunnerTest(unittest.TestCase):
         for status, output, diagnostic in cases:
             with self.subTest(status=status, output=output), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
+                caller_tmp = root / "caller-tmp"
+                caller_tmp.mkdir()
+                (caller_tmp / ".git").mkdir()
                 env = {**self._fake_env(root), "UV_PYTHON_INSTALL_DIR": "",
-                       "FAKE_PYTHON_DIR_STATUS": status, "FAKE_PYTHON_DIR": output}
+                       "FAKE_PYTHON_DIR_STATUS": status, "FAKE_PYTHON_DIR": output,
+                       "TMPDIR": str(caller_tmp), "TEMP_PROBE_LOG": str(root / "temp-probes")}
                 result = subprocess.run([sys.executable, str(RUNNER), "check"], env=env,
                                         capture_output=True, text=True, check=False, timeout=HANG_GUARD)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -149,6 +158,14 @@ class GateRunnerTest(unittest.TestCase):
                 commands = [event for event in (root / "events").read_text().splitlines()
                             if event.startswith(("uv ", "just "))]
                 self.assertEqual(commands, ["uv python dir"])
+                observation = (root / "temp-probes").read_text().splitlines()
+                self.assertEqual(len(observation), 1)
+                owned, child, mode = observation[0].split("|")
+                self.assertEqual(Path(owned).parent.resolve(), Path("/var/tmp").resolve())
+                self.assertEqual(Path(child).parent, Path(owned))
+                self.assertEqual(mode, "0o700")
+                self.assertFalse(Path(owned).exists())
+                self.assertTrue((caller_tmp / ".git").exists())
 
     def test_only_the_pytest_lanes_run_under_eatmydata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -355,10 +372,39 @@ class GateRunnerTest(unittest.TestCase):
             self.assertEqual(len(set(caches)), 5)
             self.assertEqual(len(set(bases)), 5)
             self.assertTrue(all(cache.is_absolute() and base.is_absolute() for cache, base in zip(caches, bases)))
-            self.assertTrue(all(str(base).startswith("/tmp/") for base in bases))
+            self.assertTrue(all(base.parent.parent.resolve() == Path("/var/tmp").resolve() for base in bases))
             socket = bases[0].resolve() / "popen-gw0" / "test_a_sandbox_read_root_that_0" / "h" / "inner" / "s"
             self.assertLess(len(os.fsencode(socket)), 104)
             self.assertTrue(all(not path.exists() for path in caches + bases))
+
+    def test_cli_owns_child_tmpdir_for_every_mode(self) -> None:
+        for mode in ("fix", "check", "test", "skillz", *sorted(run_gate.PACKAGE_MODES)):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                caller_tmp = root / "caller-tmp"
+                caller_tmp.mkdir()
+                (caller_tmp / ".git").mkdir()
+                env = {**self._fake_env(root), "TMPDIR": str(caller_tmp),
+                       "TEMP_PROBE_LOG": str(root / "temp-probes")}
+                result = subprocess.run([sys.executable, str(RUNNER), mode], env=env,
+                                        capture_output=True, text=True, check=False, timeout=HANG_GUARD)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                observations = [line.split("|") for line in (root / "temp-probes").read_text().splitlines()]
+                self.assertGreater(len(observations), 0)
+                owned_roots = {observation[0] for observation in observations}
+                self.assertEqual(len(owned_roots), 1)
+                owned_root = Path(owned_roots.pop())
+                self.assertEqual(owned_root.parent.resolve(), Path("/var/tmp").resolve())
+                self.assertNotEqual(owned_root, caller_tmp)
+                pytest_events = [line for line in (root / "events").read_text().splitlines() if " pytest " in line]
+                self.assertGreater(len(pytest_events), 0)
+                self.assertTrue(all(Path(line.split("--basetemp ")[1].split()[0]).parent == owned_root
+                                    and Path(line.split("cache_dir=")[1]).parent == owned_root
+                                    for line in pytest_events))
+                self.assertTrue(all(Path(child).parent == owned_root and mode == "0o700"
+                                    for _, child, mode in observations))
+                self.assertFalse(owned_root.exists())
+                self.assertTrue((caller_tmp / ".git").exists())
 
     def test_a_failed_format_step_stops_the_gate_before_the_archive_build(self) -> None:
         for mode, failing, step in (("fix", "lint-md-fix", "markdown"), ("check", "lint-yaml-fmt", "yaml-fmt")):
@@ -420,7 +466,7 @@ class GateRunnerTest(unittest.TestCase):
             self.assertIn("uv run --locked --python 3.11 --project packages/fromargs pytest", event)
             base = Path(event.split("--basetemp ")[1].split()[0])
             cache = Path(event.split("cache_dir=")[1])
-            self.assertTrue(str(base).startswith("/tmp/"))
+            self.assertEqual(base.parent.parent.resolve(), Path("/var/tmp").resolve())
             self.assertNotEqual(base, cache)
             self.assertFalse(base.exists())
             self.assertFalse(cache.exists())
