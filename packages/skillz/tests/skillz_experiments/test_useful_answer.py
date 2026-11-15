@@ -204,19 +204,20 @@ def test_a_request_that_names_a_sibling_fixture_stops_before_the_case_question_a
     _ = write_draft(out)
     # Case t1-0 copies the request of t0-0, so it names a fixture that only t0-0 stages.
     _fixture_draft(out, lambda name: f"Read evals/files/{name if name != 't1-0' else 't0-0'}.json, then answer.")
-    started = _no_model_process(monkeypatch)
     built: list[tuple[object, ...]] = []
 
     def factory(*args: object) -> NoReturn:
         built.append(args)
         raise AssertionError("a session started")
 
-    with pytest.raises(CodedError) as caught:
-        _ = run(target, out, MODEL, live=True, factory=factory)
-    assert caught.value.code == "case-fixture-missing" and not isinstance(caught.value, Stop)
-    assert "t1-0: evals/files/t0-0.json" in str(caught.value) and "no model call ran" in str(caught.value)
-    assert built == [] and started == [] and not (out / "cases.json").exists() and not (out / "run.json").exists()
-    report = validate(target, out / DRAFT_NAME)
+    with monkeypatch.context() as process_patch:
+        started = _no_model_process(process_patch)
+        with pytest.raises(CodedError) as caught:
+            _ = run(target, out, MODEL, live=True, factory=factory)
+        assert caught.value.code == "case-fixture-missing" and not isinstance(caught.value, Stop)
+        assert "t1-0: evals/files/t0-0.json" in str(caught.value) and "no model call ran" in str(caught.value)
+        assert built == [] and started == [] and not (out / "cases.json").exists() and not (out / "run.json").exists()
+    report = validate(target, out / DRAFT_NAME, edit="prose")
     findings = cast(list[Json], report["findings"])
     assert not report["ok"] and [(found["code"], found["file"]) for found in findings] == [
         ("case-fixture-missing", str(out / DRAFT_NAME))]

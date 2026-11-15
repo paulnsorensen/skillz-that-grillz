@@ -16,7 +16,7 @@ from skillz_experiments.run._stop import Stop
 TABLE_REPEATS = (1, 2, 3)
 
 
-def raised_cap(approve_budget: int | None, cases: Sequence[Case]) -> int:
+def raised_cap(approve_budget: int | None, cases: Sequence[Case], *, flag: str = "--approve-budget") -> int:
     """Return the call cap that a task run sizes against, or 0 for the standard cap.
 
     `--approve-budget N` with `APPROVED_CALLS` < N <= `JOURNEY_CALLS` raises the cap to N. A larger N on a task run
@@ -25,8 +25,9 @@ def raised_cap(approve_budget: int | None, cases: Sequence[Case]) -> int:
     if approve_budget is None or approve_budget <= APPROVED_CALLS or any(case.journey is not None for case in cases):
         return 0
     if approve_budget > JOURNEY_CALLS:
-        raise CodedError("budget-cap-exceeded", f"--approve-budget {approve_budget} is above the ceiling of {JOURNEY_CALLS} calls; "
-                         + f"approve at most {JOURNEY_CALLS}, or lower --repeats or the holdout size")
+        raise CodedError("budget-cap-exceeded", f"{flag} {approve_budget} is above the ceiling of {JOURNEY_CALLS} calls; "
+                         + f"{'approve' if flag == '--approve-budget' else 'use'} at most {JOURNEY_CALLS}, "
+                         + "or lower --repeats or the holdout size")
     return approve_budget
 
 

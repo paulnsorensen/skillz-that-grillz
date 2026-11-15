@@ -94,10 +94,12 @@ def command_paths(command: tuple[str, ...]) -> list[str]:
     return [value for value in values if Path(value).is_absolute()]
 
 
-def _command(value: object, root: Path, *, path_only: bool = False) -> tuple[str, ...]:
+def _command(value: object, root: Path, *, path_only: bool = False, offline: bool = False) -> tuple[str, ...]:
     if not isinstance(value, list) or not value:
         raise ValueError("harness command must be a nonempty argument array, not a shell string")
     parts = [string(item, "command argument") for item in cast(list[object], value)]
+    if offline:
+        return tuple(parts)
     executable = shutil.which(parts[0])
     if executable is None:
         candidate = root / parts[0]
@@ -142,7 +144,17 @@ class Role:
                 else Command(self.command, self.model, budget, checkpoint))
 
 
-def parse_role(value: dict[str, object], model: str, root: Path, *, path_only: bool = False) -> Role:
+@dataclass(frozen=True)
+class OfflineRole:
+    adapter: str
+    model: str | None
+    command: tuple[str, ...]
+    identity: str
+    options: ClaudeOptions = ClaudeOptions()
+
+
+def parse_role_offline(value: dict[str, object], root: Path) -> OfflineRole:
+    """Validate one role without selecting a model or resolving its command."""
     if "isolation" in value:
         if value["isolation"] == "nono":
             raise CodedError("nono-removed", NONO_REMOVED)
@@ -150,11 +162,11 @@ def parse_role(value: dict[str, object], model: str, root: Path, *, path_only: b
     if set(value) - {"adapter", "command", "identity", "model", *OPTION_FIELDS}:
         raise ValueError("unknown harness role configuration field")
     adapter = value.get("adapter", "codex")
-    selected_model = string(value.get("model", model), "role model")
+    selected_model = string(value["model"], "role model") if "model" in value else None
     if adapter == "codex":
         if set(value) - {"adapter", "model"}:
             raise ValueError("Codex role accepts only adapter and model")
-        return Role("codex", selected_model, _command(["codex"], root, path_only=path_only), CODEX_IDENTITY)
+        return OfflineRole("codex", selected_model, _command(["codex"], root, offline=True), CODEX_IDENTITY)
     if adapter == "claude":
         if set(value) - {"adapter", "model", "command", *OPTION_FIELDS}:
             raise ValueError("Claude role accepts only adapter, model, command, effort, sandbox_read, "
@@ -162,11 +174,18 @@ def parse_role(value: dict[str, object], model: str, root: Path, *, path_only: b
         parts = value.get("command", ["claude"])
         if not isinstance(parts, list) or len(cast(list[object], parts)) != 1:
             raise ValueError("Claude command must name only the executable")
-        return Role("claude", selected_model, _command(cast(list[object], parts), root, path_only=path_only),
-                    CLAUDE_IDENTITY, ClaudeOptions.parse(value))
+        return OfflineRole("claude", selected_model, _command(cast(list[object], parts), root, offline=True),
+                           CLAUDE_IDENTITY, ClaudeOptions.parse(value))
     if adapter != "command":
         raise ValueError("harness adapter must be codex, claude, or command")
     if set(value) & OPTION_FIELDS:
         raise ValueError("effort, sandbox_read, and sandbox_seconds apply only to a claude role")
-    return Role("command", selected_model, _command(value.get("command"), root),
-                string(value.get("identity"), "adapter identity"))
+    return OfflineRole("command", selected_model, _command(value.get("command"), root, offline=True),
+                       string(value.get("identity"), "adapter identity"))
+
+
+def parse_role(value: dict[str, object], model: str, root: Path, *, path_only: bool = False) -> Role:
+    parsed = parse_role_offline(value, root)
+    selected_model = parsed.model if parsed.model is not None else string(model, "role model")
+    command = _command(list(parsed.command), root, path_only=path_only and parsed.adapter != "command")
+    return Role(parsed.adapter, selected_model, command, parsed.identity, parsed.options)
