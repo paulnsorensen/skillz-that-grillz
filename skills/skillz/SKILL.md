@@ -207,7 +207,7 @@ Each CLI that is not wedged states the reason.
 
 - Type: agent | skill · Invocation: model | user-only · Tools: <N allowed, N disallowed> · Body: ~N tok (before → after for improve)
 - Harnesses reached: <list> · Findings: N surfaced, N below the bar
-- Target: <path> · Content id: <id | unavailable> · Usage: included | omitted (<reason>) · Audit: fresh | reused <content id> (improve only)
+- Target: <path> · Content id: <id | unavailable> · Usage: included | omitted (<reason>) · Audit: fresh | reused <content id> (improve only) · Read-only per Usage pack: host-enforced | prose-only
 
 | # | Severity | Confidence | Lens | Issue (line) | Fix | Recommendation (apply / decline / `/skillz wedge`) | Decision (approved / declined / pending / residual; improve only) |
 |---|---|---|---|---|---|---|---|
