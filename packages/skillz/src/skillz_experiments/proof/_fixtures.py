@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 import os
 import stat
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 from skillz_experiments._cases import Fixture
@@ -24,16 +24,26 @@ def _directory(target: Path, reference: str) -> Path:
     return here
 
 
+def _walk(root: Path) -> Iterator[tuple[Path, list[str], list[str]]]:
+    """Walk top-down without links or recursion; Python 3.11 os.walk recurses once per directory level."""
+    pending = [root]
+    while pending:
+        parent = pending.pop()
+        with os.scandir(parent) as scan:
+            entries = list(scan)
+        yield (parent, [entry.name for entry in entries if entry.is_dir()],
+               [entry.name for entry in entries if not entry.is_dir()])
+        pending.extend(parent / entry.name for entry in reversed(entries) if entry.is_dir(follow_symlinks=False))
+
+
 def fixture_files(target: Path, reference: str, journey: bool) -> dict[str, bytes]:
     """Return only output text files and a required journey trace from a bounded proof tree."""
     root = _directory(target, reference)
     found: dict[str, bytes] = {}
     total = 0
-    def fail_traversal(error: OSError) -> None:
-        raise error
-    for parent, directories, files in os.walk(root, onerror=fail_traversal, followlinks=False):
+    for parent, directories, files in _walk(root):
         for name in (*directories, *files):
-            path = Path(parent) / name
+            path = parent / name
             rel = path.relative_to(root).as_posix()
             root_entry = len(Path(rel).parts) == 1
             if name.startswith(".") or (root_entry and name not in (("output", "trace") if journey else ("output",))):

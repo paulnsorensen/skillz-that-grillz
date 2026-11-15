@@ -281,6 +281,25 @@ def test_empty_proof_output_is_allowed_and_grader_observes_missing_file(tmp_path
 
 
 @pytest.mark.ac("gh-657:AC-22")
+def test_deep_proof_tree_reads_without_recursion_limit(tmp_path: Path) -> None:
+    reference = "evals/proofs/deep"
+    output = tmp_path / reference / "output"
+    output.mkdir(parents=True)
+    # Python 3.11 Path.mkdir(parents=True) and shutil.rmtree recurse, so build and remove one level at a time.
+    levels = [output / Path(*["d"] * depth) for depth in range(1, sys.getrecursionlimit() + 100)]
+    for level in levels:
+        level.mkdir()
+    answer = levels[-1] / "answer.txt"
+    _ = answer.write_text("pass")
+    try:
+        assert list(fixture_files(tmp_path, reference, False).values()) == [b"pass"]
+    finally:
+        answer.unlink()
+        for level in reversed(levels):
+            level.rmdir()
+
+
+@pytest.mark.ac("gh-657:AC-22")
 def test_proof_count_and_aggregate_budget_include_trace_not_case_files(tmp_path: Path) -> None:
     reference = "evals/proofs/bounded"
     root = tmp_path / reference
