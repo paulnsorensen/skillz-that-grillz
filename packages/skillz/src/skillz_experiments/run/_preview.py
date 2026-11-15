@@ -6,7 +6,7 @@ from pathlib import Path
 
 from skillz_experiments._budget import ceilings
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments._contract import Contract
+from skillz_experiments._contract import LOCATION, Contract
 from skillz_experiments._intake import IntakeCase
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._edit_plan import ReflectionNotes, plan_edit
@@ -14,6 +14,9 @@ from skillz_experiments.run._run import DEFAULT_REPEATS
 from skillz_experiments.run._sizing import Sizer, raised_cap
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.search import Edit
+
+# The finding file of each plan_edit step: the target tree, the wedge configuration, or the contract editable list.
+STAGE_FILES = {"target": "", "wedge": "wedge.toml", "contract": LOCATION}
 
 
 def _eligible(cases: Sequence[IntakeCase]) -> list[Case]:
@@ -23,21 +26,37 @@ def _eligible(cases: Sequence[IntakeCase]) -> list[Case]:
     return [case for case in projected if case.eligible]
 
 
+def _journey(contract: Contract, kinds: Sequence[str]) -> bool | None:
+    """Return whether the scored `kinds` size against the journey ceiling, or None when only the draft can tell."""
+    names = set(contract.journey_kinds())
+    if kinds and all(kind in names for kind in kinds):
+        return True
+    if kinds and not any(kind in names for kind in kinds):
+        return False
+    return None
+
+
 def plan(target: Path, contract: Contract, cases: Sequence[IntakeCase] | None, *, edit: Edit | None = None,
          repeats: int | None = None, planning_call_cap: int | None = None,
-         options: ClaudeOptions | None = None) -> dict[str, object]:
-    """Return free planning facts. The app owns diagnostics and draft validation."""
+         options: ClaudeOptions | None = None, kinds: Sequence[str] = ()) -> dict[str, object]:
+    """Return free planning facts. The app owns diagnostics and draft validation.
+
+    Without `cases`, the scored `kinds` decide the ceiling. A mixed or unknown selection leaves it unresolved.
+    """
     warnings: list[str] = []
     options = ClaudeOptions() if options is None else options
     scored = _eligible(cases) if cases is not None else []
+    journey = any(case.journey is not None for case in scored) if cases is not None else _journey(contract, kinds)
     cap = 0
     cap_error: CodedError | None = None
-    try:
-        cap = raised_cap(planning_call_cap, scored, flag="--planning-call-cap")
-        ceiling_calls, ceiling_seconds = ceilings(any(case.journey is not None for case in scored), cap)
-    except CodedError as error:
-        cap_error = error
-        ceiling_calls, ceiling_seconds = None, None
+    ceiling_calls: int | None = None
+    ceiling_seconds: int | None = None
+    if journey is not None:
+        try:
+            cap = 0 if journey else raised_cap(planning_call_cap, scored, flag="--planning-call-cap")
+            ceiling_calls, ceiling_seconds = ceilings(journey, cap)
+        except CodedError as error:
+            cap_error = error
     inputs: dict[str, object] = {"repeats": DEFAULT_REPEATS if repeats is None else repeats,
                                  "task_timeout": options.sandbox_seconds, "requested_cap": planning_call_cap,
                                  "effective_ceiling_calls": ceiling_calls, "effective_ceiling_seconds": ceiling_seconds}
@@ -47,12 +66,13 @@ def plan(target: Path, contract: Contract, cases: Sequence[IntakeCase] | None, *
         "unavailable": {}, "warnings": warnings,
         "not_checked": ["model selection", "executable availability", "resolved command boundaries", "host readiness",
                         "provider behavior", "approval", "helper builds"]}
+    stage: list[str] = []
     try:
-        free = plan_edit(target, contract, edit, warnings)
+        free = plan_edit(target, contract, edit, warnings, stage)
     except (CodedError, ValueError, OSError) as error:
         code = error.code if isinstance(error, CodedError) else "invalid"
         preview["unavailable"] = {"edit": code, "editable_files": code, "estimate": code}
-        preview["_failure"] = {"code": code, "message": str(error), "file": "wedge.toml"}
+        preview["_failure"] = {"code": code, "message": str(error), "file": STAGE_FILES[stage[-1]]}
         return preview
     notes = ReflectionNotes.size(free.seed, free.mode, offer_prose=edit is not None, emit=False)
     preview["edit"] = {"requested": edit, "resolved": free.mode,

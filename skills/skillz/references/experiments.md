@@ -460,6 +460,7 @@ The `plan` report keeps validate's diagnostic fields and adds `preview`.
 It shows the selected edit mode, sorted editable files, case assignments, resolved inputs, and a numeric estimate when a valid draft supports sizing.
 Without a valid draft, `estimate` is null and `unavailable` names the reason. The seed inventory and usable split remain available.
 Use `--planning-call-cap N` to compare a task ceiling. This input never approves a budget or changes runtime limits.
+Without a valid draft, the scored kinds decide the ceiling. A mix of task and journey kinds leaves the effective ceiling null.
 A harness configuration supplies task sizing options without selecting models or resolving executables. A supplied model still needs valid syntax.
 The preview lists model selection, executable availability, host readiness, provider behavior, approval, and helper builds under `not_checked`.
 A successful preview does not certify execution readiness or grant case or budget approval.
@@ -470,9 +471,12 @@ The stages check the contract, seed files, draft, kind selection, split, and `fa
 A contract with `status: draft` gives a warning. Any error finding makes the command exit 1.
 Each finding has `code`, `severity`, `file`, `pointer`, `message`, and `fix`. A `cases-too-few` finding also holds family counts in `data`.
 
-The report holds `split` with the case count of each split under the default seed.
-The first `run` stop, `cases-missing`, shows the same projection in `seed_summary.split`.
-The projection uses the kinds that run scores by default, and it does not depend on the seed.
+The report holds `split` with the train, validation, and holdout case counts under the split seed.
+These counts come from the draft or seed case assignment, so `--seed` can change them.
+The seed projection is a different value. It does not assign cases to splits.
+It lists `families`, `holdout_capacity`, `deficit`, and `shortfall` for the scored seed families.
+The first `run` stop, `cases-missing`, shows it in `seed_summary.split`. A `plan` report shows it in `preview.seed.split`.
+The projection uses the scored kinds, and it does not depend on the split seed.
 
 Make the cases hard. A family that the seed already passes adds no signal.
 Give each family one trap:

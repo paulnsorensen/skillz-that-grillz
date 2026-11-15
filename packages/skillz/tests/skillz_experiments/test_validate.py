@@ -30,7 +30,7 @@ def _report(capsys: pytest.CaptureFixture[str], *arguments: str) -> tuple[int, d
     return code, cast(dict[str, object], json.loads(capsys.readouterr().out))
 
 
-@pytest.mark.ac("gh-721:AC-5")
+@pytest.mark.ac("gh-297:AC-5")
 def test_plan_without_a_draft_reports_partial_results(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)
@@ -43,7 +43,7 @@ def test_plan_without_a_draft_reports_partial_results(
     assert "estimate" in cast(dict[str, object], preview["unavailable"])
 
 
-@pytest.mark.ac("gh-297:AC-1")
+@pytest.mark.ac("gh-721:AC-1")
 def test_plan_and_validate_default_to_the_run_free_fallback(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)
@@ -57,9 +57,9 @@ def test_plan_and_validate_default_to_the_run_free_fallback(
     assert [item["code"] for item in cast(list[dict[str, object]], validated["findings"])] == ["edit-warning"]
 
 
-@pytest.mark.ac("gh-297:AC-2")
-@pytest.mark.ac("gh-297:AC-3")
-@pytest.mark.ac("gh-297:AC-16")
+@pytest.mark.ac("gh-721:AC-2")
+@pytest.mark.ac("gh-721:AC-3")
+@pytest.mark.ac("gh-721:AC-16")
 def test_validate_explicit_prose_is_portable_but_explicit_cli_does_not_fall_back(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)
@@ -70,7 +70,7 @@ def test_validate_explicit_prose_is_portable_but_explicit_cli_does_not_fall_back
     assert [item["code"] for item in cast(list[dict[str, object]], cli["findings"])] == ["helper-missing"]
 
 
-@pytest.mark.ac("gh-297:AC-3")
+@pytest.mark.ac("gh-721:AC-3")
 def test_invalid_draft_does_not_hide_explicit_cli_failure(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target, draft = make_target(tmp_path), tmp_path / "broken.json"
@@ -81,10 +81,10 @@ def test_invalid_draft_does_not_hide_explicit_cli_failure(
         "invalid", "helper-missing"}
 
 
-@pytest.mark.ac("gh-721:AC-6")
-@pytest.mark.ac("gh-721:AC-9")
-@pytest.mark.ac("gh-721:AC-11")
-@pytest.mark.ac("gh-721:AC-12")
+@pytest.mark.ac("gh-297:AC-6")
+@pytest.mark.ac("gh-297:AC-9")
+@pytest.mark.ac("gh-297:AC-11")
+@pytest.mark.ac("gh-297:AC-12")
 def test_installed_plan_sizes_a_draft_with_offline_configuration(
         tmp_path: Path, make_target: Maker, write_draft: Callable[[Path], list[str]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"

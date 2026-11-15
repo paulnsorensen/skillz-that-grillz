@@ -256,7 +256,7 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
             unavailable_reason = "configuration-invalid"
         try:
             preview_data = plan(target, contract, planned if sizing_ready else None, edit=edit, repeats=repeats,
-                                planning_call_cap=planning_call_cap, options=options)
+                                planning_call_cap=planning_call_cap, options=options, kinds=chosen or ())
             if failure := preview_data.pop("_failure", None):
                 detail = cast(dict[str, str], failure)
                 findings.append(_finding(detail["code"], "error", detail.get("file", ""), detail["message"]))

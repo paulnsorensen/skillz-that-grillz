@@ -31,7 +31,7 @@ def _config(path: Path, **fields: object) -> Path:
     return path
 
 
-@pytest.mark.ac("gh-721:AC-4")
+@pytest.mark.ac("gh-297:AC-4")
 def test_plan_adds_preview_but_validate_keeps_diagnostic_schema(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)
@@ -42,7 +42,7 @@ def test_plan_adds_preview_but_validate_keeps_diagnostic_schema(
     assert code == 0 and set(validated) == {"ok", "contract", "cases", "split", "findings"}
 
 
-@pytest.mark.ac("gh-721:AC-7")
+@pytest.mark.ac("gh-297:AC-7")
 def test_planning_cap_changes_size_ceiling_not_runtime_approval(
         tmp_path: Path, make_target: Maker, write_draft: Callable[[Path], list[str]],
         capsys: pytest.CaptureFixture[str]) -> None:
@@ -62,8 +62,8 @@ def test_planning_cap_changes_size_ceiling_not_runtime_approval(
     assert any(item["code"] == "budget-cap-exceeded" for item in cast(list[dict[str, object]], high["findings"]))
 
 
-@pytest.mark.ac("gh-721:AC-10")
-@pytest.mark.ac("gh-721:AC-14")
+@pytest.mark.ac("gh-297:AC-10")
+@pytest.mark.ac("gh-297:AC-14")
 def test_invalid_unused_role_retains_edit_and_split_without_estimate(
         tmp_path: Path, make_target: Maker, write_draft: Callable[[Path], list[str]],
         capsys: pytest.CaptureFixture[str]) -> None:
@@ -79,7 +79,7 @@ def test_invalid_unused_role_retains_edit_and_split_without_estimate(
     assert any("sandbox_seconds" in str(item["message"]) for item in cast(list[dict[str, object]], report["findings"]))
 
 
-@pytest.mark.ac("gh-721:AC-17")
+@pytest.mark.ac("gh-297:AC-17")
 def test_parsed_draft_with_bad_criteria_keeps_assignments_not_estimate(
         tmp_path: Path, make_target: Maker, write_draft: Callable[[Path], list[str]],
         capsys: pytest.CaptureFixture[str]) -> None:
@@ -99,7 +99,7 @@ def test_parsed_draft_with_bad_criteria_keeps_assignments_not_estimate(
     assert cast(dict[str, object], preview["unavailable"])["estimate"] == "case-criteria-missing"
 
 
-@pytest.mark.ac("gh-721:AC-18")
+@pytest.mark.ac("gh-297:AC-18")
 def test_offline_adapter_rejects_evaluated_journey_transport(
         tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     target = tmp_path / "culture"
@@ -118,7 +118,7 @@ def test_offline_adapter_rejects_evaluated_journey_transport(
     assert any(item["code"] == "journey-unsupported" for item in cast(list[dict[str, object]], report["findings"])), report["findings"]
 
 
-@pytest.mark.ac("gh-721:AC-13")
+@pytest.mark.ac("gh-297:AC-13")
 def test_runtime_configuration_still_requires_model_and_executable(tmp_path: Path) -> None:
     config = _config(tmp_path / "config.json", adapter="command", command=["absent-executable"], identity="offline")
     assert parse_role_offline({"adapter": "command", "command": ["absent-executable"], "identity": "offline"}, tmp_path).model is None
@@ -129,7 +129,7 @@ def test_runtime_configuration_still_requires_model_and_executable(tmp_path: Pat
         _ = Configuration.load(_config(tmp_path / "codex.json"), None)
 
 
-@pytest.mark.ac("gh-721:AC-6")
+@pytest.mark.ac("gh-297:AC-6")
 def test_plan_estimate_matches_the_free_runtime_budget_stop(
         tmp_path: Path, make_target: Maker, write_draft: Callable[[Path], list[str]],
         capsys: pytest.CaptureFixture[str]) -> None:
@@ -148,7 +148,7 @@ def test_plan_estimate_matches_the_free_runtime_budget_stop(
     assert preview["estimate"] == second.value.data["estimate"]
 
 
-@pytest.mark.ac("gh-721:AC-8")
+@pytest.mark.ac("gh-297:AC-8")
 def test_plan_export_only_raises_the_approved_run_surface_cap() -> None:
     from skillz_experiments import run as run_module
 
@@ -164,7 +164,7 @@ def test_plan_export_only_raises_the_approved_run_surface_cap() -> None:
     assert cast(dict[str, object], cast(dict[str, object], caps["slices"])["run"])["M09.public_surface"] == 12
 
 
-@pytest.mark.ac("gh-721:AC-5")
+@pytest.mark.ac("gh-297:AC-5")
 def test_invalid_draft_is_partial_with_a_specific_unavailable_reason(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target, draft = make_target(tmp_path), tmp_path / "broken.json"
@@ -177,7 +177,7 @@ def test_invalid_draft_is_partial_with_a_specific_unavailable_reason(
 
 
 
-@pytest.mark.ac("gh-721:AC-5")
+@pytest.mark.ac("gh-297:AC-5")
 def test_edit_failure_keeps_independent_plan_inputs(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)
@@ -193,7 +193,7 @@ def test_edit_failure_keeps_independent_plan_inputs(
     assert cast(dict[str, object], preview["unavailable"])["estimate"] == "helper-missing"
     assert any(item["code"] == "helper-missing" for item in cast(list[dict[str, object]], report["findings"]))
 
-@pytest.mark.ac("gh-721:AC-10")
+@pytest.mark.ac("gh-297:AC-10")
 def test_plan_rejects_conflicting_timeout_sources_without_harness_lookup(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)
@@ -204,7 +204,7 @@ def test_plan_rejects_conflicting_timeout_sources_without_harness_lookup(
     assert any(item["code"] == "usage" for item in cast(list[dict[str, object]], report["findings"]))
 
 
-@pytest.mark.ac("gh-721:AC-18")
+@pytest.mark.ac("gh-297:AC-18")
 def test_offline_adapter_rejects_selected_judge_capture(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)
@@ -221,7 +221,7 @@ def test_offline_adapter_rejects_selected_judge_capture(
                for item in cast(list[dict[str, object]], report["findings"]))
 
 
-@pytest.mark.ac("gh-721:AC-7")
+@pytest.mark.ac("gh-297:AC-7")
 def test_a_nonfitting_requested_size_keeps_fitting_alternative_separate(
         tmp_path: Path, make_target: Maker, write_draft: Callable[[Path], list[str]],
         capsys: pytest.CaptureFixture[str]) -> None:
@@ -237,7 +237,7 @@ def test_a_nonfitting_requested_size_keeps_fitting_alternative_separate(
     assert isinstance(alternatives["estimate"], dict)
 
 
-@pytest.mark.ac("gh-721:AC-5")
+@pytest.mark.ac("gh-297:AC-5")
 def test_invalid_draft_keeps_independent_seed_projection(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)
@@ -256,7 +256,7 @@ def test_invalid_draft_keeps_independent_seed_projection(
     assert cast(dict[str, object], preview["unavailable"])["estimate"] == "invalid"
 
 
-@pytest.mark.ac("gh-721:AC-5")
+@pytest.mark.ac("gh-297:AC-5")
 @pytest.mark.parametrize("cap,reason", [(None, "valid-draft-required"), ("1001", "budget-cap-exceeded")])
 def test_partial_preview_keeps_reflection_size_warning(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str], cap: str | None, reason: str) -> None:
@@ -277,7 +277,7 @@ def test_partial_preview_keeps_reflection_size_warning(
     assert codes == (["edit-warning"] if cap is None else ["budget-cap-exceeded", "edit-warning"])
 
 
-@pytest.mark.ac("gh-721:AC-14")
+@pytest.mark.ac("gh-297:AC-14")
 @pytest.mark.parametrize("drafted", [False, True])
 def test_invalid_repeats_keep_completed_preview(
         tmp_path: Path, make_target: Maker, write_draft: Callable[[Path], list[str]],
@@ -297,8 +297,8 @@ def test_invalid_repeats_keep_completed_preview(
     assert any(item["code"] == "invalid-repeats" for item in cast(list[dict[str, object]], report["findings"]))
 
 
-@pytest.mark.ac("gh-721:AC-6")
-@pytest.mark.ac("gh-721:AC-7")
+@pytest.mark.ac("gh-297:AC-6")
+@pytest.mark.ac("gh-297:AC-7")
 def test_journey_cap_and_eligibility_match_freeze_and_runtime_stop(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
@@ -336,3 +336,52 @@ def test_journey_cap_and_eligibility_match_freeze_and_runtime_stop(
     assert second.value.code == "budget-unapproved"
     assert preview["estimate"] is None
     assert cast(dict[str, object], preview["unavailable"])["estimate"] == second.value.code
+
+
+def _journey_target(tmp_path: Path) -> Path:
+    target = tmp_path / "culture"
+    _ = shutil.copytree(Path(__file__).parent / "fixtures/culture-journey", target)
+    _ = (target / "SKILL.md.fixture").rename(target / "SKILL.md")
+    _ = (target / "evals/gates/journey.py.fixture").rename(target / "evals/gates/journey.py")
+    return target
+
+
+@pytest.mark.ac("gh-297:AC-5")
+@pytest.mark.ac("gh-297:AC-7")
+def test_journey_only_target_without_draft_keeps_the_journey_ceiling(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    target = _journey_target(tmp_path)
+    code, report = _plan(capsys, "--target", str(target), "--edit", "prose", "--planning-call-cap", "1001")
+    preview = cast(dict[str, object], report["preview"])
+    inputs = cast(dict[str, object], preview["inputs"])
+    codes = [item["code"] for item in cast(list[dict[str, object]], report["findings"])]
+    assert "budget-cap-exceeded" not in codes, codes
+    assert inputs["requested_cap"] == 1001 and inputs["effective_ceiling_calls"] == 1000
+    assert preview["estimate"] is None
+    assert cast(dict[str, object], preview["unavailable"])["estimate"] == "valid-draft-required"
+
+
+@pytest.mark.ac("gh-297:AC-5")
+def test_mixed_kinds_without_draft_leave_the_ceiling_unresolved(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    task_and_journey(target)
+    code, report = _plan(capsys, "--target", str(target), "--edit", "prose", "--kind", "task", "--kind", "journey",
+                         "--planning-call-cap", "1001")
+    inputs = cast(dict[str, object], cast(dict[str, object], report["preview"])["inputs"])
+    codes = [item["code"] for item in cast(list[dict[str, object]], report["findings"])]
+    assert "budget-cap-exceeded" not in codes, codes
+    assert inputs["effective_ceiling_calls"] is None and inputs["effective_ceiling_seconds"] is None
+
+
+@pytest.mark.ac("gh-297:AC-5")
+def test_edit_planning_failure_names_the_contract_file(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    contract_path = target / "evals/autoimprove.json"
+    contract = cast(dict[str, object], json.loads(contract_path.read_text()))
+    contract["editable"] = ["SKILL.md", "uv.lock"]
+    _ = contract_path.write_text(json.dumps(contract))
+    code, report = _plan(capsys, "--target", str(target), "--edit", "prose")
+    found = [item for item in cast(list[dict[str, object]], report["findings"]) if item["code"] == "editable-build-file"]
+    assert code == 1 and [item["file"] for item in found] == ["evals/autoimprove.json"]

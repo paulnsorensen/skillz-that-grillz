@@ -160,11 +160,17 @@ class FreeEdit:
     seed: Candidate
 
 
-def plan_edit(target: Path, contract: Contract, edit: Edit | None, warnings: list[str] | None = None) -> FreeEdit:
+def plan_edit(target: Path, contract: Contract, edit: Edit | None, warnings: list[str] | None = None,
+              stage: list[str] | None = None) -> FreeEdit:
+    """Plan the edit mode and seed. `stage` receives the input of each step, so a caller can locate a failure."""
+    steps = [] if stage is None else stage
+    steps.append("target")
     skeleton = Candidate.capture(target, [], contract)
     mode: Edit = edit or "prose+cli"
+    steps.append("wedge")
     wedge = plan_targets(target, skeleton.files, contract, mode)
     files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
     frozen = skeleton.frozen | wedge.frozen
+    steps.append("contract")
     mode, wedge, seed, _ = seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen, warnings)
     return FreeEdit(mode, wedge, skeleton, seed)
