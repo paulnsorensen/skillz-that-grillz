@@ -2297,7 +2297,7 @@ SHORT_TEMP_FALLBACK = Path("/var/tmp")
 
 def short_temp_parent() -> Path:
     """Return TMPDIR when the deepest preflight socket path fits under it, else the short fallback."""
-    parent = Path(os.environ.get("TMPDIR") or "/tmp")
+    parent = Path(os.path.abspath(os.environ.get("TMPDIR") or "/tmp"))
     return parent if len(os.fsencode(parent / PREFLIGHT_SOCKET)) <= SOCKET_PATH_LIMIT else SHORT_TEMP_FALLBACK
 
 
