@@ -31,7 +31,19 @@ run read-only.
    output never lands in the audit's window. Pass absolute paths for every
    input; the runner applies no defaults. Each context returns one ~2 KB digest.
    Do not collapse the packs into one all-domains run. Claude Code `Agent`,
-   Codex `spawn_agent`, and OMP `task` are example hosts. Without sub-agents,
+   Codex `spawn_agent`, and OMP `task` are example hosts.
+
+   Choose the context in this order:
+   - Use a read-only analyst agent that the host lists, for example `duckdb-expert`.
+     Accept a user override of the agent name.
+   - Otherwise start a fresh context at the host's cheap model tier, for example haiku on Claude.
+     Request a tool deny list when the host supports one, for example Claude `disallowedTools`.
+
+   Record the enforcement for each pack. Write `host-enforced` when the agent
+   definition or the deny list restricts the tools. Write `prose-only` when only
+   the prompt asks for read-only work.
+
+   Without sub-agents,
    run each pack's SQL with `python3 <abs-skillz>/scripts/agent-session-analytics.pyz sql "<sql>"`
    and keep only the digest. Exit 5 means DuckDB rejects the query.
 
