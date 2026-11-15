@@ -462,7 +462,8 @@ Without a valid draft, `estimate` is null and `unavailable` names the reason. Th
 Use `--planning-call-cap N` to compare a task ceiling. This input never approves a budget or changes runtime limits.
 Without a valid draft, the scored kinds decide the ceiling. A mix of task and journey kinds leaves the effective ceiling null.
 A harness configuration supplies task sizing options without selecting models or resolving executables. A supplied model still needs valid syntax.
-The preview lists model selection, executable availability, host readiness, provider behavior, approval, and helper builds under `not_checked`.
+The preview lists model selection, executable availability, resolved command boundaries, host readiness, provider behavior, approval, helper builds, and site layers under `not_checked`.
+A run populates the site layers. It removes `@new-cli` from the editable files when the fromargs layer fails or lacks cyclopts.
 A successful preview does not certify execution readiness or grant case or budget approval.
 
 Both commands make no model call or host readiness check. Planner-controlled operations do not write target files or approval state.

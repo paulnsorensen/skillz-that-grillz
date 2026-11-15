@@ -292,7 +292,7 @@ def test_invalid_repeats_keep_completed_preview(
     assert code == 1 and preview["estimate"] is None
     assert preview["editable_files"] == ["SKILL.md"]
     assert cast(dict[str, object], preview["inputs"])["repeats"] == 0
-    assert preview["not_checked"]
+    assert "site layers" in cast(list[str], preview["not_checked"])
     assert cast(dict[str, object], preview["unavailable"])["estimate"] == "invalid-repeats"
     assert any(item["code"] == "invalid-repeats" for item in cast(list[dict[str, object]], report["findings"]))
 

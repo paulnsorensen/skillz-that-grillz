@@ -65,7 +65,7 @@ def plan(target: Path, contract: Contract, cases: Sequence[IntakeCase] | None, *
         "editable_files": None, "estimate": None, "inputs": inputs,
         "unavailable": {}, "warnings": warnings,
         "not_checked": ["model selection", "executable availability", "resolved command boundaries", "host readiness",
-                        "provider behavior", "approval", "helper builds"]}
+                        "provider behavior", "approval", "helper builds", "site layers"]}
     stage: list[str] = []
     try:
         free = plan_edit(target, contract, edit, warnings, stage)
