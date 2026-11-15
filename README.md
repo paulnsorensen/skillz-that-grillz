@@ -53,7 +53,7 @@ Type the command.
 
 ### Install without a terminal
 
-You do not need `npx` or a terminal agent. Each release attaches
+You do not need `npx` or a terminal agent. Each release after v0.4.0 attaches
 [`skillz-desktop.zip`](https://github.com/paulnsorensen/skillz-that-grillz/releases/latest/download/skillz-desktop.zip).
 It holds one `skillz` folder: the skill and its helper scripts. The helper
 scripts ship as source only, so the ZIP stays under the 30 MB upload limit.
@@ -65,8 +65,10 @@ Each helper starts about 0.25 s slower than in a terminal install. The
 1. Turn on code execution in **Settings > Capabilities**.
 2. Go to **Customize > Skills**, select **+**, then **Create skill > Upload a skill**.
 3. Upload `skillz-desktop.zip` as it is, and turn the skill on.
-4. Attach the `SKILL.md` that you want to check. Ask Claude to "use the skillz
-   skill to audit this skill".
+4. Attach the whole skill that you want to check, not only its `SKILL.md`:
+   a ZIP of its folder, or every file, including `references/` and `scripts/`.
+   The audit reads those files. Ask Claude to "use the skillz skill to audit
+   this skill".
 
 Chat runs in a sandbox, not on your computer, so only `audit` and `improve`
 apply there. `wedge` and `autoimprove` need a coding app. The chat app does not
