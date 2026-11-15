@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import os
 import sys
 from pathlib import Path
@@ -285,15 +286,20 @@ def test_deep_proof_tree_reads_without_recursion_limit(tmp_path: Path) -> None:
     reference = "evals/proofs/deep"
     output = tmp_path / reference / "output"
     output.mkdir(parents=True)
+    # A low limit keeps the tree small: the path work grows with the square of the depth.
+    limit = len(inspect.stack(0)) + 100
     # Python 3.11 Path.mkdir(parents=True) and shutil.rmtree recurse, so build and remove one level at a time.
-    levels = [output / Path(*["d"] * depth) for depth in range(1, sys.getrecursionlimit() + 100)]
+    levels = [output / Path(*["d"] * depth) for depth in range(1, limit + 100)]
     for level in levels:
         level.mkdir()
     answer = levels[-1] / "answer.txt"
     _ = answer.write_text("pass")
+    previous = sys.getrecursionlimit()
+    sys.setrecursionlimit(limit)
     try:
         assert list(fixture_files(tmp_path, reference, False).values()) == [b"pass"]
     finally:
+        sys.setrecursionlimit(previous)
         answer.unlink()
         for level in reversed(levels):
             level.rmdir()
