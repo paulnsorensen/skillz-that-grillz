@@ -375,6 +375,18 @@ def test_mixed_kinds_without_draft_leave_the_ceiling_unresolved(
 
 
 @pytest.mark.ac("gh-297:AC-5")
+def test_default_kinds_without_draft_count_the_journey_kinds_that_run_evaluates(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    task_and_journey(target)
+    code, report = _plan(capsys, "--target", str(target), "--edit", "prose", "--planning-call-cap", "1001")
+    inputs = cast(dict[str, object], cast(dict[str, object], report["preview"])["inputs"])
+    codes = [item["code"] for item in cast(list[dict[str, object]], report["findings"])]
+    assert code == 0 and "budget-cap-exceeded" not in codes, codes
+    assert inputs["kinds"] == ["task"]
+    assert inputs["effective_ceiling_calls"] is None and inputs["effective_ceiling_seconds"] is None
+
+@pytest.mark.ac("gh-297:AC-5")
 def test_edit_planning_failure_names_the_contract_file(
         tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
     target = make_target(tmp_path)

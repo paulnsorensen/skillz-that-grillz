@@ -235,6 +235,8 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
     sizing_ready = draft is not None and planned is not None and blocking is None
     preview_data: dict[str, object] | None = None
     unavailable_reason = "valid-draft-required" if draft is None else blocking or "sizing-prerequisite-failed"
+    # Without `--kind`, run also evaluates every journey kind, so the preview sizes against that same set.
+    evaluated = tuple(dict.fromkeys((*(chosen or ()), *(() if kinds or chosen is None else journeys))))
     if contract is not None:
         options = ClaudeOptions()
         try:
@@ -243,7 +245,6 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
             if harness_config is not None:
                 if harness_config.resolve().is_relative_to(target.resolve()):
                     raise ValueError("harness configuration must stay outside the candidate")
-                evaluated: set[str] = set(chosen or ()) | (set(journeys) if not kinds else set[str]())
                 conversation = drafted is not None and any(case.journey is not None and case.kind in evaluated for case in drafted)
                 capture = chosen is not None and any(contract.kinds[kind].capture for kind in chosen)
                 options = Configuration.sizing_options_from_file(harness_config, require_conversation=conversation,
@@ -256,7 +257,7 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
             unavailable_reason = "configuration-invalid"
         try:
             preview_data = plan(target, contract, planned if sizing_ready else None, edit=edit, repeats=repeats,
-                                planning_call_cap=planning_call_cap, options=options, kinds=chosen or ())
+                                planning_call_cap=planning_call_cap, options=options, kinds=evaluated)
             if failure := preview_data.pop("_failure", None):
                 detail = cast(dict[str, str], failure)
                 findings.append(_finding(detail["code"], "error", detail.get("file", ""), detail["message"]))
