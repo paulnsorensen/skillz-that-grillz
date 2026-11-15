@@ -941,7 +941,8 @@ An incomplete proposal cannot win. Planning, estimates, and full headroom remain
 The policy freezes in `run.json`. An explicit changed policy on resume stops with `run-config-differs`.
 
 The controlled `Search` provider runs without paid model calls. The command is
-`TMPDIR=/var/tmp eatmydata uv run pytest -q packages/skillz/tests/skillz_experiments/test_val_policy.py::test_five_seed_policy_measurement`.
+`TMPDIR=/var/tmp eatmydata uv run pytest -q packages/skillz/tests/skillz_experiments/test_val_policy_seed_*.py`.
+Each file holds one seed, so each file stays below the per-file test-time ceiling.
 Metric calls count actual `Search` provider calls on train and validation cases, including repeats.
 `S` names the seed identity `9b157e5f3ad5c5d75f733b73999e488fe9e3844940659e4e41d0d73d606422e9`.
 
