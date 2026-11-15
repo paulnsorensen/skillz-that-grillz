@@ -66,6 +66,20 @@ def _step_seconds() -> int:
     return int(value)
 
 
+@contextlib.contextmanager
+def _owned_temp_root() -> Generator[Path]:
+    with tempfile.TemporaryDirectory(prefix="sg-", dir="/var/tmp") as directory:
+        previous_tmpdir = os.environ.get("TMPDIR")
+        os.environ["TMPDIR"] = directory
+        try:
+            yield Path(directory)
+        finally:
+            if previous_tmpdir is None:
+                _ = os.environ.pop("TMPDIR", None)
+            else:
+                os.environ["TMPDIR"] = previous_tmpdir
+
+
 def _environment() -> dict[str, str]:
     """Return the step environment without `SKILLZ_LIVE`, so no gate step makes a real model call."""
     return {name: value for name, value in os.environ.items() if name != LIVE_FLAG}
@@ -536,8 +550,7 @@ def main(argv: list[str] | None = None) -> int:
     previous_term = signal.signal(signal.SIGTERM, _interrupted)
     previous_int = signal.signal(signal.SIGINT, _interrupted)
     try:
-        with tempfile.TemporaryDirectory(prefix="sg-", dir="/tmp") as directory:
-            temp_root = Path(directory)
+        with _owned_temp_root() as temp_root:
             try:
                 if not _pin_compiler_root():
                     return 1

@@ -166,6 +166,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [kit-harder-journeys](./kit-harder-journeys.md) — kit-harder-journeys: harder journeys for the self-autoimprove kit
 - [proposer-cli-early](./proposer-cli-early.md) — proposer-cli-early: the reflection prompt offers @new-cli early and keeps room for its two edits
+- [run-observability](./run-observability.md) — run-observability: query and watch an autoimprove run from run.json
 - [skillz-autoimprove-claims](./skillz-autoimprove-claims.md) — skillz-autoimprove-claims: validate the three autoimprove claims separately
 - [skillz-experiments-end-to-end](./skillz-experiments-end-to-end.md) — Skillz experiments end-to-end prototype criteria
 - [skillz-pragmatic-autoimprove](./skillz-pragmatic-autoimprove.md) — skillz-pragmatic-autoimprove: pragmatic autoimprove

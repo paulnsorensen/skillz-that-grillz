@@ -5,5 +5,7 @@ from skillz_experiments.run._resume import compare, resolve_statistics
 from skillz_experiments.run._run import DEFAULT_SEED, run
 from skillz_experiments.run._stop import Stop
 from skillz_experiments.run._wedge_targets import audit_targets
+from skillz_experiments.run._watch import watch
 
-__all__ = ["DEFAULT_SEED", "Stop", "audit_targets", "compare", "export", "frozen_targets", "resolve_statistics", "run", "scored_kinds", "summary"]
+__all__ = ["DEFAULT_SEED", "Stop", "audit_targets", "compare", "export", "frozen_targets", "resolve_statistics", "run", "scored_kinds", "summary",
+           "watch"]

@@ -1,0 +1,185 @@
+{
+  "run_id": "watch-synthetic",
+  "phase": "complete",
+  "model": "synthetic-model",
+  "calls": 9,
+  "calls_by_role": {
+    "task": 4,
+    "judge": 2,
+    "reflection": 2,
+    "preflight": 1
+  },
+  "seconds_by_role": {
+    "task": 35,
+    "judge": 8,
+    "reflection": 20,
+    "preflight": 4,
+    "simulator": 7,
+    "failed": 3
+  },
+  "budget": {
+    "maximum": 12,
+    "seconds": 600
+  },
+  "search": {
+    "stop_trigger": "call-share",
+    "reason": "validation-mean",
+    "comparisons": [
+      {
+        "challenger": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "incumbent": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "verdict": "inconclusive",
+        "delta": 0.2,
+        "se": 0.3
+      }
+    ]
+  },
+  "gate": {
+    "verdict": "promote",
+    "delta": 0.25,
+    "se": 0.05
+  },
+  "outcomes": [
+    {
+      "case_id": "press-1",
+      "split": "train",
+      "arm": "search",
+      "search_candidate": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repeat": 1,
+      "score": 0,
+      "criteria": {
+        "script-literal": {
+          "level": 1,
+          "met": false,
+          "reason": "Literal <script>alert('not executed')</script> stays text. LongReasonLiteral <script>alert('not executed')</script> stays text. LongReasonLiteral <script>alert('not executed')</script> stays text. LongReasonLiteral <script>alert('not executed')</script> stays text. LongReason"
+        }
+      },
+      "task_usage": {
+        "input_tokens": 100,
+        "cached_input_tokens": 20,
+        "output_tokens": 10
+      },
+      "judge_usage": {
+        "input_tokens": 30,
+        "output_tokens": 4
+      },
+      "simulator_usage": {
+        "input_tokens": 15,
+        "output_tokens": 2
+      },
+      "latency_seconds": 9,
+      "judge_latency_seconds": 2,
+      "transcript": [
+        {
+          "role": "user",
+          "text": "PRIVATE_TRANSCRIPT_NOT_IN_UI"
+        }
+      ]
+    },
+    {
+      "case_id": "press-1",
+      "split": "train",
+      "arm": "search",
+      "search_candidate": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "repeat": 2,
+      "score": 1,
+      "criteria": {
+        "script-literal": {
+          "level": 4,
+          "met": true,
+          "reason": "Literal instruction passed."
+        }
+      },
+      "task_usage": {
+        "input_tokens": 120,
+        "output_tokens": 11
+      },
+      "judge_usage": {
+        "input_tokens": 32,
+        "output_tokens": 5
+      },
+      "latency_seconds": 11,
+      "judge_latency_seconds": 2
+    },
+    {
+      "case_id": "scope-1",
+      "split": "holdout",
+      "arm": "baseline",
+      "candidate_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "repeat": 1,
+      "score": 0,
+      "status": "evaluation-failed",
+      "reason": "timeout",
+      "criteria": {}
+    },
+    {
+      "case_id": "exact-json",
+      "split": "train",
+      "arm": "search",
+      "candidate_hash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "repeat": 1,
+      "score": 0.5,
+      "criteria": {
+        "exact": {
+          "level": 3,
+          "met": true,
+          "reason": "JSON exact match"
+        }
+      },
+      "usage": {
+        "input_tokens": 42,
+        "cached_input_tokens": 0,
+        "output_tokens": 7
+      },
+      "latency_seconds": 5
+    },
+    {
+      "case_id": "always-zero",
+      "split": "train",
+      "arm": "search",
+      "candidate_hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "repeat": 1,
+      "score": 0,
+      "criteria": {
+        "must-pass": {
+          "level": 1,
+          "met": false,
+          "reason": "The literal requirement failed."
+        }
+      }
+    },
+    {
+      "split": "reflection",
+      "arm": "search",
+      "hypothesis": "Use exact bytes; <script>alert(1)</script> UnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesisUnbrokenHypothesis",
+      "notes": "Accepted reflection with a verylongunbrokenwordAccepted reflection with a verylongunbrokenwordAccepted reflection with a verylongunbrokenwordAccepted reflection with a verylongunbrokenwordAccepted reflection with a verylongunbrokenword",
+      "parent": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "proposed": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "changed": [
+        "SKILL.md"
+      ],
+      "over_budget": false,
+      "latency_seconds": 10,
+      "usage": {
+        "input_tokens": 50,
+        "output_tokens": 8
+      }
+    },
+    {
+      "split": "reflection",
+      "arm": "search",
+      "hypothesis": "Rejected reflection",
+      "notes": "No useful change",
+      "parent": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "proposed": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "changed": [],
+      "over_budget": true,
+      "rejected": "budget limit",
+      "latency_seconds": 10,
+      "usage": {
+        "input_tokens": 20,
+        "output_tokens": 3
+      }
+    }
+  ]
+}

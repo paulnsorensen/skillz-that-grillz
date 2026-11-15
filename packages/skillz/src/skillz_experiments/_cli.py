@@ -179,6 +179,13 @@ def export_command(run: Path, *, out: Path) -> dict[str, object]:
         return export_run(run, out)
 
 
+@app.command(name="watch")
+def watch_command(out: Path, *, port: int = 0) -> None:
+    """Serve a read-only page of `<out>/run.json` on 127.0.0.1 until Ctrl-C. Stdout gives its `url`; port 0 picks one."""
+    from skillz_experiments.run import watch
+    with _coded():
+        watch(out, port)
+
 @app.command(name="audit-facts")
 def audit_facts_command(directory: Path) -> dict[str, object]:
     """Report fixed rubric checks for a skill directory as facts, without grading it."""

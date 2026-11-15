@@ -260,6 +260,7 @@ Read on demand:
 - `references/canonical-schema.md` — pack input `schema`; read it when you write or check pack SQL.
 - `references/query-conventions.md` — pack input `conventions`; read it when you write a pack or run its queries.
 - `references/harness-coverage.md` — pack input `coverage`; read it before cross-harness comparisons and in the raw-log fallback.
+- `references/run-analytics.md` — the user wants to watch an `autoimprove` run, asks how it goes or went, or asks why a case scores 0.
 - `references/calibration.md` — you tag a finding's severity and confidence.
 - `references/experiments.md` — `autoimprove`, or an `audit` that needs a check id.
 - `references/criteria-drafting.md` — `autoimprove` case drafting.

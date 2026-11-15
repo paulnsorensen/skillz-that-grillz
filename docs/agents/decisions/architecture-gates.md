@@ -24,6 +24,13 @@ They are Python ports of two prototypes in paulnsorensen/sliced-bread-architectu
 - **Decision:** The owner opted in: `depth-ratchet.json` sets `"mode": "block"`. A block compares a slice only with its own baseline. The 200-statement and 50% size-aware rule stays advisory.
 - **Consequences:** A change that makes a slice shallower fails `just build`. A human raises a cap only for a deliberate trade-off and says why in the PR. `check_depth.py diff-baseline --base <ref>` lists each loosening for the reviewer.
 
+#### PR 691 merge exception
+
+The owner approves `run.M09.public_surface` increasing from 10 to 11 on 2026-11-10.[^pr-691-surface]
+The merged facade retains the used `watch` and `frozen_targets` exports.
+The watcher CLI uses `watch`; validation uses `frozen_targets`.[^pr-691-callers]
+All other depth limits stay unchanged.
+
 ### ADR-004: Python metric definitions differ from the TypeScript definitions  [status: accepted]
 
 - **Context:** The upstream metrics depend on TypeScript syntax and on a dead-code reachability graph.
@@ -35,3 +42,6 @@ They are Python ports of two prototypes in paulnsorensen/sliced-bread-architectu
 - **Context:** SB-07 fails when the guard baseline grows or is deleted. It needs the base commit.
 - **Decision:** `check --base auto` uses `$GATE_BASE`, else `HEAD^1` in GitHub Actions, else the merge base with `origin/main`. The CI gate job checks out with `fetch-depth: 2`; in a pull request run, `HEAD^1` of the merge commit is the base branch tip.
 - **Consequences:** A clone without `origin/main` must set `GATE_BASE`. The guard is an input error (exit 2) when it cannot find the base. A base without `slices.toml` marks the adoption change, which may add the baseline.
+
+[^pr-691-surface]: User approval, 2026-11-10: “Approve the limit increase to 11”; `depth-ratchet.json:46-52`; PR #691.
+[^pr-691-callers]: `packages/skillz/src/skillz_experiments/run/__init__.py:1-11`; `packages/skillz/src/skillz_experiments/_cli.py`; `packages/skillz/src/skillz_experiments/_validate.py:23,146`.
