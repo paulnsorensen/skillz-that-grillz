@@ -114,7 +114,7 @@ class PrTitleWorkflowTest(unittest.TestCase):
         self.assertEqual(action["if"], "steps.queue.outputs.queue_draft != 'true'")
         self.assertEqual(
             action["uses"],
-            "amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50",
+            "amannn/action-semantic-pull-request@2252a14e810aa9b85c2d560bd7070c802206ecf6",
         )
         triggers = cast(dict[str, object], self.workflow[True])
         pr = cast(dict[str, object], triggers["pull_request"])
