@@ -15,7 +15,7 @@ from skillz_experiments._budget import Budget
 from skillz_experiments.harness._claude import (NOTICE_CODES, TERMINAL_CODES, ClaudeLogin, ClaudeOptions,
                                               resolve_read_roots)
 from skillz_experiments.harness._roles import (BUILTIN_ADAPTERS, ROLES, Role, adapter_class, command_paths, has_claude_sandbox,
-                                               parse_role, unsupported_surface)
+                                               parse_role, parse_role_offline, unsupported_surface)
 from skillz_experiments.harness._steps import journey_steps
 from skillz_experiments.harness._transport import Transport
 
@@ -34,16 +34,7 @@ class Configuration:
     @classmethod
     def load(cls, path: Path | None, model: str | None) -> Configuration:
         """Read the role file at `path`. `model` is the model of each role that names none; with None, every role must name one."""
-        document = read(path) if path is not None else {"schema_version": 1}
-        if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
-            raise ValueError("unsupported harness configuration version")
-        overrides = mapping(document.get("roles", {}))
-        if set(overrides) - {*ROLES, "simulator"}:
-            raise ValueError("unknown harness role")
-        defaults = {key: value for key, value in document.items() if key not in {"schema_version", "roles"}}
-        root = path.resolve().parent if path is not None else Path.cwd()
-        named = [*ROLES, *(["simulator"] if "simulator" in overrides else [])]
-        values = {name: defaults | mapping(overrides.get(name, {})) for name in named}
+        values, root = cls._role_values(path)
         blank = [name for name, value in values.items()
                  if not isinstance(selected := value.get("model", model), str) or not selected.strip()]
         if blank:
@@ -51,6 +42,32 @@ class Configuration:
                              + "set a nonempty model for each role in the file, or remove invalid model entries and pass --model")
         roles = {name: parse_role(value, model or "", root) for name, value in values.items()}
         return cls(roles, path.resolve() if path is not None else None)
+
+    @staticmethod
+    def _role_values(path: Path | None) -> tuple[dict[str, dict[str, object]], Path]:
+        document = read(path) if path is not None else {"schema_version": 1}
+        if type(document.get("schema_version")) is not int or document["schema_version"] != 1:
+            raise ValueError("unsupported harness configuration version")
+        overrides = mapping(document.get("roles", {}))
+        if set(overrides) - {*ROLES, "simulator"}:
+            raise ValueError("unknown harness role")
+        defaults = {key: value for key, value in document.items() if key not in {"schema_version", "roles"}}
+        named = [*ROLES, *(["simulator"] if "simulator" in overrides else [])]
+        values = {name: defaults | mapping(overrides.get(name, {})) for name in named}
+        return values, path.resolve().parent if path is not None else Path.cwd()
+
+    @classmethod
+    def sizing_options_from_file(cls, path: Path, *, require_conversation: bool = False,
+                                 require_capture: bool = False) -> ClaudeOptions:
+        values, root = cls._role_values(path)
+        roles = {name: parse_role_offline(value, root) for name, value in values.items()}
+        if require_conversation and not cls.supports_conversation(roles["task"].adapter):
+            raise CodedError("journey-unsupported", "a journey case needs a task transport that can hold a conversation; "
+                             + "run with --harness claude or codex")
+        if require_capture and not has_claude_sandbox(roles["judge"].adapter):
+            raise CodedError("contract-capture-unsupported", "the selected kind declares capture, and only "
+                             + "the claude harness can show capture files to the judge; run with --harness claude")
+        return roles["task"].options
 
     @classmethod
     def single(cls, adapter: str, model: str, options: ClaudeOptions | None = None) -> Configuration:
