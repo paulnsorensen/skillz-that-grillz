@@ -5,7 +5,7 @@ import json
 from typing import cast
 
 import pytest
-from hypothesis import given
+from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from skillz_experiments._cases import loads_untrusted, mapping
@@ -36,6 +36,7 @@ def test_loads_untrusted_round_trips_every_json_value(value: object, ascii_only:
     assert _encoded(parsed) == _encoded(value)  # Also tells True from 1 and 1.0 from 1.
 
 
+@settings(deadline=None)  # Each example parses 100k+ characters; the test checks the error, and pytest-timeout bounds a hang.
 @given(OPENERS, st.integers(100_000, 200_000))
 def test_loads_untrusted_reports_deep_nesting_as_a_value_error_not_a_recursion_error(opener: str, depth: int) -> None:
     with pytest.raises(ValueError, match="nested too deeply"):
