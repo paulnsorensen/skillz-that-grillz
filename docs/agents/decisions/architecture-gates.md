@@ -43,5 +43,16 @@ All other depth limits stay unchanged.
 - **Decision:** `check --base auto` uses `$GATE_BASE`, else `HEAD^1` in GitHub Actions, else the merge base with `origin/main`. The CI gate job checks out with `fetch-depth: 2`; in a pull request run, `HEAD^1` of the merge commit is the base branch tip.
 - **Consequences:** A clone without `origin/main` must set `GATE_BASE`. The guard is an input error (exit 2) when it cannot find the base. A base without `slices.toml` marks the adoption change, which may add the baseline.
 
+### ADR-006: Allow one run planning export and one public-surface cap change  [status: accepted]
+
+- **Context:** The shared preview needs a public run planning seam. M09 counts facade exports, not methods on an exported class.[^free-plan-m09]
+- **Decision:** F-17 permits `run.plan` and raises only `run.M09.public_surface` from 11 to 12.[^free-plan-guard-choice]
+- **Alternatives:** Hide or remove existing exports to fit the cap. This changes existing interfaces.
+- **Consequences:** Keep existing exports and every other guard unchanged. F-18 permits offline parsing, not another guard change.
+- **Consequences:** This allowance applies to the pinned base only. It does not permit another increase.
+
+[^free-plan-m09]: .github/scripts/check_depth.py:125-158,212-220 at 47cf6e548d6d90a58107338da99f91ea4fdc3058; ADR-004 on this page.
+[^free-plan-guard-choice]: User decisions F-17 and F-18, Mold session 2026-11-11. Compared main fdacc3a65a399131ec68ab1b340e8662b49f711a. Reviewed original contract: `specs/skillz-free-plan.md`, SHA256 `ca378af4abc15df71fd305946848477730565a975ba59513b8865a0cc11de645`.
+
 [^pr-691-surface]: User approval, 2026-11-10: “Approve the limit increase to 11”; `depth-ratchet.json:46-52`; PR #691.
 [^pr-691-callers]: `packages/skillz/src/skillz_experiments/run/__init__.py:1-11`; `packages/skillz/src/skillz_experiments/_cli.py`; `packages/skillz/src/skillz_experiments/_validate.py:23,146`.

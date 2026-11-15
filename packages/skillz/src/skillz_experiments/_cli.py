@@ -109,14 +109,13 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
     harness
         claude (default) or codex, or command for your own command (requires --command).
     harness_config
-        Harness configuration file with per-role adapters. Cannot combine with --harness or --command.
+        Per-role configuration. Cannot combine with --harness or --command.
     command
-        Argument array of your own harness command for --harness command: --command EXECUTABLE ARG...
+        Command adapter argument array: --command EXECUTABLE ARG...
     judge_model
-        Model of the judge calls. Task and reflection calls use --model. Defaults to --model.
+        Judge model. Defaults to --model.
     edit
-        prose+cli (default) also edits helper scripts and own wedge sources. prose edits only Markdown.
-        With no --edit, a skill with no editable script uses prose.
+        prose+cli edits helpers and own wedge sources; prose edits Markdown. Omitted mode can fall back.
     effort
         Claude Code effort level for every role (claude harness only).
     sandbox_read
@@ -134,14 +133,11 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
     min_token_saving
         Smallest token saving, as a share above 0 and below 1. Turns the token rule on. Overrides the contract value.
     min_coverage
-        Least share of planned holdout cases scored on both arms, from 0 to 1. Below it the gate is inconclusive.
-        0 turns the rule off. Overrides the contract value.
+        Minimum scored holdout share, from 0 to 1. Zero disables the rule.
     max_quality_loss
-        Largest plausible quality loss, as a score per case, that `promote-cheaper` accepts. At least 0.
-        `--min-token-saving` needs it. Overrides the contract value.
+        Maximum plausible quality loss per case. `--min-token-saving` needs it.
     history
-        Keep and read the private cross-run attempt history (on by default). --no-history turns it off.
-        The first run records the choice; a resume must not change it.
+        Keep private attempt history by default. A resume must keep the first choice.
     kind
         Contract kind to score. Repeat for more. Default: task drives the split and journey kinds are still evaluated, else all journey kinds.
         With --kind, a drafted case of another kind stays out of the run. The first run freezes the choice.
@@ -203,23 +199,27 @@ def scaffold_command(*, target: Path) -> dict[str, object]:
 
 @app.command(name="validate")
 def validate_command(*, target: Path, draft: Path | None = None, seed: int | None = None,
-                     kind: list[str] | None = None) -> dict[str, object]:
-    """Check the eval files and the split that a run would build. No model call, no host check, no write.
-
-    The command exits 1 when any finding has severity error. Read `findings` for the code, file, and fix of each.
-
-    Parameters
-    ----------
-    draft
-        Also check this case draft: its fields, the helper input, and the coverage of the seed entries.
-    seed
-        Split seed. Default: the seed that `run` uses.
-    kind
-        Contract kind to score. Repeat for more. Same rule as `run --kind`.
-    """
+                     kind: list[str] | None = None, edit: Edit | None = None) -> dict[str, object]:
+    """Check target diagnostics and the run-matched free edit mode. Exit 1 for error findings."""
     from skillz_experiments._validate import validate as check_target
 
-    report = check_target(target, draft, seed, kind or ())
+    report = check_target(target, draft, seed, kind or (), edit)
+    if not report["ok"]:
+        print(json.dumps(report))
+        raise _Reported
+    return report
+
+
+@app.command(name="plan")
+def plan_command(*, target: Path, draft: Path | None = None, seed: int | None = None,
+                 kind: list[str] | None = None, edit: Edit | None = None, repeats: int | None = None,
+                 planning_call_cap: int | None = None, harness_config: Path | None = None,
+                 sandbox_seconds: int | None = None) -> dict[str, object]:
+    """Preview a free run without case or budget approval. Exit 1 for error findings."""
+    from skillz_experiments._validate import validate as check_target
+    report = check_target(target, draft, seed, kind or (), edit, preview=True, repeats=repeats,
+                          planning_call_cap=planning_call_cap, harness_config=harness_config,
+                          sandbox_seconds=sandbox_seconds)
     if not report["ok"]:
         print(json.dumps(report))
         raise _Reported
