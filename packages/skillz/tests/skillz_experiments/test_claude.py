@@ -36,6 +36,7 @@ from skillz_experiments.harness._transport import Transport
 from skillz_experiments._graders import Sandbox
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments import _runtime
+from skillz_experiments.harness._isolation import SOCKET_PATH_LIMIT
 from skillz_experiments.harness._seatbelt import command_profile
 
 FAKE = Path(__file__).parent / "fixtures/fake_claude.py"
@@ -2288,6 +2289,18 @@ def live_settings(executable: Path) -> dict[str, object]:
     return cast(dict[str, object], json.loads(cast(str, calls(executable)[0]["settings"])))
 
 
+# The deepest preflight socket path below the fixture parent, with the random parts of each temporary name.
+PREFLIGHT_SOCKET = "skzXXXXXXXX/skillz-preflight-XXXXXXXX/s/u.sock"
+# A short parent outside the shared `/tmp`, for a configured TMPDIR that leaves no room for the socket path.
+SHORT_TEMP_FALLBACK = Path("/var/tmp")
+
+
+def short_temp_parent() -> Path:
+    """Return TMPDIR when the deepest preflight socket path fits under it, else the short fallback."""
+    parent = Path(os.environ.get("TMPDIR") or "/tmp")
+    return parent if len(os.fsencode(parent / PREFLIGHT_SOCKET)) <= SOCKET_PATH_LIMIT else SHORT_TEMP_FALLBACK
+
+
 @pytest.fixture
 def short_tempdir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Use a short temp root, so a preflight Unix socket path stays under the AF_UNIX length limit.
@@ -2296,7 +2309,7 @@ def short_tempdir(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """
     if not LINUX_HOST:
         pytest.skip("abstract Unix sockets exist only on Linux")
-    directory = Path(tempfile.mkdtemp(prefix="skz", dir=os.environ.get("TMPDIR", "/tmp")))
+    directory = Path(tempfile.mkdtemp(prefix="skz", dir=short_temp_parent()))
     monkeypatch.setattr(tempfile, "tempdir", str(directory))
     yield directory
     shutil.rmtree(directory, ignore_errors=True)
@@ -2500,9 +2513,9 @@ def test_settings_deny_bash_writes_to_project_settings(tmp_path: Path) -> None:
 def test_blocked_nested_namespace_turns_off_the_socket_filter_and_probes_a_host_socket(
         tmp_path: Path, sandbox_passes: None, short_tempdir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     del sandbox_passes
-    assert short_tempdir.parent == Path(os.environ.get("TMPDIR", "/tmp"))
+    assert short_tempdir.parent == short_temp_parent()
     with tempfile.TemporaryDirectory(prefix="skillz-preflight-") as socket_root:
-        assert len(os.fsencode(Path(socket_root) / "s")) < 104
+        assert len(os.fsencode(Path(socket_root) / "s/u.sock")) <= SOCKET_PATH_LIMIT
     monkeypatch.setattr(_transport, "nested_userns_blocked", lambda: True)
     executable = in_process_claude(tmp_path)
     transport = ClaudeCode("m", Budget(10, 120, 0), lambda: None, executable)

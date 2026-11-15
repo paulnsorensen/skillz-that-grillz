@@ -136,6 +136,7 @@ The real Claude ancestor check rejects the marker while present and passes after
 
 The scheduler now uses its owned `/var/tmp` root for test bases and child temporary files.
 The `short_tempdir` fixture uses child `TMPDIR` and keeps real preflight Unix-socket paths short.
+A `TMPDIR` too long for the socket path falls back to `/var/tmp`.
 This avoids the shared `/tmp` marker without changing sandbox or ancestor checks.
 Keep all gate lanes and ancestor checks enabled.
 Changing `TMPDIR` alone would not have moved the former fixed `/tmp` test base.
@@ -178,7 +179,7 @@ A still-live descendant fails after the observation deadline.[^9]
 [^3]: justfile:1-34.
 [^4]: .github/scripts/run_gate.py:110-161; pyproject.toml:17-24.
 [^5]: .github/scripts/run_gate.py:164-172; CONTRIBUTING.md:60-65.
-[^6]: .github/scripts/run_gate.py:69-85,198-212,527-594; .github/scripts/test_run_gate.py:368-408; packages/skillz/tests/skillz_experiments/test_claude.py:2291-2302,2500-2516.
+[^6]: .github/scripts/run_gate.py:69-85,198-212,527-594; .github/scripts/test_run_gate.py:368-408; packages/skillz/tests/skillz_experiments/test_claude.py:2292-2315,2513-2529.
 [^7]: packages/wedge/pyproject.toml:37-38; packages/fromargs/pyproject.toml:28-29; uv.lock; packages/wedge/src/wedge/_key.py:134-152; packages/wedge/examples/skills/cheese-cave/scripts/cheese-cave.wedge.json.
 
 [^8]: [Linux CI run 38102417849](https://github.com/paulnsorensen/skillz-that-grillz/actions/runs/38102417849); .context/parallelism/linux-ci-failure.log. The local log is gitignored.
