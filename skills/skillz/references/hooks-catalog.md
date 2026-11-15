@@ -37,6 +37,7 @@ console.log(message);
 **Tuned version** (keyword-filtered to avoid overhead on simple prompts):
 
 ```javascript
+// .claude/hooks/force-skill-eval-tuned.js
 const fs = require('fs');
 const payload = JSON.parse(fs.readFileSync(0, 'utf8'));
 const prompt = payload.prompt === undefined ? '' : payload.prompt;
