@@ -111,13 +111,20 @@ def refuse_nono(record: dict[str, object]) -> None:
         raise CodedError("nono-removed", NONO_REMOVED)
 
 
+def check_val_policy(record: dict[str, object], requested: str | None) -> None:
+    if requested is not None and requested != record.get("val_policy", "full"):
+        raise _config_differs("--val-policy")
+
+
 def check_resume(record: dict[str, object], target: Path, edit: Edit | None, repeats: int | None,
                   seed: int | None, model: str, adapter: HarnessName, given: Mapping[str, object],
-                  configured: bool, judge_model: str | None, history: bool | None = None) -> None:
+                  configured: bool, judge_model: str | None, history: bool | None = None,
+                  val_policy: str | None = None) -> None:
     """Stop when a resume names another model, judge model, adapter, target, edit, repeats, seed, Claude option, or history
     setting than the first run. A resume that omits `judge_model` or `history` keeps the recorded value.
     A run that froze a harness configuration resumes only with a configuration.
     """
+    check_val_policy(record, val_policy)
     if text_field(record, "model") != model:
         raise _config_differs("--model")
     if judge_model is not None and judge_model != (judge_flag(record) or text_field(record, "model")):

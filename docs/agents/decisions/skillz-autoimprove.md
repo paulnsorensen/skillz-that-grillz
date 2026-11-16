@@ -321,6 +321,17 @@ _Source: PR #579 guard review and approved repair · Updated: 2026-10-30_
 [^free-plan-config]: packages/skillz/src/skillz_experiments/harness/_harness.py:35-53,103-128; harness/_roles.py:97-116,145-172 at 47cf6e548d6d90a58107338da99f91ea4fdc3058.
 [^free-plan-design]: User decisions F-1, F-2, F-3, F-16, and F-18, Mold session 2026-11-11. Reviewed original contract: `specs/skillz-free-plan.md` in the durable project corpus, SHA256 `ca378af4abc15df71fd305946848477730565a975ba59513b8865a0cc11de645`.
 
+### ADR-036: Optional subset search with reserved finalist completion  [status: accepted]
+- **Context:** Full validation during every GEPA proposal spends calls on candidates that lose. Issue #245 asks for a selectable policy and evidence before any default change.
+- **Decision:** Keep `full` as the default. Freeze `val_policy` in the run record. For `subset`, evaluate a seeded half of validation cases with two repeats. Reserve each proposal's remaining-case calls before further search. After search, screen proposals in order against the current fully validated incumbent's mean on the same subset. Complete qualifying proposals, including ties, within the search ceiling. Only full validation enters the existing two-SE promotion check. Keep planning and headroom based on full validation.
+- **Alternatives:** Online two-stage GEPA evaluation cannot use GEPA 0.1.4's policy callback. Completing only with leftover calls cannot guarantee the reserved ceiling. C8 remains a later candidate, not an implementation here.
+- **Consequences:** Five controlled seeds use 441 full-policy calls and 322 subset-policy calls. All five winners agree, but the 26.98% saving misses the 30% threshold. The default stays full. Resume records proposal components and a search-complete marker so finalist completion can continue.
+- **Resume:** Completed comparison challengers are final. The existing atomic comparison and promotion checkpoint prevents a resumed run from changing proposal order. A resumed finalist pass starts a fresh fault window. Saved component values must pass the existing candidate reader.[^gh-245-resume]
+
+[^gh-245-resume]: packages/skillz/src/skillz_experiments/run/_finalists.py:39-116; packages/skillz/src/skillz_experiments/run/_session.py:262-263; packages/skillz/tests/skillz_experiments/test_finalist_resume.py.
+
+_Source: issue #245 and its controlled five-seed study; fresh review and resume regressions · Updated: 2026-11-11_
+
 ### ADR-037: Keep per-case proof separate from free planning  [status: accepted]
 - **Context:** Gate-wide fixtures test a gate path, not each authored case (#657).
 - **Decision:** Check proof per selected case. Preserve the legacy gate-wide probe. Keep #721/#297 separate.
