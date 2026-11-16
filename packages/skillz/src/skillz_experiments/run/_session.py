@@ -17,13 +17,14 @@ from skillz_experiments.run._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, stop_kind
 from skillz_experiments.run._fault import FaultLatch
+from skillz_experiments.run._finalists import Finalists
 from skillz_experiments.run._headroom import run_headroom
 from skillz_experiments.run._holdout import run_gate
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._open import freeze_compatibility, freeze_identities, open_budget
-from skillz_experiments.run._outcomes import is_failed, search_counts
+from skillz_experiments.run._outcomes import failed_outcome, is_failed, search_counts
 from skillz_experiments.run._record_fields import (
-    PHASES, POST_GATE_PHASES, field, judge_flag, number_field, phase, record_outcomes, text_field,
+    PHASES, POST_GATE_PHASES, differences, field, judge_flag, number_field, phase, record_outcomes, text_field,
 )
 from skillz_experiments.run._plan import VALIDATION_REPEATS
 from skillz_experiments.run._ports import PatchApplier
@@ -33,18 +34,9 @@ from skillz_experiments.run._state import Factory, HarnessName, Provider
 from skillz_experiments.run._stop import Stop, baseline_rejected, check_timeout, preflight_timeout
 from skillz_experiments.run._telemetry import Telemetry
 from skillz_experiments.run._unspent import ENGINE_TRIGGERS, budget_trigger, search_end, with_unspent
-from skillz_experiments.search import Edit
+from skillz_experiments.search import Edit, overshoot
 from skillz_experiments.search import journal as build_journal
 from skillz_experiments.search import search as pareto_search
-
-
-def _differences(recorded: object, observed: object, name: str = "") -> list[str]:
-    """Name each preflight evidence key whose value differs, with both values. Keys sit in dotted paths."""
-    if isinstance(recorded, dict) and isinstance(observed, dict):
-        before, after = cast(dict[str, object], recorded), cast(dict[str, object], observed)
-        return [line for key in sorted(set(before) | set(after))
-                for line in _differences(before.get(key), after.get(key), f"{name}.{key}" if name else key)]
-    return [] if recorded == observed else [f"{name} (recorded {str(cast(object, recorded))[:80]!r}, observed {str(observed)[:80]!r})"]
 
 
 @final
@@ -78,14 +70,10 @@ class Session:
         self.budget = open_budget(self.record, self.cases, self.contract, self.sizing)
         self.faults = FaultLatch(self.lock)
         self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
-        # One contract check per candidate identity in this session (ADR-013). It never reaches `run.json`.
         self._checks = CheckMemo()
-        # Built before the provider gets `self.checkpoint`, which reads its leakage rejections.
         self._searching = SearchPhase(self, edit=self.edit, search_cases=self._search_cases,
                                       built=lambda candidate: self._built(candidate))
-        # Opened before the provider: a `Stop` here must not leave a provider, such as a Claude login, unclosed.
         self.rebuilder = self._open_rebuilder()
-        # Opt-in through the OTLP variables; without them it is a no-op and leaves the provider unwrapped.
         self.telemetry = Telemetry.from_environment(self.record)
         self.provider: Provider = self.telemetry.wrap(
             factory(model, self.budget, self.checkpoint) if factory is not None else
@@ -162,7 +150,7 @@ class Session:
         _ = self.record.setdefault("environment_hash", environment_hash)
         if self.record["environment_hash"] != environment_hash:
             before = mapping(cast(dict[str, object], recorded)) if isinstance(recorded, dict) else {}
-            changed = _differences(before.get("roles", before), preflight.get("roles", preflight))
+            changed = differences(before.get("roles", before), preflight.get("roles", preflight))
             evidence = "; ".join(changed[:6]) or "the environment hash only"
             raise EnvironmentDiffers("runtime environment differs from the frozen record; changed evidence: "
                                      + evidence + "; restore the first-run environment and resume, "
@@ -179,6 +167,10 @@ class Session:
             result = self.telemetry.evaluate(self.provider, candidate, case, arm, holdout=holdout, checks=self._checks)
         except CodedError as error:
             self.faults.latch(error)
+            if arm == "search" and self.record.get("val_policy") == "subset" and not isinstance(error, BudgetExhausted):
+                with self.lock:
+                    self.outcomes.append(failed_outcome(case, candidate, error, repeat=repeat))
+                    self.checkpoint()
             raise
         result.update({"arm": arm, "split": case.split, "case_id": case.identifier})
         if arm == "search":
@@ -241,20 +233,14 @@ class Session:
         run_headroom(self, self._searching)
 
     def search(self, earlier: Sequence[Mapping[str, object]] = ()) -> None:
-        """Run the one GEPA search over train and validation cases. Holdout cases never enter it.
-
-        The headroom pass runs first. Its train and validation seed outcomes count as spent search evaluations.
-        Its validation outcomes stand in for the seed validation pass of GEPA.
-        `earlier` holds the attempts of compatible earlier runs, oldest first. Each reflection prompt shows them.
-        """
+        """Run one resumable search. Holdout cases never enter it."""
         searching = self._searching
+        finalists = Finalists(self, searching, self._built) if self.record.get("val_policy", "full") == "subset" else None
         searching.earlier = tuple(earlier)
         reason = "search-share-spent-best-validated"
-        # The search limit that fired. A run with no allowance left spent its metric count before this session.
         trigger = "metric-count"
         timed_out = False
         budget_stopped = False
-        # The headroom pass runs under the gate time reserve, like the seed validation pass of GEPA did.
         self.budget.reserve_time(number_field(mapping(field(self.record, "budget")), "reserve_seconds"))
         try:
             self.headroom()
@@ -273,21 +259,23 @@ class Session:
         allowance = searching.search_ceiling() - spent
         if budget_stopped:
             pass
+        elif finalists is not None and finalists.search_done():
+            searching.mark_start()
         elif allowance >= 1 and searching.stalled():
-            # A run that stalled before a resume skips GEPA, which scores the seed again before its first stop check.
             reason, trigger = "converged-stalled", "stall"
         elif allowance >= 1:
-            # Search and reflection calls leave the gate its estimated time. Preflight and the gate use all of it.
             self.budget.reserve_time(number_field(mapping(field(self.record, "budget")), "reserve_seconds"))
-            # The engine bound counts the runs of distinct candidate and case evaluations, so it adds the reusable outcomes.
-            # A repeat in this run is free and does not count. The live evaluations alone end the search at the allowance.
             reusable = searching.recorded_for_reuse()
             try:
                 stopped = pareto_search(files, self.edit, cast(list[object], train), cast(list[object], validation),
                                         self._evaluate_example, self._propose, metric_calls=allowance + reusable,
-                                        stalled=searching.stalled, spent=lambda: searching.share_spent(allowance),
+                                        stalled=searching.stalled,
+                                        spent=lambda: searching.share_spent(allowance - (0 if finalists is None else
+                                            finalists.reserved() + overshoot(VALIDATION_REPEATS * len(validation)))),
                                         cheaper=searching.cheaper if self.statistics.token_rule else None,
-                                        validation_repeats=VALIDATION_REPEATS)
+                                        validation_repeats=VALIDATION_REPEATS,
+                                        val_policy=cast(str, self.record.get("val_policy", "full")),
+                                        val_subset=() if finalists is None else finalists.indices)
                 self.faults.raise_held()
                 reason = "converged-stalled" if stopped == "stall" else "validation-mean"
                 trigger = ENGINE_TRIGGERS[stopped]
@@ -295,10 +283,17 @@ class Session:
                 self.take_budget_stop()
                 budget_stopped = True
                 reason = "budget-exhausted-best-validated"
-                # Read before the `finally` gives the reserved time back: the search deadline, not the call cap, ended it.
                 timed_out = self.budget.out_of_time()
             finally:
                 self.budget.reserve_time(0.0)
+        if finalists is not None and not budget_stopped:
+            try:
+                finalists.complete()
+            except BudgetExhausted:
+                self.take_budget_stop()
+                budget_stopped = True
+                reason = "budget-exhausted-best-validated"
+                timed_out = self.budget.out_of_time()
         if budget_stopped:
             trigger = budget_trigger(self.budget, timed_out)
         winner = self._best_validated()
