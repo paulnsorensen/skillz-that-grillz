@@ -1,5 +1,7 @@
 # skillz-that-grillz wiki
 
+See the [domain model](./domain-model.md) for free-plan terms.
+
 <!-- HALLOUMINATE:INDEX-START -->
 - [criteria/](./criteria/index.md) — criteria
 - [decisions/](./decisions/index.md) — decisions

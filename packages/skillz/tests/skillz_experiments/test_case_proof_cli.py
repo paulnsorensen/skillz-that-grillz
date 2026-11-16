@@ -76,10 +76,23 @@ def test_packaged_validate_names_the_bad_case_then_accepts_a_proof_only_repair(t
     assert len(bad) == 1 and bad[0]["pointer"] == "/1/proof/pass"
     assert cast(dict[str, object], bad[0]["data"])["case_id"] == "a-1"
     _ = (target / "evals/proofs/a-1/pass/output/answer.txt").write_text("pass\n")
-    code, report = _validate(target, draft)
+    code, report = _validate(target, draft, "--edit", "prose")
     findings = cast(list[dict[str, object]], report["findings"])
     assert code == 0 and report["ok"] is True, [item for item in findings if item["severity"] == "error"]
     assert all(item["code"] == "case-proof-missing" for item in findings), findings
+
+
+@pytest.mark.ac("gh-657:AC-10")
+def test_plan_keeps_the_estimate_when_only_a_case_proof_fails(tmp_path: Path) -> None:
+    target, draft = _target(tmp_path)
+    executable = Path(sys.executable).parent / "skillz-experiment"
+    result = subprocess.run([str(executable), "plan", "--target", str(target), "--draft", str(draft), "--edit", "prose"],
+                            capture_output=True, text=True, check=False)
+    report = cast(dict[str, object], json.loads(result.stdout))
+    errors = [item["code"] for item in cast(list[dict[str, object]], report["findings"]) if item["severity"] == "error"]
+    preview = cast(dict[str, object], report["preview"])
+    assert errors == ["case-proof-score-mismatch"]
+    assert preview["estimate"] is not None and "estimate" not in cast(dict[str, object], preview["unavailable"])
 
 
 @pytest.mark.ac("gh-657:AC-31")

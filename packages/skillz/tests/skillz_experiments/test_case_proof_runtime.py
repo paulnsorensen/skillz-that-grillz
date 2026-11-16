@@ -10,9 +10,9 @@ import pytest
 
 from skillz_experiments._contract import Grader
 from skillz_experiments._intake import DraftCase
-from skillz_experiments.proof import probe_case_proofs
 from skillz_experiments.proof._execute import ProofExecutionError, score
 from skillz_experiments.proof._fixtures import fixture_files, stage
+from skillz_experiments.proof._probe import probe_case_proofs
 
 
 def _case(proof: object, *, journey: bool = False) -> DraftCase:

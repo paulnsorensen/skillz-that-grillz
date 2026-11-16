@@ -172,5 +172,7 @@
 
 - 2026-11-11 · 7b88a43470a98010 · merged · parallel-quality-gate.md · Record the reproduced host-visible Codex sandbox Git-marker race. Keep ancestor guards and full gate lanes enabled. Frozen retrieval probes pass at ranks 1, 2, and 1.
 
+- 2026-11-11 · 04eefeae521cb846 · merged · domain-model.md · Correct the seed projection code citation after Cure. Keep its approved definition. Frozen retrieval probes pass at ranks 1, 1, 3, and 3.
+- 2026-11-11 · skillz-free-plan-approved · skipped-near-duplicate · decisions/skillz-autoimprove.md; decisions/architecture-gates.md · Keep the imported Mold decisions without another copy. Cure does not change their design.
 
 - 2026-11-13 · 6b2fb496e7c0e5b3 · merged · criteria/gh-657.md · Record loaded-source metadata, decoder recursion, unreadable traversal, and newline schema parity pitfalls. Preserve all acceptance criteria. Frozen exact and natural probes return rank 1.

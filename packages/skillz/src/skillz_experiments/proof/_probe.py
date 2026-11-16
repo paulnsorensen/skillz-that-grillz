@@ -7,7 +7,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import cast
 
-from skillz_experiments._contract import Grader
+from skillz_experiments._contract import Contract, Grader
 from skillz_experiments._intake import DraftCase
 from skillz_experiments._records import proof_problem
 from skillz_experiments.proof._execute import ProofExecutionError, score
@@ -83,3 +83,35 @@ def probe_case_proofs(target: Path, cases: Sequence[DraftCase], graders: Mapping
             if found is not None:
                 findings.append(found)
     return findings
+
+
+def _selected(contract: Contract | None, chosen: Sequence[str] | None, cases: Sequence[DraftCase]) -> dict[str, str]:
+    """Map each scored, non-pending case to the kind that `run` scores it as."""
+    if contract is None or chosen is None:
+        return {}
+    journeys = contract.journey_kinds()
+    plain = next((kind for kind in chosen if kind not in journeys), None)
+    selected: dict[str, str] = {}
+    for case in cases:
+        kind = case.kind if case.journey is not None and case.kind in chosen else plain if case.journey is None else None
+        if not case.pending and kind is not None:
+            selected[case.identifier] = kind
+    return selected
+
+
+def validate_case_proofs(target: Path, contract: Contract | None, chosen: Sequence[str] | None,
+                         drafted: Sequence[DraftCase] | None, seeded: Sequence[Mapping[str, object]] | None,
+                         origins: Mapping[str, tuple[str, str]], draft: bool) -> list[dict[str, object]]:
+    """Return the proof findings of `validate`.
+
+    Probe the drafted cases that `run` scores. Check only the metadata of the other seed cases:
+    every seed case when a draft is given, else the seed cases that joined no draft case.
+    """
+    scored = drafted or []
+    known = set[str]() if draft else {case.identifier for case in scored}
+    unscored = [DraftCase(str(case["id"]), str(case["id"]), str(case["kind"]), "", "skill", {}, None,
+                          proof=case.get("proof", {}), proof_origin=origins.get(str(case["id"])))
+                for case in seeded or [] if str(case["id"]) not in known]
+    graders = contract.kinds if contract is not None else {}
+    return probe_case_proofs(target, unscored, {}, {}) + probe_case_proofs(target, scored, graders,
+                                                                            _selected(contract, chosen, scored))

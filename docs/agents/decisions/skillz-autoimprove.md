@@ -279,57 +279,99 @@ _Source: PR #579 guard review and approved repair · Updated: 2026-10-30_
 - **Alternatives:** Accept any binary file (no limit on type or size, and the judge prompt could carry bytes). A side file next to the seed (the seed and the case hash would no longer cover the bytes). Show the image to the judge (a new attachment path for every grader).
 - **Consequences:** A judge cannot see an image fixture; a command grader reads it from the workspace. Magic bytes prove the type, not that the image decodes. SVG stays refused, because it is text that can carry script.
 
-### ADR-031: Keep per-case proof separate from free planning  [status: accepted]
+### ADR-031: Validation and preview share run's free edit planning  [status: accepted]
+
+- **Context:** Validation used prose target checks, but run could select another edit mode and apply free fallback rules.[^free-plan-current]
+- **Decision:** F-1 selects one shared free planner for run, validate, and plan. Explicit prose remains portable.[^free-plan-design]
+- **Alternatives:** Copy validation checks and approximate run behavior. This lets selected modes and fallback rules drift.
+- **Consequences:** Private calculations stay in existing mapped packages. Runtime error order, warnings, build handling, and execution controls stay unchanged.
+
+### ADR-032: Plan owns the full free preview  [status: accepted]
+
+- **Context:** A full preview adds edit mode, editable files, assignments, and estimates beyond the diagnostic report.[^free-plan-current]
+- **Decision:** F-2 adds plan for this preview. Validate keeps its diagnostic report. Both use shared planning.[^free-plan-design]
+- **Alternatives:** Expand validate into the full preview. This changes its reporting contract.
+- **Consequences:** Plan adds a nested preview and identifies unavailable results. Existing gate diagnostics still execute trusted local code.
+- **Consequences:** Free means no model calls, not a new sandbox or execution-readiness guarantee.
+
+### ADR-033: Numeric estimates require a valid case draft  [status: accepted]
+
+- **Context:** A seed can support diagnostics and usable split information before a valid case draft exists.[^free-plan-design]
+- **Decision:** F-3 permits partial preview before drafting. Numeric estimates require the draft and free sizing prerequisites, but not approval.[^free-plan-design]
+- **Alternatives:** Estimate from the seed. This can present draft-dependent family counts and call budgets as settled.
+- **Consequences:** Show diagnostics, usable seed splits, and editable files when available. Keep the estimate null when prerequisites fail.
+
+### ADR-034: A planning-only cap does not approve execution  [status: accepted]
+
+- **Context:** Users need to preview a raised task call limit before choosing whether to approve a run.[^free-plan-design]
+- **Decision:** F-16 adds `--planning-call-cap`. It changes preview sizing only.[^free-plan-design]
+- **Alternatives:** Reuse runtime approval input, or show only the default ceiling. The first blurs consent.
+- **Consequences:** Report the requested cap and effective ceiling. Keep runtime limits and separate approval unchanged.
+
+### ADR-035: Harness configuration supplies sizing settings offline  [status: accepted]
+
+- **Context:** The runtime Configuration loader resolves executables before it exposes task sizing options.[^free-plan-config]
+- **Decision:** F-18 reads `--harness-config` through shared structural parsing without executable lookup or harness invocation.[^free-plan-design]
+- **Alternatives:** Copy timeout settings into plan. This can drift from the configured run.
+- **Consequences:** Reuse defaults and validate all roles, including unused roles. Check static journey and capture capabilities.
+- **Consequences:** Preserve runtime model, executable, boundary, and host checks. Report unchecked execution conditions separately.
+- **Consequences:** Parsing adds no facade export or guard relaxation.
+
+[^free-plan-current]: packages/skillz/src/skillz_experiments/_validate.py:141-235; run/_edit_plan.py:95-145; run/_run.py:138-195 at 47cf6e548d6d90a58107338da99f91ea4fdc3058.
+[^free-plan-config]: packages/skillz/src/skillz_experiments/harness/_harness.py:35-53,103-128; harness/_roles.py:97-116,145-172 at 47cf6e548d6d90a58107338da99f91ea4fdc3058.
+[^free-plan-design]: User decisions F-1, F-2, F-3, F-16, and F-18, Mold session 2026-11-11. Reviewed original contract: `specs/skillz-free-plan.md` in the durable project corpus, SHA256 `ca378af4abc15df71fd305946848477730565a975ba59513b8865a0cc11de645`.
+
+### ADR-037: Keep per-case proof separate from free planning  [status: accepted]
 - **Context:** Gate-wide fixtures test a gate path, not each authored case (#657).
 - **Decision:** Check proof per selected case. Preserve the legacy gate-wide probe. Keep #721/#297 separate.
 - **Consequences:** A shared gate can name the case with failed proof.
 
-### ADR-032: Case proof stays optional  [status: accepted]
+### ADR-038: Case proof stays optional  [status: accepted]
 - **Context:** Existing cases have no proof references.
 - **Decision:** Warn for missing pass or fail proof. Reject supplied invalid proof.
 - **Consequences:** Incomplete coverage stays visible without invalidating older cases.
 
-### ADR-033: Case proof stays outside approval and frozen data  [status: accepted]
+### ADR-039: Case proof stays outside approval and frozen data  [status: accepted]
 - **Context:** Approval hashes canonical case data; proof files can change later.
 - **Decision:** Treat proof as diagnostic-only. Exclude it from approval and frozen runs.
 - **Consequences:** A report covers only the proof checked at its creation time.
 
-### ADR-034: Each authored case holds its proof references  [status: accepted]
+### ADR-040: Each authored case holds its proof references  [status: accepted]
 - **Context:** Seed and draft formats already carry case authoring data.
 - **Decision:** Add optional proof references to seed and draft cases, but not task inputs or frozen cases.
 - **Consequences:** Schemas and authoring guidance include proof.
 
-### ADR-035: Pass proof needs full score and fail proof needs zero  [status: accepted]
+### ADR-041: Pass proof needs full score and fail proof needs zero  [status: accepted]
 - **Context:** Partial credit cannot prove full acceptance.
 - **Decision:** Require pass=1 and fail=0 after a valid exit-zero JSON score.
 - **Consequences:** Invalid execution, booleans, and non-finite scores never certify fail proof.
 
-### ADR-036: This case-proof delivery makes no model calls  [status: accepted]
+### ADR-042: This case-proof delivery makes no model calls  [status: accepted]
 - **Context:** A local gate result cannot establish a model-judge verdict.
 - **Decision:** Check offline case gates. Defer paid judge checks outside #657.
 - **Consequences:** No model call or judge verdict enters proof validation.
 
-### ADR-037: Case proof supports both gate files and argv  [status: accepted]
+### ADR-043: Case proof supports both gate files and argv  [status: accepted]
 - **Context:** Existing graders use resolved gate-file argv or direct command argv.
 - **Decision:** Run both forms through the same per-case probe controls.
 - **Consequences:** Result validity is separate from numeric score. Legacy probes stay unchanged.
 
-### ADR-038: Case probes use bounded local execution  [status: accepted]
+### ADR-044: Case probes use bounded local execution  [status: accepted]
 - **Context:** A temporary workspace does not isolate host files or the network.
 - **Decision:** Use a clean environment, time and output limits, and process-group cleanup for trusted local graders.
 - **Consequences:** These controls are not an OS sandbox.
 
-### ADR-039: Case proof uses actual case inputs  [status: accepted]
+### ADR-045: Case proof uses actual case inputs  [status: accepted]
 - **Context:** A complete fixture workspace could replace the approved case inputs.
 - **Decision:** Stage actual case files plus text proof output. Require an explicit journey trace.
 - **Consequences:** Reject other fixture-root files. Journey proof replaces a case trace; ordinary proof does not.
 
-### ADR-040: Case probes use caller tool paths  [status: accepted]
+### ADR-046: Case probes use caller tool paths  [status: accepted]
 - **Context:** Local tools can live outside the system default path.
 - **Decision:** Snapshot caller PATH once. Honor explicit executable paths and preserve argv tokens.
 - **Consequences:** Tool versions can affect results, but other caller environment variables do not pass through.
 
-### ADR-041: Malformed proof stays diagnostic-only  [status: accepted]
+### ADR-047: Malformed proof stays diagnostic-only  [status: accepted]
 - **Context:** Shared parsers serve both run loading and strict static validation.
 - **Decision:** Reject malformed proof in validate and strict checks, not normal loading.
 - **Consequences:** Check metadata on every loaded case. Check files and commands only for selected cases. Preserve author pointers.

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import cast, get_args
 
 from skillz_experiments._budget import BudgetUnapproved, approve
-from skillz_experiments._candidate import NEW_CLI, Candidate, store_frozen
+from skillz_experiments._candidate import store_frozen
 from skillz_experiments._cases import CodedError, Split, digest, load_cases
 from skillz_experiments._intake import (
     DRAFT_NAME,
@@ -30,7 +30,7 @@ from skillz_experiments._intake import (
 )
 from skillz_experiments._records import SCHEMA_VERSION, open_record, read, write
 from skillz_experiments._seed import SEED_NAME, check_draft, seed_cases, seed_document, seed_inferred, seed_projection, seed_summary
-from skillz_experiments.run._wedge_targets import plan_targets, seal, settle
+from skillz_experiments.run._wedge_targets import seal, settle
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import (
     ClaudeOptions,
@@ -44,7 +44,7 @@ from skillz_experiments.harness import (
 )
 from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
-from skillz_experiments.run._edit_plan import ReflectionNotes, seed_or_prose
+from skillz_experiments.run._edit_plan import ReflectionNotes, plan_edit, seed_or_prose
 from skillz_experiments.run._plan import scored_kinds
 from skillz_experiments.run._sizing import Sizer, raised_cap
 from skillz_experiments.run._resume import (
@@ -147,12 +147,8 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     freeze(out / "cases.json", cases, split_seed, expected, resolved.data())
     scored = [case for case in load_cases(out / "cases.json", contract.grader_types()) if case.eligible]
     count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
-    skeleton = Candidate.capture(target, [], contract)
-    mode: Edit = edit or "prose+cli"
-    wedge = plan_targets(target, skeleton.files, contract, mode)
-    files = skeleton.files | wedge.sources | ({NEW_CLI: ""} if wedge.capable is not None else {})
-    frozen = skeleton.frozen | wedge.frozen
-    mode, wedge, seed_candidate, _ = seed_or_prose(target, skeleton, contract, edit, mode, wedge, files, frozen)
+    free = plan_edit(target, contract, edit)
+    mode, wedge, skeleton, seed_candidate = free.mode, free.wedge, free.skeleton, free.seed
     # An omitted --edit that still plans prose+cli here failed its prose fallback, so the warnings do not offer prose.
     notes = ReflectionNotes.size(seed_candidate, mode, offer_prose=edit is not None)
     sizer = Sizer(contract, scored, options if configuration is None else configuration.sizing_options(),
