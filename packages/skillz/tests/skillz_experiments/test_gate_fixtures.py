@@ -125,6 +125,7 @@ def test_a_gate_that_prints_no_valid_score_or_exits_nonzero_is_unpassable(tmp_pa
 
 
 @pytest.mark.ac("gh-657:AC-3")
+@pytest.mark.ac("gh-657:AC-30")
 def test_a_journey_gate_that_scores_a_null_trace_above_zero_warns(tmp_path: Path) -> None:
     target = _journey(tmp_path, receipts=False)
     found = [item for item in _gate_findings(target) if item["code"] == "gate-null-trace"]
@@ -157,6 +158,7 @@ def test_a_gate_with_no_fixtures_warns_and_leaves_the_case_identity_alone(tmp_pa
 
 
 @pytest.mark.ac("gh-657:AC-5")
+@pytest.mark.ac("gh-657:AC-30")
 @pytest.mark.parametrize("encode", [_claude, _codex])
 def test_a_fixture_trace_in_either_harness_encoding_runs_the_gate(tmp_path: Path, encode: Callable[[str], list[str]]) -> None:
     target = _journey(tmp_path)

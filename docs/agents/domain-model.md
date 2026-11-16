@@ -1,6 +1,6 @@
 # Domain model
 
-This page defines the terms for experiment planning.
+This page defines the terms for experiment planning and case proof.
 It records accepted decisions. A local implementation does not imply release.[^free-plan-design]
 
 ## Experiment planning
@@ -29,10 +29,28 @@ A seed projection is not a frozen case set.
 It cannot alone support a numeric estimate.
 
 **Draft assignment** — The family and split assigned from a parsed case draft for free planning.[^free-plan-design]
-_Code_: `packages/skillz/src/skillz_experiments/_validate.py:203`
+_Code_: `packages/skillz/src/skillz_experiments/_validate.py:207`
 
 A draft assignment does not grant case approval.
 An invalid draft can still show assignments but cannot support a numeric estimate.
+
+## Case proof
+
+**Case proof** is an optional pair of pass and fail output references on an authored case.
+The validator checks the selected gate with actual case inputs.
+It proves neither model solvability nor a judge verdict.
+
+**Diagnostic proof** is proof metadata and files checked without changing case approval or frozen run data.
+Validation checks malformed metadata on every loaded case.
+Normal run loading ignores it while retaining whole-input bounds.
+Only selected cases receive proof-file and command checks.
+
+**Proof origin** is the internal author file and original JSON Pointer for the authored proof.
+It adds no seed JSON field, prompt data, frozen content, or case identity.
+
+**Bounded local probe** is a trusted local grader process with a clean environment, limits, and process-group cleanup.
+The caller's PATH selects local tool versions.
+These controls are not OS isolation; host-file and network access remain possible.
 
 ## Related decisions
 

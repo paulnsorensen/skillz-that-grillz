@@ -43,6 +43,14 @@
       "M10.share": "0/1201",
       "M12.unused_exports": 2
     },
+    "proof": {
+      "M08.crust_logic_statements": 0,
+      "M08.share": "0/152",
+      "M09.public_surface": 1,
+      "M10.crust_complexity": 0,
+      "M10.share": "0/87",
+      "M12.unused_exports": 0
+    },
     "run": {
       "M08.crust_logic_statements": 0,
       "M08.share": "0/2166",

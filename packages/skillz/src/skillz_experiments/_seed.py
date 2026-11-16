@@ -35,6 +35,8 @@ def _case(entry: EvalEntry) -> dict[str, object]:
         case["family"] = entry.family
     elif entry.kind != "task":
         case["family"] = entry.identifier
+    if entry.proof != {}:
+        case["proof"] = entry.proof
     return case
 
 
@@ -57,12 +59,12 @@ def _entries(target: Path) -> list[EvalEntry] | None:
     return list(parsed.entries)
 
 
-def _journeys(target: Path) -> list[dict[str, object]] | None:
+def _journeys(target: Path, indices: list[int] | None = None) -> list[dict[str, object]] | None:
     """Return the validated journey cases in file order, or None when the skill has no `journeys.json`."""
     if not (target / JOURNEYS).is_symlink() and not (target / JOURNEYS).exists():
         return None
     try:
-        parsed = parse_journeys(loads_untrusted(read_text(target, JOURNEYS, READ_LIMIT)), strict=False)
+        parsed = parse_journeys(loads_untrusted(read_text(target, JOURNEYS, READ_LIMIT)), strict=False, indices=indices)
     except ValueError as error:
         raise CodedError("evals-unreadable", f"{JOURNEYS} cannot seed the cases: {error}") from None
     if parsed.errors:
@@ -96,7 +98,7 @@ def seed_document(cases: Sequence[Mapping[str, object]]) -> dict[str, object]:
     return {"cases": share_files(cases, fixtures), "fixtures": fixtures}
 
 
-def seed_cases(target: Path) -> list[dict[str, object]] | None:
+def seed_cases(target: Path, *, origins: dict[str, tuple[str, str]] | None = None) -> list[dict[str, object]] | None:
     """Return one seed case per eval entry, then one per journey, or None when the skill has neither file.
 
     A task case also holds its fixtures and reference. Raise `CodedError` `evals-unreadable` when a
@@ -104,13 +106,16 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
     `seed_document` passes `SEED_LIMIT` bytes of JSON. A fixture that many cases list counts once.
     """
     entries = _entries(target)
-    journeys = _journeys(target)
+    journey_indices: list[int] = []
+    journeys = _journeys(target, journey_indices)
     if entries is None and journeys is None:
         return None
     cases: list[dict[str, object]] = []
     cache: dict[str, Fixture] = {}
     for header in entries or []:
         case = _case(header)
+        if origins is not None:
+            origins[header.identifier] = (EVALS, f"/evals/{header.index}/proof")
         if header.kind == "task":
             try:
                 case["files"] = text_map({path: _fixture(target, path, cache) for path in header.files})
@@ -119,6 +124,9 @@ def seed_cases(target: Path) -> list[dict[str, object]] | None:
             case["expected"] = {"expected_output": header.expected_output, "assertions": list(header.assertions)}
         cases.append(case)
     cases.extend(journeys or [])
+    if origins is not None:
+        for case, index in zip(journeys or [], journey_indices):
+            origins[str(case["id"])] = (JOURNEYS, f"/{index}/proof")
     check_unique([case["id"] for case in cases])
     size = len((json.dumps(seed_document(cases), sort_keys=True, indent=2) + "\n").encode("utf-8"))
     if size > SEED_LIMIT:

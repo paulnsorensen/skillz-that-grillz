@@ -54,5 +54,10 @@ All other depth limits stay unchanged.
 [^free-plan-m09]: .github/scripts/check_depth.py:125-158,212-220 at 47cf6e548d6d90a58107338da99f91ea4fdc3058; ADR-004 on this page.
 [^free-plan-guard-choice]: User decisions F-17 and F-18, Mold session 2026-11-11. Compared main fdacc3a65a399131ec68ab1b340e8662b49f711a. Reviewed original contract: `specs/skillz-free-plan.md`, SHA256 `ca378af4abc15df71fd305946848477730565a975ba59513b8865a0cc11de645`.
 
+### ADR-007: The proof slice has one export and no facade logic  [status: accepted]
+
+- **Context:** #657 adds one dedicated slice for offline case proof. Its approved facade is a single function re-export.
+- **Decision:** Map only `proof/` as a new slice and allow only the app-to-proof edge. Set the initial proof depth baseline to one public name and zero crust statements, complexity, and unused exports. No existing cap increases.
+- **Consequences:** The slice guard and depth ratchet enforce the new seam. The facade stays free of function bodies.
 [^pr-691-surface]: User approval, 2026-11-10: “Approve the limit increase to 11”; `depth-ratchet.json:46-52`; PR #691.
 [^pr-691-callers]: `packages/skillz/src/skillz_experiments/run/__init__.py:1-11`; `packages/skillz/src/skillz_experiments/_cli.py`; `packages/skillz/src/skillz_experiments/_validate.py:23,146`.
