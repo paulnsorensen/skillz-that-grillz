@@ -298,6 +298,11 @@ def test_deep_proof_tree_reads_without_recursion_limit(tmp_path: Path) -> None:
     sys.setrecursionlimit(limit)
     try:
         assert list(fixture_files(tmp_path, reference, False).values()) == [b"pass"]
+        # Staging cannot create this depth under the limit; the probe reports a finding and does not raise.
+        found = probe_case_proofs(tmp_path, [_case({"pass": reference})], {"task": _grader("raise AssertionError('ran')")},
+                                  {"one": "task"})
+        assert [(item["code"], item["pointer"]) for item in found] == [
+            ("case-proof-invalid-fixture", "/cases/4/proof/pass"), ("case-proof-missing", "/cases/4/proof/fail")]
     finally:
         sys.setrecursionlimit(previous)
         answer.unlink()

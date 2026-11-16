@@ -47,6 +47,9 @@ def _check_side(target: Path, case: DraftCase, kind: str, grader: Grader | None,
         return _finding(case, kind, "case-proof-execution", "error", str(error), f"/{side}", side, reference)
     except (ValueError, OSError) as error:
         return _finding(case, kind, "case-proof-invalid-fixture", "error", str(error), f"/{side}", side, reference)
+    except RecursionError:  # Path.mkdir(parents=True) and the Python 3.11 rmtree recurse once per directory level.
+        return _finding(case, kind, "case-proof-invalid-fixture", "error", "proof fixture tree is too deep to stage",
+                        f"/{side}", side, reference)
     expected = 1 if side == "pass" else 0
     if observed != expected:
         return _finding(case, kind, "case-proof-score-mismatch", "error",
