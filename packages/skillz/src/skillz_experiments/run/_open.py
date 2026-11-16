@@ -137,7 +137,7 @@ def freeze_compatibility(record: dict[str, object], cases: list[Case], contract:
         "claude_options": task.options.data() if task else record.get("claude_options", {}),
         "edit": text_field(record, "edit"),
         "repeats": field(record, "repeats"), "statistics": field(record, "statistics"),
-        "validation_policy": field(record, "validation_policy"),
+        "validation_policy": field(record, "validation_policy"), "val_policy": field(record, "val_policy"),
         "split_digest": digest(splits), "scoring_digest": scoring_digest(files("skillz_experiments")),
         "leakage_digest": leakage_digest(files("skillz_experiments"))}
     record["compatibility"] = {"fingerprint": digest(fields), "fields": fields}
