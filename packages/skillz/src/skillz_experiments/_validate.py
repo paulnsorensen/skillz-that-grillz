@@ -21,6 +21,7 @@ from skillz_experiments._intake import (
 )
 from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, fixture_error, fixture_misses, seed_cases, seed_family, seed_projection
 from skillz_experiments.harness import ClaudeOptions, Configuration
+from skillz_experiments.proof import validate_case_proofs
 from skillz_experiments.run import DEFAULT_SEED, frozen_targets, plan, resolve_statistics, scored_kinds
 from skillz_experiments.search import Edit
 
@@ -73,7 +74,7 @@ def _contract(target: Path, findings: list[Finding]) -> tuple[Contract | None, s
 
 
 def _from_seed(seeded: Sequence[Mapping[str, object]], journeys: Sequence[str], findings: list[Finding],
-               scores_task: bool = True) -> list[DraftCase]:
+               scores_task: bool = True, origins: Mapping[str, tuple[str, str]] | None = None) -> list[DraftCase]:
     """Map the seed cases to draft cases, the way an agent copies them into the draft.
 
     A case with no family joins no split, as in `seed_projection`. Each one adds a finding.
@@ -97,7 +98,8 @@ def _from_seed(seeded: Sequence[Mapping[str, object]], journeys: Sequence[str], 
             findings.append(_finding("cases-invalid", "error", EVALS, f"the task entry {case['id']} has no files, so run "
                                      + "refuses its case", TASK_FIXTURE))
         drafted.append(DraftCase(str(case["id"]), family, kind, str(case["request"]), "skill",
-                                 text_map(item.get("files", {})), case.get("expected"), journey_of(item, kind in journeys)))
+                                 text_map(item.get("files", {})), case.get("expected"), journey_of(item, kind in journeys),
+                                 proof=case.get("proof", {}), proof_origin=(origins or {}).get(str(case["id"]))))
     return drafted
 
 
@@ -162,8 +164,9 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
             findings.append(_failure(error, LOCATION))
     scores_task = chosen is None or any(kind not in journeys for kind in chosen)
     seeded: list[dict[str, object]] | None = None
+    origins: dict[str, tuple[str, str]] = {}
     try:
-        seeded = seed_cases(target)
+        seeded = seed_cases(target, origins=origins)
     except FAILURES as error:
         findings.append(_failure(error, JOURNEYS if str(error).startswith(JOURNEYS) else EVALS))
 
@@ -189,7 +192,7 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
     elif seeded is not None:
         origin = "seed"
         try:
-            drafted = _from_seed(seeded, journeys, findings, scores_task)
+            drafted = _from_seed(seeded, journeys, findings, scores_task, origins)
         except FAILURES as error:
             findings.append(_failure(error, EVALS))
         else:
@@ -267,6 +270,8 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
                 findings.append(_finding("edit-warning", "warning", "wedge.toml", warning))
         except FAILURES as error:
             findings.append(_failure(error, "wedge.toml"))
+    # Proof findings come after the preview: run ignores proof, so a proof error does not withhold the estimate.
+    findings.extend(validate_case_proofs(target, contract, chosen, drafted, seeded, origins, draft is not None))
     if contract is not None:
         findings.extend(_gate_findings(target, journeys, drafted))
     report: dict[str, object] = {"ok": not any(found["severity"] == "error" for found in findings),

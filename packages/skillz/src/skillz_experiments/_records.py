@@ -17,6 +17,37 @@ from skillz_experiments._cases import CodedError, Fixture, image_type, mapping, 
 SCHEMA_VERSION = 4
 
 
+def proof_problem(value: object) -> tuple[str, str] | None:
+    """Return the first invalid proof field and reason without accessing a fixture."""
+    if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
+        return "", "proof must be an object with pass and fail references"
+    proof = cast(dict[str, object], value)
+    for key in proof:
+        if key not in ("pass", "fail"):
+            return f"/{key.replace('~', '~0').replace('/', '~1')}", "unknown proof field"
+    for side in ("pass", "fail"):
+        if side not in proof:
+            continue
+        path = proof[side]
+        if not isinstance(path, str):
+            return f"/{side}", "proof reference must be a path below evals/"
+        try:
+            _ = relative(path)
+        except ValueError:
+            return f"/{side}", "proof reference must be a plain path below evals/"
+        if not path.startswith("evals/") or path == "evals/":
+            return f"/{side}", "proof reference must be a path below evals/"
+    return None
+
+
+def fixture_problem(path: str) -> bool:
+    try:
+        _ = relative(path)
+    except ValueError:
+        return True
+    return not path.startswith("evals/files/")
+
+
 def write_bytes(path: Path, data: bytes, *, mode: int = 0o600, guard: Callable[[], bool] | None = None) -> bool:
     """Write `data` to `path` atomically: temporary file, `fsync`, `guard`, then replace and directory `fsync`.
 

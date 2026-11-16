@@ -15,7 +15,7 @@ from skillz_experiments._cases import (
 )
 from skillz_experiments._contract import LOCATION, RUBRIC_GRADERS, Contract, Grader, load_contract, parse
 from skillz_experiments._evals_format import EVAL_KINDS, SOURCES, TASK_FIXTURE, regression_of
-from skillz_experiments._frontmatter import read_frontmatter
+from skillz_experiments._frontmatter import skill_frontmatter as skill_frontmatter
 from skillz_experiments._records import approval_digest, share_files, write_cases
 
 DRAFT_NAME = "cases.draft.json"
@@ -30,7 +30,7 @@ MINIMUM_FAMILIES = TRAIN_FAMILIES_MINIMUM + 2
 SPLITS: tuple[Split, ...] = ("train", "validation", "holdout")
 TASK_RUBRIC = ("Grade the answer on each criterion. `reference` holds the expected output and the assertions that the "
                "criteria come from. Ignore differences in JSON shape, quoting, or whitespace.")
-DRAFT_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source", "regression"} | JOURNEY_FIELDS
+DRAFT_FIELDS = {"id", "family", "kind", "request", "files", "expected", "source", "regression", "proof"} | JOURNEY_FIELDS
 DRAFT_REQUIRED = {"id", "family", "kind", "request", "source"}
 
 
@@ -45,6 +45,8 @@ class DraftCase:
     expected: object
     journey: Journey | None = None
     regression: bool = False
+    proof: object = field(default_factory=dict[str, object], kw_only=True)
+    proof_origin: tuple[str, str] | None = field(default=None, kw_only=True)
 
     @property
     def pending(self) -> bool:
@@ -70,7 +72,8 @@ class IntakeCase(DraftCase):
         return item | ({"regression": True} if self.regression else {})
 
 
-def _case(value: object, position: int, journeys: Collection[str], fixtures: Mapping[str, Fixture], scores_task: bool = True) -> DraftCase:
+def _case(value: object, position: int, journeys: Collection[str], fixtures: Mapping[str, Fixture], scores_task: bool = True,
+          origin: tuple[str, str] | None = None) -> DraftCase:
     """Validate a draft case with the family and fixture rules for its scoring mode."""
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in cast(dict[object, object], value)):
         raise ValueError(f"draft case {position} must be a JSON object")
@@ -94,7 +97,8 @@ def _case(value: object, position: int, journeys: Collection[str], fixtures: Map
             raise CodedError("cases-invalid", f"a task case needs files and an expected reference; {TASK_FIXTURE}")
         return DraftCase(string(item["id"], "id"), string(item["family"], "family"), cast(str, kind),
                           string(item["request"], "request"), cast(str, source), files, expected,
-                          journey_of(item, kind in journeys), regression_of(item, source, kind not in PENDING_KINDS))
+                          journey_of(item, kind in journeys), regression_of(item, source, kind not in PENDING_KINDS),
+                          proof=item.get("proof", {}), proof_origin=origin)
     except CodedError as error:
         raise CodedError(error.code, f"case {name}: {error}") from None
     except ValueError as error:
@@ -114,7 +118,10 @@ def load_draft(path: Path, journeys: Collection[str] = ("journey",), scores_task
     if not isinstance(shared.get("cases"), list) or not shared["cases"] or set(shared) - {"fixtures", "cases"}:
         raise ValueError("draft must be a nonempty list of cases, or an object with only fixtures and a nonempty cases list")
     fixtures = text_map(shared.get("fixtures", {}))
-    cases = [_case(item, position, journeys, fixtures, scores_task) for position, item in enumerate(cast(list[object], shared["cases"]), 1)]
+    prefix = "/cases" if isinstance(document, dict) else ""
+    cases = [_case(item, position, journeys, fixtures, scores_task,
+                   (str(path), f"{prefix}/{position - 1}/proof"))
+             for position, item in enumerate(cast(list[object], shared["cases"]), 1)]
     names = [case.identifier for case in cases]
     if len(set(names)) != len(names):
         raise ValueError(f"duplicate case id {next(name for name in names if names.count(name) > 1)}")
@@ -324,7 +331,8 @@ def split_cases(cases: Sequence[DraftCase], seed: int, kind: str | None = "task"
     for family in sorted({case.family for case in cases} - set(assigned)):
         assigned[family] = rng.choice(SPLITS)
     return [IntakeCase(c.identifier, c.family, kind if scores(c) and c.journey is None and kind is not None else c.kind,
-                       c.request, c.source, c.files, c.expected, c.journey, c.regression, split=assigned[c.family],
+                       c.request, c.source, c.files, c.expected, c.journey, c.regression, proof=c.proof,
+                       proof_origin=c.proof_origin, split=assigned[c.family],
                        scored=scores(c) or (not c.pending and c.journey is not None and c.kind in also)) for c in cases]
 
 
@@ -392,18 +400,6 @@ def freeze(out: Path, cases: Sequence[IntakeCase], seed: int, approved_hash: str
         document["not_scored"] = unscored
     write_cases(out, document)
 
-
-def skill_frontmatter(target: Path) -> dict[str, str]:
-    """Return the nonempty top-level frontmatter fields of `<target>/SKILL.md`. Read only that file.
-
-    Return no fields when the file is absent or its frontmatter is unreadable.
-    """
-    skill = target / "SKILL.md"
-    try:
-        fields = read_frontmatter(skill.read_text(encoding="utf-8")) if skill.is_file() else {}
-    except ValueError:
-        return {}
-    return {key: value for key, value in fields.items() if value}
 
 
 def skill_facts(target: Path) -> dict[str, object]:

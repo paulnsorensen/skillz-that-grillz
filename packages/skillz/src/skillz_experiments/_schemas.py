@@ -34,6 +34,9 @@ FIXTURE: Json = {"anyOf": [{"type": "string"}, {
     "type": "object", "required": ["base64", "type"], "additionalProperties": False,
     "properties": {"base64": {"type": "string"}, "type": {"enum": ["png", "jpg", "webp", "gif"]}}}]}
 TEXT_MAP: Json = {"type": "object", "additionalProperties": FIXTURE}
+PROOF_PATH: Json = {"type": "string", "pattern": r"^evals/(?!\.|[\s\S]*/\.)(?![\s\S]*\\)(?![\s\S]*\x00)[^/]+(?:/[^/]+)*$"}
+PROOF: Json = {"type": "object", "additionalProperties": False,
+               "properties": {"pass": PROOF_PATH, "fail": PROOF_PATH}}
 
 
 def regenerate_command(name: SchemaName) -> str:
@@ -69,6 +72,7 @@ def _eval_entry() -> Json:
             "kind": {"enum": kinds, "description": "trigger: the skill must start. near-miss: it must not. task: it does work."},
             "family": NONEMPTY | {"description": "Group of related cases. Needed for the split."},
             "expected_skill": {"type": ["string", "null"], "description": "The skill that must start, or null for a near-miss."},
+            "proof": PROOF,
         }, EVAL_FIELDS),
         "allOf": [
             {"if": {"properties": {"kind": {"const": "task"}}}, "else": {"properties": {"assertions": {"maxItems": 0}}}},
@@ -118,6 +122,7 @@ def _journey_properties() -> Json:
         "files": TEXT_MAP | {"description": "Inline files: path to text."},
         "expected": _expected(),
         "source": {"enum": list(SOURCES)},
+        "proof": PROOF,
         "regression": {"type": "boolean", "description": "A case drafted from a field failure. Needs source: session. "
                        + "The headroom pass records whether the seed fails it."},
     }
