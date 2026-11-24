@@ -49,4 +49,4 @@ def test_a_utf8_text_fixture_that_starts_with_image_magic_stays_text(tmp_path: P
     text = "GIF89a is the header of a GIF file. Explain it.\n"
     (tmp_path / "evals/files").mkdir(parents=True)
     _ = (tmp_path / "evals/files/note.txt").write_text(text)
-    assert _fixture(tmp_path, "evals/files/note.txt", {}) == text
+    assert _fixture(tmp_path, "evals/files/note.txt", {}, None) == text

@@ -19,7 +19,8 @@ from skillz_experiments._intake import (
     HOLDOUT_MINIMUM, MINIMUM_FAMILIES, TRAIN_FAMILIES_MINIMUM, TRAIN_MINIMUM, DraftCase, IntakeCase, check_criteria,
     check_helper_input, intake_contract, load_draft, split_cases, too_few,
 )
-from skillz_experiments._seed import EVALS, JOURNEYS, check_coverage, fixture_error, fixture_misses, seed_cases, seed_family, seed_projection
+from skillz_experiments._seed import (EVALS, JOURNEYS, SEED_LIMIT, check_coverage, fixture_error, fixture_misses,
+                                      seed_cases, seed_family, seed_projection, seed_size)
 from skillz_experiments.harness import ClaudeOptions, Configuration
 from skillz_experiments.proof import validate_case_proofs
 from skillz_experiments.run import DEFAULT_SEED, frozen_targets, plan, resolve_statistics, scored_kinds
@@ -101,12 +102,6 @@ def _from_seed(seeded: Sequence[Mapping[str, object]], journeys: Sequence[str], 
                                  text_map(item.get("files", {})), case.get("expected"), journey_of(item, kind in journeys),
                                  proof=case.get("proof", {}), proof_origin=(origins or {}).get(str(case["id"]))))
     return drafted
-
-
-def _counts(cases: Sequence[DraftCase]) -> dict[str, object]:
-    return {"count": len(cases), "kinds": dict(sorted(Counter(case.kind for case in cases).items())),
-            "families": dict(sorted(Counter(case.family for case in cases).items()))}
-
 
 def _fixture_findings(target: Path, drafted: Sequence[DraftCase], file_of: Callable[[DraftCase], str],
                       findings: list[Finding]) -> None:
@@ -274,11 +269,17 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
     findings.extend(validate_case_proofs(target, contract, chosen, drafted, seeded, origins, draft is not None))
     if contract is not None:
         findings.extend(_gate_findings(target, journeys, drafted))
+    used = None if seeded is None else seed_size(seeded)
+    capacity = None if used is None else {"bytes": used, "limit": SEED_LIMIT, "remaining": SEED_LIMIT - used}
+    if capacity is not None and capacity["remaining"] * 10 < SEED_LIMIT:
+        findings.append(_finding("seed-capacity-warning", "warning", EVALS, f"{capacity['remaining']} seed bytes remain"))
     report: dict[str, object] = {"ok": not any(found["severity"] == "error" for found in findings),
             "contract": {"source": source, "status": status, "kinds": sorted(contract.kinds) if contract else [],
                          "hash": contract.identity if contract else None},
-            "cases": {"source": origin} | _counts(drafted or []),
-            "split": split, "findings": findings}
+            "cases": {"source": origin, "count": len(drafted or []),
+                      "kinds": dict(sorted(Counter(case.kind for case in drafted or []).items())),
+                      "families": dict(sorted(Counter(case.family for case in drafted or []).items()))},
+            "split": split, "findings": findings, **({"seed": capacity} if capacity is not None else {})}
     if preview:
         unavailable = {"estimate": unavailable_reason}
         report["preview"] = (preview_data if preview_data is not None else {
@@ -286,7 +287,7 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
             "estimate": None, "inputs": {}, "unavailable": unavailable, "not_checked": []})
         shown = cast(dict[str, object], report["preview"])
         shown["seed"] = None if seeded is None else {"count": len(seeded),
-                                                     "split": seed_projection(seeded, chosen or (), journeys)}
+                                                     "split": seed_projection(seeded, chosen or (), journeys), **(capacity or {})}
         if seeded is None:
             cast(dict[str, object], shown["unavailable"])["seed"] = "seed-not-present"
         shown["assignments"] = [] if planned is None else [
