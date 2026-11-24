@@ -20,7 +20,7 @@ from skillz_experiments.harness._claude._settings import Declared
 
 # Agents that Claude Code lists without any user file. The `--tools` list leaves no way to run them.
 BUILTIN_AGENTS = frozenset({"general-purpose", "Explore", "Plan", "statusline-setup", "output-style-setup",
-                            "claude-code-guide", "claude"})
+                            "claude-code-guide", "claude", "web-fetch"})
 
 
 def control_response(events: list[dict[str, object]]) -> dict[str, object]:
