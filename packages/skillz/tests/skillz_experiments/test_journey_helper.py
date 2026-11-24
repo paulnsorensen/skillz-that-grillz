@@ -37,3 +37,15 @@ def test_a_task_case_is_still_rejected_for_a_helper_that_did_not_run() -> None:
     _, loaded, helper = _activation(_loaded_only(), CANDIDATE, RULES)
     assert loaded and not helper
     assert "python3 -I .agents/skills/echo/run.py input.md" in _prompt(RULES, "", _case(False))
+
+
+@pytest.mark.ac("gh-746:AC-1")
+@pytest.mark.ac("gh-746:AC-2")
+def test_task_prompt_distinguishes_output_file_from_json_and_limits_load_steps() -> None:
+    task = _prompt(RULES, "Return JSON.", _case(False))
+    assert "simple commands, without shell operators, for these skill-load steps" in task
+    assert "create it with an available, permitted writer" in task
+    assert "Write if declared" in task and "Bash when available and permitted" in task
+    assert "Verify the file exists" in task
+    assert "JSON text does not create the file" in task
+    assert "create it with an available, permitted writer" not in _prompt(RULES, "", _case(True))

@@ -31,6 +31,10 @@ On the `claude` and `codex` harnesses, it also sees the task trace: the task's m
 A `command` harness journey has no trace.
 A criterion about work that leaves no trace, no output file, and no reply text cannot pass. As a `must`, it scores the case 0.
 
+A JSON answer does not create a workspace file. If a task criterion requires an output file, the task must create it with an available, permitted writer and verify that it exists.
+Declare `Write` in the contract `surface.tools` when the task needs that tool. A task may use `Bash` for a workspace output only when that tool is available and the write is permitted.
+Do not require an output file when the task can only reply with JSON text.
+
 The task sandbox has no network. It also limits sub-agents:
 
 - The Codex task role cannot start a sub-agent. The runner sets `features.multi_agent=false`, and a contract `surface` agent stops the run with `contract-surface-unsupported`.

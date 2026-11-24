@@ -176,3 +176,9 @@
 - 2026-11-11 · skillz-free-plan-approved · skipped-near-duplicate · decisions/skillz-autoimprove.md; decisions/architecture-gates.md · Keep the imported Mold decisions without another copy. Cure does not change their design.
 
 - 2026-11-13 · 6b2fb496e7c0e5b3 · merged · criteria/gh-657.md · Record loaded-source metadata, decoder recursion, unreadable traversal, and newline schema parity pitfalls. Preserve all acceptance criteria. Frozen exact and natural probes return rank 1.
+- 2026-11-23 · 2bc5caf3b61d22bb · merged · research/gepa-session-optimization.md · Issue #748 records the search budget and the gap between two proposals and the gskill experiment.
+- 2026-11-23 · c7efa440277491ef · merged · research/gepa-session-optimization.md · Issue #749 separates observed baseline findings from the proposed measurement-first workflow.
+
+- 2026-11-23 · 6b90116607472ee2 · merged · sources/gepa-faq.md · Record the budget and dataset guidance without making either a hard minimum.
+- 2026-11-23 · 6b90116607472ee2 · merged · research/gepa-session-optimization.md · Compare the observed budget, DSPy presets, intentional token tie policy, and proposed noise checks.
+- 2026-11-23 · 6b90116607472ee2 · skipped-near-duplicate · research/gepa-session-optimization.md · Keep the existing 70-evaluation field result and official gskill comparison.
