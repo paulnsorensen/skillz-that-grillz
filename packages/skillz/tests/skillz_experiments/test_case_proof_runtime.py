@@ -393,12 +393,13 @@ def test_proof_process_has_clean_environment_and_file_size_limit(
     (workspace / "tmp").mkdir()
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "hidden")
     monkeypatch.setenv("PYTHONPATH", "hidden")
-    script = ("import json,os,resource,signal\n"
+    script = ("import json,os,resource,signal,sys\n"
               "signal.signal(signal.SIGXFSZ, signal.SIG_IGN)\n"
-              "env = os.environ\n"
-              "clean = set(env) == {'PATH','HOME','TMPDIR','LC_ALL'} and env['LC_ALL'] == 'C.UTF-8'\n"
-              "clean &= env['HOME'] == os.path.join(os.getcwd(),'home')\n"
-              "clean &= env['TMPDIR'] == os.path.join(os.getcwd(),'tmp')\n"
+              "env = dict(os.environ)\n"
+              "injected = {'__CF_USER_TEXT_ENCODING'} if sys.platform == 'darwin' else set()\n"
+              "clean = set(env) - injected == {'PATH','HOME','TMPDIR','LC_ALL'} and env['LC_ALL'] == 'C.UTF-8'\n"
+              "clean &= os.path.realpath(env['HOME']) == os.path.realpath(os.path.join(os.getcwd(),'home'))\n"
+              "clean &= os.path.realpath(env['TMPDIR']) == os.path.realpath(os.path.join(os.getcwd(),'tmp'))\n"
               "limit = resource.getrlimit(resource.RLIMIT_FSIZE)\n"
               "clean &= limit == (4194304,4194304)\n"
               "try:\n"
@@ -407,6 +408,9 @@ def test_proof_process_has_clean_environment_and_file_size_limit(
               "else: clean = False\n"
               "print(json.dumps({'score': int(clean)}))\n")
     assert score(workspace, (sys.executable, "-I", "-c", script), os.defpath) == 1
+    for name in ("AWS_SECRET_ACCESS_KEY", "PYTHONPATH"):
+        leaked = script.replace("env = dict(os.environ)\n", f"env = dict(os.environ)\nenv[{name!r}] = 'hidden'\n")
+        assert score(workspace, (sys.executable, "-I", "-c", leaked), os.defpath) == 0
 
 
 @pytest.mark.ac("gh-657:AC-19")
