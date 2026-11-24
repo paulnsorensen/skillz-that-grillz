@@ -541,17 +541,19 @@ def test_preflight_stops_on_isolation_failure_without_fallback(
     assert all("--restricted" not in cast(list[str], call["argv"]) for call in logged)
 
 
+@pytest.mark.ac("gh-740:AC-1")
+@pytest.mark.ac("gh-740:AC-2")
 def test_the_builtin_claude_agent_is_not_a_leak() -> None:
-    builtin: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["general-purpose", "claude"]}
-    foreign: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["claude", "my-agent"]}
+    builtin: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["general-purpose", "claude", "web-fetch"]}
+    foreign: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["claude", "web-fetch", "web-fetcher", "my-agent"]}
     assert _events.find_leak([builtin], []) is None
-    assert "my-agent" in str(_events.find_leak([foreign], []))
+    assert _events.find_leak([foreign], []) == "foreign agent in init event: ['my-agent', 'web-fetcher']"
 
 
 @pytest.mark.parametrize("agent", ["Claude", "claude-reviewer", "claude ", ""])
 def test_only_the_exact_claude_agent_name_is_builtin(agent: str) -> None:
-    event: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["claude", agent]}
-    assert _events.find_leak([event], []) is not None
+    event: dict[str, object] = {"type": "system", "subtype": "init", "agents": ["claude", "web-fetch", agent]}
+    assert _events.find_leak([event], []) == f"foreign agent in init event: {[agent]!r}"
 
 
 def test_a_declared_agent_next_to_the_builtin_claude_agent_is_not_a_leak() -> None:
