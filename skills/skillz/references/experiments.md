@@ -478,6 +478,8 @@ The seed projection is a different value. It does not assign cases to splits.
 It lists `families`, `holdout_capacity`, `deficit`, and `shortfall` for the scored seed families.
 The first `run` stop, `cases-missing`, shows it in `seed_summary.split`. A `plan` report shows it in `preview.seed.split`.
 The projection uses the scored kinds, and it does not depend on the split seed.
+The report also holds `seed` with `bytes`, `limit`, and `remaining` for the serialized seed file. A `plan` report shows them in `preview.seed`.
+A `seed-capacity-warning` finding appears when fewer than 10 percent of the seed bytes remain.
 
 Make the cases hard. A family that the seed already passes adds no signal.
 Give each family one trap:
