@@ -14,6 +14,7 @@ import re
 from collections import Counter
 from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path, PurePosixPath
+from typing import cast
 
 from skillz_experiments._cases import CodedError, Fixture, loads_untrusted, relative, text_map
 from skillz_experiments._contract import Contract
@@ -73,14 +74,29 @@ def _journeys(target: Path, indices: list[int] | None = None) -> list[dict[str, 
 
 
 def _fixture(target: Path, path: str, cache: dict[str, Fixture]) -> Fixture:
-    """Return a fixture under `evals/files/`: its text, or a base64 marker for a png, jpg, webp, or gif. Read each path once."""
+    """Return a fixture under `evals/files/`. Read each distinct path once."""
     if path not in cache:
         if not relative(path).startswith(FIXTURES):
             raise ValueError(f"{path} must be under {FIXTURES}")
         cache[path] = fixture_from_bytes(read_bytes(target, path, READ_LIMIT), path)
-        if sum(len(item.encode("utf-8")) if isinstance(item, str) else len(item["base64"]) for item in cache.values()) > SEED_LIMIT:
-            raise ValueError(f"the seed is too large; its fixtures pass {SEED_LIMIT} bytes")
+        sizes = _fixture_sizes(cache)
+        subtotal = sum(sizes.values())
+        if subtotal > SEED_LIMIT:
+            raise ValueError(f"the seed is too large; at least {subtotal} fixture bytes exceed the {SEED_LIMIT}-byte limit "
+                             + f"by at least {subtotal - SEED_LIMIT} bytes before serialized seed sizing; "
+                             + _largest(sizes))
     return cache[path]
+
+
+def _fixture_sizes(fixtures: Mapping[str, Fixture]) -> dict[str, int]:
+    return {path: len(value.encode("utf-8")) if isinstance(value, str) else len(value["base64"])
+            for path, value in fixtures.items()}
+
+
+def _largest(sizes: Mapping[str, int]) -> str:
+    shown = ", ".join(f"{path} ({size} bytes)" for path, size in
+                      sorted(sizes.items(), key=lambda item: (-item[1], item[0]))[:5])
+    return "largest unique fixtures: " + (shown or "none")
 
 
 def check_unique(identifiers: Sequence[object]) -> None:
@@ -98,7 +114,13 @@ def seed_document(cases: Sequence[Mapping[str, object]]) -> dict[str, object]:
     return {"cases": share_files(cases, fixtures), "fixtures": fixtures}
 
 
-def seed_cases(target: Path, *, origins: dict[str, tuple[str, str]] | None = None) -> list[dict[str, object]] | None:
+def seed_size(cases: Sequence[Mapping[str, object]]) -> int:
+    """Count the bytes that the run writes, including JSON indentation and its final newline."""
+    return len((json.dumps(seed_document(cases), sort_keys=True, indent=2) + "\n").encode("utf-8"))
+
+
+def seed_cases(target: Path, *, origins: dict[str, tuple[str, str]] | None = None,
+               size_out: list[int] | None = None) -> list[dict[str, object]] | None:
     """Return one seed case per eval entry, then one per journey, or None when the skill has neither file.
 
     A task case also holds its fixtures and reference. Raise `CodedError` `evals-unreadable` when a
@@ -128,10 +150,19 @@ def seed_cases(target: Path, *, origins: dict[str, tuple[str, str]] | None = Non
         for case, index in zip(journeys or [], journey_indices):
             origins[str(case["id"])] = (JOURNEYS, f"/{index}/proof")
     check_unique([case["id"] for case in cases])
-    size = len((json.dumps(seed_document(cases), sort_keys=True, indent=2) + "\n").encode("utf-8"))
+    size = seed_size(cases)
     if size > SEED_LIMIT:
-        raise CodedError("evals-unreadable", f"{EVALS} and {JOURNEYS} cannot seed the cases: the seed is too large; it passes "
-                         + f"{SEED_LIMIT} bytes")
+        sizes = _fixture_sizes(cache)
+        for case in journeys or []:
+            files = case.get("files")
+            if isinstance(files, dict):
+                for path, fixture_size in _fixture_sizes(cast(dict[str, Fixture], files)).items():
+                    sizes[path] = max(sizes.get(path, 0), fixture_size)
+        raise CodedError("evals-unreadable", f"{EVALS} and {JOURNEYS} cannot seed the cases: the seed is too large; "
+                         + f"serialized seed is {size} bytes, limit {SEED_LIMIT} bytes, overage {size - SEED_LIMIT} bytes; "
+                         + _largest(sizes))
+    if size_out is not None:
+        size_out.append(size)
     return cases
 
 
