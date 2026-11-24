@@ -20,7 +20,7 @@ from skillz_experiments._intake import (
     check_helper_input, intake_contract, load_draft, split_cases, too_few,
 )
 from skillz_experiments._seed import (EVALS, JOURNEYS, SEED_LIMIT, check_coverage, fixture_error, fixture_misses,
-                                      seed_cases, seed_family, seed_projection)
+                                      seed_cases, seed_family, seed_projection, seed_size)
 from skillz_experiments.harness import ClaudeOptions, Configuration
 from skillz_experiments.proof import validate_case_proofs
 from skillz_experiments.run import DEFAULT_SEED, frozen_targets, plan, resolve_statistics, scored_kinds
@@ -160,9 +160,8 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
     scores_task = chosen is None or any(kind not in journeys for kind in chosen)
     seeded: list[dict[str, object]] | None = None
     origins: dict[str, tuple[str, str]] = {}
-    seed_sizes: list[int] = []
     try:
-        seeded = seed_cases(target, origins=origins, size_out=seed_sizes)
+        seeded = seed_cases(target, origins=origins)
     except FAILURES as error:
         findings.append(_failure(error, JOURNEYS if str(error).startswith(JOURNEYS) else EVALS))
 
@@ -270,7 +269,8 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
     findings.extend(validate_case_proofs(target, contract, chosen, drafted, seeded, origins, draft is not None))
     if contract is not None:
         findings.extend(_gate_findings(target, journeys, drafted))
-    capacity = {"bytes": seed_sizes[0], "limit": SEED_LIMIT, "remaining": SEED_LIMIT - seed_sizes[0]} if seed_sizes else None
+    used = None if seeded is None else seed_size(seeded)
+    capacity = None if used is None else {"bytes": used, "limit": SEED_LIMIT, "remaining": SEED_LIMIT - used}
     if capacity is not None and capacity["remaining"] * 10 < SEED_LIMIT:
         findings.append(_finding("seed-capacity-warning", "warning", EVALS, f"{capacity['remaining']} seed bytes remain"))
     report: dict[str, object] = {"ok": not any(found["severity"] == "error" for found in findings),

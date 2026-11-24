@@ -9,7 +9,7 @@ from typing import cast
 import pytest
 
 from skillz_experiments._cli import main
-from skillz_experiments._seed import SEED_LIMIT
+from skillz_experiments._seed import READ_LIMIT, SEED_LIMIT
 from skillz_experiments.run import Stop, run
 
 Maker = Callable[..., Path]
@@ -126,3 +126,44 @@ def test_early_distinct_fixture_bound_reports_only_a_lower_bound_and_five_larges
     assert "serialized seed is" not in message
     assert sum(path in message for path in paths) == 5
     assert paths[-1] not in message
+
+
+@pytest.mark.ac("gh-745:AC-3")
+def test_one_fixture_over_the_read_limit_reports_its_size_limit_and_overage(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    _tasks(target)
+    _ = (target / "evals/files/input.md").write_text("x" * (READ_LIMIT + 1), encoding="utf-8")
+    code, report = _report(capsys, "validate", target)
+    errors = [item for item in cast(list[dict[str, object]], report["findings"]) if item["code"] == "evals-unreadable"]
+    assert code == 1 and len(errors) == 1
+    message = str(errors[0]["message"])
+    assert (f"evals/files/input.md is too large: {READ_LIMIT + 1} bytes, limit {READ_LIMIT} bytes, "
+            + "overage 1 bytes") in message
+    assert "x" * 20 not in message
+
+
+@pytest.mark.ac("gh-745:AC-4")
+def test_early_distinct_fixture_bound_lists_a_larger_inline_journey_fixture(
+        tmp_path: Path, make_target: Maker, capsys: pytest.CaptureFixture[str]) -> None:
+    target = make_target(tmp_path)
+    _tasks(target)
+    paths = [f"evals/files/f{i}.md" for i in range(6)]
+    for path in paths:
+        _ = (target / path).write_text("x" * 200_000, encoding="utf-8")
+    document = cast(dict[str, list[dict[str, object]]], json.loads((target / "evals/evals.json").read_text(encoding="utf-8")))
+    document["evals"][0]["files"] = paths
+    _ = (target / "evals/evals.json").write_text(json.dumps(document), encoding="utf-8")
+    journey = {"id": "j1", "family": "fj", "kind": "journey", "request": "Discuss the input.",
+               "brief": "Lead the conversation.", "max_turns": 3,
+               "files": {"journey.txt": "j" * 600_000},
+               "expected": {"must": ["a plan"]}, "source": "skill"}
+    _ = (target / "evals/journeys.json").write_text(json.dumps([journey]), encoding="utf-8")
+    code, report = _report(capsys, "validate", target)
+    errors = [item for item in cast(list[dict[str, object]], report["findings"]) if item["code"] == "evals-unreadable"]
+    assert code == 1 and len(errors) == 1
+    message = str(errors[0]["message"])
+    assert "at least" in message and "serialized seed is" not in message
+    assert "journey.txt (600000 bytes)" in message
+    assert sum(path in message for path in paths) == 4
+    assert "j" * 20 not in message
