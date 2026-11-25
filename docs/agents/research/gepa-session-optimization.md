@@ -149,6 +149,54 @@ The runner suppresses GEPA's raw proposal output because proposed text can conta
 Exact JSON grading distinguishes booleans from numbers.
 These corrections have regression coverage in the canonical build.[^runtime]
 
+## Search budget and baseline value in a review skill
+
+The November field run measured failures in an existing review skill. It did not establish a better candidate.[^field-scope]
+The baseline pass found five zero-score cases. It exposed a missing report file, an overly strict file reference, and reviews that guessed check results.[^field-scope]
+These findings identify problems in the evaluation as well as the skill. A low score alone does not identify which one failed.
+
+The completed run used 196 model calls. An earlier failed preflight used two more.[^field-scope]
+A search evaluation is not one model call: this run used separate task and judge calls.
+Of 70 search evaluations, 28 went to the seed and 21 to each of two candidates.[^field-range]
+Neither candidate beat the seed on validation. One candidate tied on minibatch quality, advanced on token count, and cost 36 model calls to validate.[^field-tie]
+The seed averaged 0.887 on validation. The two weakest families were both in holdout.[^field-split]
+Do not reuse those holdout outcomes to select another split and still call it an independent test.
+
+The search saw 10 training and nine validation cases.[^field-split]
+For nine validation cases, the [FAQ guideline](../sources/gepa-faq.md#search-budget-and-example-count) gives 135–270 metric calls before adjusting for local repeats.
+The run used 70. Two proposals show limited exploration, not convergence or a GEPA defect.[^field-range][^field-report]
+
+Skillz uses two examples per minibatch. DSPy defaults to three and sizes its light, medium, and heavy budgets for 6, 12, and 18 candidates.[^field-engine][^dspy]
+These are DSPy presets, not requirements of the GEPA engine.
+For one component and nine validation examples, DSPy’s light formula gives 416 metric calls. That is a calculation, not an observed run cost.[^dspy]
+GEPA 0.1.4 normally requires a minibatch score increase. Skillz’s token-saving mode accepts a quality tie if the candidate uses fewer task tokens.[^field-accept][^field-tie]
+It also reflects on perfect minibatches. Both changes intentionally allow cheaper candidates to enter the search.[^field-policy]
+Neither rule establishes that a token saving on two examples will repeat.
+
+The report proposes a quality-only comparison without `min_token_saving` and with more than 218 metric calls.
+It also proposes scoring one case five times to compare judge variation with the gain needed for promotion.[^field-report]
+Neither check ran in this ingest. Averaging repeat scores is a maintainer suggestion, not a tested noise threshold for this grader.[^noise]
+
+The [official gskill recipe](../sources/gepa-gskill.md) addresses a different task.
+Its authors evaluated repository bug repair with executable tests, about 300 generated tasks per repository, and a separate test split.[^gskill-results]
+Their resolve rates do not predict review quality on a small, judge-scored suite.
+Skillz already uses GEPA for search. It supplies the evaluator, proposal function, and budget policy.[^field-engine]
+Issue #749 proposes baseline scoring by default and optional search. It does not record an accepted change.[^field-scope]
+For a prior successful promotion on another skill, see [skillz live proof lessons](../skillz-live-proof-lessons.md).
+
+[^field-scope]: [Issue #749: measurement-first proposal and live results](https://github.com/paulnsorensen/skillz-that-grillz/issues/749).
+[^field-range]: [Issue #748: search operating range and candidate costs](https://github.com/paulnsorensen/skillz-that-grillz/issues/748).
+[^field-tie]: [Issue #744: token objective and candidate outcomes](https://github.com/paulnsorensen/skillz-that-grillz/issues/744).
+[^field-split]: [Issue #747: family scores and split](https://github.com/paulnsorensen/skillz-that-grillz/issues/747).
+[^field-engine]: `packages/skillz/src/skillz_experiments/search/_engine.py:193-211` at `dc30037b`.
+[^gskill-results]: [GEPA authors' gskill experiment](https://gepa.dev/blog/2026/02/18/automatically-learning-skills-for-coding-agents/).
+
+[^field-report]: User-supplied report, “GEPA usage versus the skillz search,” normalized SHA-256 prefix `6b90116607472ee2`. See also [the public operating-range issue](https://github.com/paulnsorensen/skillz-that-grillz/issues/748). The separate PR handoff and private run JSON were not supplied.
+[^dspy]: [DSPy GEPA presets and budget calculation](https://github.com/stanfordnlp/dspy/blob/afaac26465663293d2cac64e71add28232e81e8b/dspy/teleprompt/gepa/gepa.py#L468-L495). The budgeting formula uses a minibatch estimate of 35, distinct from the reflection minibatch of three.
+[^field-accept]: [GEPA 0.1.4 acceptance rules](https://github.com/gepa-ai/gepa/blob/v0.1.4/src/gepa/strategies/acceptance.py).
+[^field-policy]: [Skillz ADR-016, token-rule amendment](../decisions/skillz-autoimprove.md); `packages/skillz/src/skillz_experiments/search/_engine.py:16,40-59,193-211` at `dc30037b`.
+[^noise]: [GEPA maintainer on aggregating stochastic evaluations](https://github.com/gepa-ai/gepa/issues/139#issuecomment-3544654963).
+
 [^selftest]: Authenticated local run `skillz-live-20260928-retry`, 2026-09-28; aggregate evidence computed from private run records. Seed hash `40d663101dc626aa1b55cf6d97ffb32e1603830814f924d858d91bd614b217da`. Frozen public cases: `packages/wedge/src/skillz_experiments/fixtures/self-test.json:1-106` (removed from the tree; read it in git history). Implementation and verification are published in [PR #107](https://github.com/paulnsorensen/skillz-that-grillz/pull/107).
 
 [^runtime]: GEPA 0.1.4 installed public signatures, inspected 2026-09-28; `packages/skillz/src/skillz_experiments/search/_engine.py` and `harness/_codex.py`. Model-free `Codex.preflight()` returns `isolation: passed` with zero live calls on Codex 0.154.0, 2026-09-28.
@@ -160,4 +208,4 @@ These corrections have regression coverage in the canonical build.[^runtime]
 [^vaudeville]: Local vaudeville records read 2026-09-28: `.cheese/research/pydantic-ai-native/pydantic-ai-native.md:9-36`; `docs/adr/pydantic-evals-calibration-001.md:7-26`; `docs/adr/pydantic-evals-calibration-002.md:7-29`; `docs/specs/typed-rule-core.md:20-32`.
 [^skillz]: `skills/skillz/SKILL.md:25-39` and `skills/skillz/references/analytics-ceremony.md:3-9` at `b068dacbae5b8afd8c3abe2f531adc5193a99e25`.
 
-_Source: recovered local research, pinned PR evidence, and primary GEPA documentation · Updated: 2026-09-28 · Supersedes: combined gskill identity and automatic-holdout implications in prior summaries_
+_Source: recovered local research, pinned PR evidence, primary GEPA documentation, public skillz issues #744, #747–749, and the supplied “GEPA usage versus the skillz search” report · Updated: 2026-11-23 · Supersedes: combined gskill identity and automatic-holdout implications in prior summaries_

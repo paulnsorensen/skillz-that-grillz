@@ -112,7 +112,8 @@ def read_bytes(root: Path, name: str, limit: int) -> bytes:
             descriptors.append(here)
         leaf = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=here)
         with os.fdopen(leaf, "rb") as stream:
-            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            status = os.fstat(stream.fileno())
+            if not stat.S_ISREG(status.st_mode):
                 raise ValueError(f"{name} must be a regular file")
             data = stream.read(limit + 1)
     except OSError:
@@ -121,7 +122,8 @@ def read_bytes(root: Path, name: str, limit: int) -> bytes:
         for descriptor in descriptors:
             os.close(descriptor)
     if len(data) > limit:
-        raise ValueError(f"{name} is too large")
+        size = max(status.st_size, len(data))
+        raise ValueError(f"{name} is too large: {size} bytes, limit {limit} bytes, overage {size - limit} bytes")
     return data
 
 
