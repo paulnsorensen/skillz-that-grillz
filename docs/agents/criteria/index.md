@@ -35,6 +35,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [autoimprove-useful-answer](./autoimprove-useful-answer.md) — autoimprove-useful-answer: a stopped baseline answers a diagnosis, and a missing fixture stops before a call
 - [fromargs-benefit-smoke](./fromargs-benefit-smoke.md) — fromargs-benefit-smoke: autoimprove writes its own eval and ships a fromargs CLI
 - [fromargs-cli-library](./fromargs-cli-library.md) — fromargs-cli-library: fromargs public contract
+- [gh-108](./gh-108.md) — gh-108: hooks-catalog examples run in the gate, and the analytics analyst prefers an enforced agent
 - [gh-131](./gh-131.md) — gh-131: the network preflight probes and the macOS live path
 - [gh-176](./gh-176.md) — gh-176: the Read tool cannot read host files outside the workspace
 - [gh-223](./gh-223.md) — gh-223: skillz_experiments module layout and borrow waves
@@ -47,6 +48,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-242](./gh-242.md) — gh-242: show rejected approaches and proposer notes in the reflection prompt (W4.5)
 - [gh-243](./gh-243.md) — gh-243: keep private cross-run attempt history for compatible runs (W4.6)
 - [gh-244](./gh-244.md) — gh-244: steer a stalled search toward the least-tested editable component (W4.7)
+- [gh-245](./gh-245.md) — gh-245: selectable validation policy
 - [gh-247](./gh-247.md) — gh-247: move the evaluator into evaluation/ and memoize check_candidate per candidate (W5.3)
 - [gh-267](./gh-267.md) — gh-267: acceptance-criterion traceability gate
 - [gh-279](./gh-279.md) — gh-279: reuse recorded search outcomes on resume
@@ -59,6 +61,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-294](./gh-294.md) — gh-294: --edit prose with non-Markdown editable names stops with editable-needs-cli
 - [gh-295](./gh-295.md) — gh-295: the doctor checks the run's claude executable, and a nonzero inventory exit stops with host-not-ready
 - [gh-296](./gh-296.md) — gh-296: the cases-missing stop writes the seed to a file and shows only counts
+- [gh-297](./gh-297.md) — gh-297: free run preview
 - [gh-298](./gh-298.md) — gh-298: document code-enforced fixture and case rules in experiments.md
 - [gh-299](./gh-299.md) — gh-299: the shipped skillz contract scores task cases
 - [gh-300](./gh-300.md) — gh-300: the train split gets at least 4 scored cases from 2 families
@@ -163,6 +166,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-707](./gh-707.md) — gh-707: self-test takes each role model from the role file
 - [gh-718](./gh-718.md) — gh-718: validate checks frozen targets before case approval
 - [gh-719](./gh-719.md) — gh-719: Codex fixture commits exclude runtime directories
+- [gh-721](./gh-721.md) — gh-721: run-matched edit validation
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [kit-harder-journeys](./kit-harder-journeys.md) — kit-harder-journeys: harder journeys for the self-autoimprove kit
 - [proposer-cli-early](./proposer-cli-early.md) — proposer-cli-early: the reflection prompt offers @new-cli early and keeps room for its two edits
