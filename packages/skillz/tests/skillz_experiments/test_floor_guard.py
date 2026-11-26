@@ -11,9 +11,8 @@ import pytest
 
 from skillz_experiments._records import read
 from skillz_experiments.gate import Statistics, holdout_deltas, verdict
-from skillz_experiments.run import run
-
-from test_run_search import MODEL, Search
+from skillz_experiments.run import Stop, run
+from test_run_search import MODEL, Search, run_search
 
 # One case drops from 1 to 0 while nine cases gain 0.5: the mean delta (0.35) exceeds 2*SE (0.30).
 MASKED = {"a": -1.0, **{f"c{index}": 0.5 for index in range(9)}}
@@ -109,6 +108,9 @@ def test_the_holdout_gate_does_not_promote_a_winner_that_loses_a_case_the_baseli
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out, families=6)
     approved, calls = approvals(target, out)
+    with pytest.raises(Stop) as prepared:
+        _ = run(target, out, MODEL, approve_cases=approved, approve_budget=calls)
+    assert prepared.value.code == "live-required"
     held = sorted(case["id"] for case in cast(list[dict[str, str]], read(out / "cases.json")["cases"])
                   if case["split"] == "holdout")
     victim = held[0]
@@ -123,7 +125,7 @@ def test_the_holdout_gate_does_not_promote_a_winner_that_loses_a_case_the_baseli
         return 1.0 if improved else 0.0
 
     state.case_score_of = score
-    result = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, approved, calls)
     gate = cast(dict[str, Any], read(out / "run.json")["gate"])  # pyright: ignore[reportExplicitAny]
     deltas = {case_id: (-2 / 3 if case_id == victim else 1.0) for case_id in held}
     assert verdict(deltas).verdict == "promote", json.dumps(deltas)
@@ -142,6 +144,9 @@ def test_the_holdout_gate_does_not_promote_a_winner_whose_evaluations_of_a_prote
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out, families=6)
     approved, calls = approvals(target, out)
+    with pytest.raises(Stop) as prepared:
+        _ = run(target, out, MODEL, approve_cases=approved, approve_budget=calls)
+    assert prepared.value.code == "live-required"
     held = sorted(case["id"] for case in cast(list[dict[str, str]], read(out / "cases.json")["cases"])
                   if case["split"] == "holdout")
     victim = held[0]
@@ -150,7 +155,7 @@ def test_the_holdout_gate_does_not_promote_a_winner_whose_evaluations_of_a_prote
         None if split != "holdout" else 1.0 if case_id == victim or "improved" in text else 0.0)
     state.holdout_case_fault = lambda improved, case_id: (
         RuntimeError("the call timed out") if improved and case_id == victim else None)
-    result = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, approved, calls)
     gate = cast(dict[str, Any], read(out / "run.json")["gate"])  # pyright: ignore[reportExplicitAny]
     assert verdict({case_id: 1.0 for case_id in held if case_id != victim}).verdict == "promote"
     assert (gate["verdict"], gate["reasons"]) == ("inconclusive", [f"unscored-protected:{victim}"])

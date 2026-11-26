@@ -26,7 +26,8 @@ from skillz_experiments.run._state import RunState
 from skillz_experiments.run._unspent import budget_trigger
 from skillz_experiments.search import _history, add_validation_scores, attempts, complete_means, search, search_allowance
 from skillz_experiments.search import validation_complete
-from test_run_search import MODEL, Provider, _interrupt, _start  # pyright: ignore[reportPrivateUsage]
+from test_run_search import run_search
+from test_run_search import MODEL, Provider, _start  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -130,7 +131,7 @@ def test_the_run_records_the_engine_stop_as_the_search_stop_trigger(
         return stopped
 
     monkeypatch.setattr(_session, "pareto_search", engine)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     recorded = cast(dict[str, object], read(out / "run.json")["search"])
     assert (recorded["stop_trigger"], recorded["reason"]) == (trigger, reason)
     assert result["phase"] == "complete"
@@ -167,10 +168,10 @@ def test_a_resume_with_another_or_no_validation_policy_stops_before_the_engine_h
 
 @pytest.mark.ac("gh-500:AC-8")
 @pytest.mark.ac("gh-508:AC-3")
-def test_a_completed_run_without_a_validation_policy_still_summarises_and_exports(
+def test_a_completed_run_without_a_validation_policy_exports_but_refuses_to_resume(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     fields = cast(dict[str, dict[str, object]], record["compatibility"])["fields"]
     assert fields["validation_policy"] == validation_policy()
@@ -180,7 +181,8 @@ def test_a_completed_run_without_a_validation_policy_still_summarises_and_export
     del record["validation_policy"]
     del fields["validation_policy"]
     write(out / "run.json", record)
-    assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+    with pytest.raises(ValueError, match="evaluator differs from the frozen record"):
+        _ = run(target, out, MODEL, live=True, factory=state.factory)
     assert "export" in export(out, tmp_path / "export")
 
 
@@ -236,18 +238,18 @@ def test_gepa_gets_the_mean_of_two_distinct_repeat_calls_for_every_candidate_and
 
     monkeypatch.setattr(_session, "pareto_search", spy)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
-    rows = [item for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
-            if item.get("arm") == "search" and item.get("split") == "validation"]
-    by_pair: dict[tuple[str, str], list[tuple[int, float]]] = {}
+    _ = run_search(target, out, state, case_hash, calls)
+    record = read(out / "run.json")
+    rows = [item for item in cast(list[dict[str, object]], record["outcomes"])
+            if item.get("arm") in {"baseline", "search"} and item.get("split") == "validation"]
+    by_pair: dict[tuple[str, str], dict[int, float]] = {}
     for item in rows:
-        by_pair.setdefault((cast(str, item["search_candidate"]), cast(str, item["case_id"])), []).append(
-            (cast(int, item.get("repeat")), cast(float, item["score"])))
-    # Two candidates at least: the seed and one validated proposal. Each pair has two provider calls and two outcomes.
+        pair = str(item.get("search_candidate", item["candidate_hash"])), str(item["case_id"])
+        repeat, score = cast(int, item["repeat"]), cast(float, item["score"])
+        assert by_pair.setdefault(pair, {}).setdefault(repeat, score) == score
+    # The parallel measurement does not fix which repeat scores 1.0.
     assert len({identity for identity, _ in by_pair}) >= 2
-    # The headroom pass runs the seed repeats in parallel, so a repeat index does not fix which score it got.
-    assert all(sorted(repeat for repeat, _ in found) == [0, 1] and sorted(score for _, score in found) == [0.0, 1.0]
-               for found in by_pair.values())
+    assert all(set(found) == {0, 1} and sorted(found.values()) == [0.0, 1.0] for found in by_pair.values())
     assert counts == Counter({pair: 2 for pair in by_pair})
     # GEPA receives the per-case mean of every validated candidate, and no candidate is held back from it.
     assert seen and all(score == 0.5 for _, score in seen)
@@ -257,7 +259,7 @@ def test_gepa_gets_the_mean_of_two_distinct_repeat_calls_for_every_candidate_and
 def test_the_physical_search_runs_stay_within_the_planned_search_share(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     estimate = cast(dict[str, Any], read(out / "run.json")["estimate"])  # pyright: ignore[reportExplicitAny]
     planned = cast(int, estimate["metric_calls"]) + cast(int, estimate["headroom"]["outcomes"])
     assert state.proposals >= 2
@@ -407,24 +409,49 @@ def test_an_incomplete_challenger_gets_no_comparison_until_its_last_repeat_runs(
 
 @pytest.mark.ac("gh-500:AC-10")
 def test_a_resumed_headroom_pass_scores_only_the_missing_seed_repeat(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
-    target, out, state, _ = _interrupt(tmp_path, make_target, write_draft, approvals)
-    record = read(out / "run.json")
-    seed = cast(str, record["seed_hash"])
-    outcomes = cast(list[dict[str, object]], record["outcomes"])
-    seeded = [item for item in outcomes if item.get("search_candidate") == seed and item.get("split") == "validation"]
-    assert seeded and Counter(cast(int, item["repeat"]) for item in seeded) == {0: len(seeded) // 2, 1: len(seeded) // 2}
-    dropped = next(item for item in seeded if item["repeat"] == 1)
-    outcomes.remove(dropped)
-    del record["headroom"]
-    write(out / "run.json", record)
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    evaluate = Provider.evaluate
+    faulted = False
+
+    def fail_once(provider: Provider, candidate: Candidate, case: Case, *, holdout: bool = False,
+                  checks: object = None) -> dict[str, object]:
+        nonlocal faulted
+        with state.lock:
+            if case.split == "validation" and not faulted:
+                faulted = True
+                raise RuntimeError("provider stopped before scoring")
+        return evaluate(provider, candidate, case, holdout=holdout, checks=checks)
+
+    monkeypatch.setattr(Provider, "evaluate", fail_once)
+    with pytest.raises(CodedError, match="1 seed evaluations have no score") as stopped:
+        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert stopped.value.code == "baseline-faulted"
+    path = out / "run.json"
+    partial = read(path)
+    assert partial["plan_mode"] == "baseline" and "headroom" not in partial
+    seed = cast(str, partial["seed_hash"])
+
+    def slots(record: dict[str, object], *, failed: bool = False) -> Counter[tuple[str, int]]:
+        return Counter((cast(str, row["case_id"]), cast(int, row["repeat"]))
+                       for row in cast(list[dict[str, object]], record["outcomes"])
+                       if row.get("search_candidate") == seed and row["split"] == "validation"
+                       and _outcomes.is_failed(row) == failed)
+
+    missing = slots(partial, failed=True)
+    ((case_id, repeat),) = missing.elements()
+    cases = cast(list[dict[str, str]], read(out / "cases.json")["cases"])
+    expected = Counter((case["id"], index) for case in cases if case["split"] == "validation" for index in (0, 1))
+    before = slots(partial)
+    assert (case_id, repeat) in expected and before == expected - missing
+
     state.search_log.clear()
-    _ = run(target, out, MODEL, live=True, factory=state.factory)
-    # The case with one repeat missing counts as missing, and only that repeat runs again.
-    assert [entry for entry in state.search_log if entry[0] == seed] == [(seed, "validation", dropped["case_id"])]
-    again = [item for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
-             if item.get("search_candidate") == seed and item.get("case_id") == dropped["case_id"]]
-    assert sorted(cast(int, item["repeat"]) for item in again) == [0, 1]
+    holdout_calls = state.holdout_calls
+    assert run(target, out, MODEL, live=True, factory=state.factory)["search"] == "not-run"
+    assert state.search_log == [(seed, "validation", case_id)]
+    assert state.holdout_calls == holdout_calls
+    assert slots(read(path)) == expected
 
 
 @pytest.mark.ac("gh-500:AC-11")

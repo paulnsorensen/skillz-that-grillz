@@ -12,6 +12,7 @@ from typing import cast
 
 from skillz_experiments._cases import MET_LEVEL, digest, load_manifest, mapping
 from skillz_experiments._redact import redact
+from skillz_experiments._records import read
 from skillz_experiments.gate import close
 from skillz_experiments.run._outcomes import FIELD_LIMIT, TRUNCATED, is_failed
 from skillz_experiments.run._record_fields import criterion_levels, record_outcomes
@@ -19,6 +20,7 @@ from skillz_experiments.run._stop import Stop
 
 # The phases that never ran when the headroom pass stops the run. Export needs the phase `complete`.
 NOT_RUN = {"search": "not-run", "holdout_gate": "not-run", "replay": "not-run", "export": "unavailable"}
+REPORT_NAME = "report.json"
 
 NEXT = ("report the baseline to the user: its failing criteria, its coverage, and its spent calls; no search, holdout "
         + "gate, or export ran, so do not call export and claim no improvement; to fix a failing criterion, edit the "
@@ -130,4 +132,9 @@ def baseline_report(record: dict[str, object], out: Path) -> dict[str, object]:
 def too_easy_stop(record: dict[str, object], out: Path) -> Stop:
     """Return the `cases-too-easy` stop of the recorded headroom block, with the baseline report as its data."""
     headroom = mapping(record["headroom"])
-    return Stop("cases-too-easy", too_easy_message(headroom), {"next": NEXT, "baseline": baseline_report(record, out)})
+    if record.get("plan_mode") == "baseline":
+        report = read(out / REPORT_NAME)
+        next_step = "read the baseline report; to optimize, draft harder cases in a new run directory"
+    else:
+        report, next_step = baseline_report(record, out), NEXT
+    return Stop("cases-too-easy", too_easy_message(headroom), {"next": next_step, "baseline": report})

@@ -135,9 +135,9 @@ def _codex_prepared(tmp_path: Path, target: Path, write_draft: Callable[..., lis
     with pytest.raises(Stop) as budget:
         _ = run(target, out, 'm', adapter='codex', live=True, approve_cases=case_hash)
     count = cast(dict[str, int], budget.value.data['estimate'])['calls']
-    with pytest.raises(CodedError, match='model call reached'):
+    with pytest.raises(CodedError) as fault:
         _ = run(target, out, 'm', adapter='codex', live=True, approve_cases=case_hash, approve_budget=count)
-    assert calls.models >= 1
+    assert fault.value.code == 'baseline-faulted' and calls.models >= 1
     assert read(out / 'run.json')['codex_version'] == 'codex-cli 0.160.0'
     return out
 
@@ -164,9 +164,10 @@ def test_codexResume_onTheRecordedVersion_isNotAnEnvironmentStop(
         codex_world: _Calls) -> None:
     target = make_target(tmp_path / 'source')
     out = _codex_prepared(tmp_path, target, write_draft, codex_world)
-    with pytest.raises(CodedError, match='model call reached') as caught:
+    before = codex_world.models
+    with pytest.raises(CodedError) as caught:
         _ = run(target, out, 'm', adapter='codex', live=True)
-    assert caught.value.code == 'search-faulted'
+    assert caught.value.code == 'baseline-faulted' and codex_world.models > before
 
 
 def test_codexRun_recordsTheCredentialKindOfEveryBuiltInRoleInRunJson(
@@ -245,8 +246,7 @@ def test_nonoRecord_afterACompletedRun_returnsTheSummary(
     target = make_target(tmp_path / 'source')
     out = _prepared_run(tmp_path, target, write_draft)
     record = read(out / 'run.json')
-    record['isolation'] = 'nono'
-    record['phase'] = 'complete'
+    record.update(isolation='nono', phase='complete', plan_mode='search')
     write(out / 'run.json', record)
     provider = _Provider()
     result = run(target, out, 'm', live=True, factory=_factory(provider))
@@ -437,8 +437,7 @@ class _Driver:
     def finish(self) -> tuple[int, dict[str, object], dict[str, object]]:
         _, cases, _ = self.call()
         case_hash = cast(str, cases['case_hash'])
-        _, budget, _ = self.call('--approve-cases', case_hash)
-        calls = str(cast(dict[str, int], budget['estimate'])['calls'])
+        calls = str(cast(dict[str, int], cases['estimate'])['calls'])
         return self.call('--approve-cases', case_hash, '--approve-budget', calls)
 
 
@@ -491,7 +490,7 @@ def test_commandRole_neverRunsDoctorEvenWhenClaudeAndCodexAreAbsent(
     out = tmp_path / 'run'
     _ = write_draft(out)
     code, result, _ = _Driver(capsys, target, out, harness).finish()
-    assert code == 0 and result['phase'] == 'complete' and visits == []
+    assert code == 0 and result['search'] == 'not-run' and visits == []
     assert 'sandbox' in _ops(log)
 
 

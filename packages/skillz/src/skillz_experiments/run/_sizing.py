@@ -2,21 +2,39 @@
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from skillz_experiments._budget import APPROVED_CALLS, JOURNEY_CALLS
+from skillz_experiments._budget import APPROVED_CALLS, JOURNEY_CALLS, MAX_CONCURRENT_CALLS, Budget, estimate
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._contract import Contract
+from skillz_experiments._intake import IntakeCase
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._edit_plan import ReflectionNotes
-from skillz_experiments.run._plan import Plan, plan_estimate, size_plan
+from skillz_experiments.run._plan import PREFLIGHT_CALLS, Plan, case_calls, command_seconds, plan_estimate, size_plan
 from skillz_experiments.run._stop import Stop
 
 TABLE_REPEATS = (1, 2, 3)
 
 
-def raised_cap(approve_budget: int | None, cases: Sequence[Case], *, flag: str = "--approve-budget") -> int:
+def baseline_plan(contract: Contract, cases: Sequence[Case | IntakeCase], options: ClaudeOptions, cap: int) -> Plan:
+    """Size two seed evaluations per scored case and no search, gate, or replay."""
+    sandbox = command_seconds(contract, cases, options)
+    sandbox_total = math.ceil(2 * len(cases) * sandbox / MAX_CONCURRENT_CALLS)
+    sized = estimate(preflight_calls=PREFLIGHT_CALLS, search_calls=2 * sum(case_calls(contract, case) for case in cases),
+                     journey=any(case.journey is not None for case in cases), cap=cap)
+    return Plan(0, 0, 0, 0, type(sized)(sized.calls, sized.seconds + sandbox_total, sized.journey, cap),
+                sandbox_total=sandbox_total, sandbox_seconds=sandbox)
+
+
+def budget_data(budget: Budget) -> dict[str, object]:
+    return {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
+            "reserve_seconds": budget.reserve_seconds, "approved": budget.approved,
+            **({"journey": True} if budget.journey else {}), **({"cap": budget.cap} if budget.cap else {})}
+
+
+def raised_cap(approve_budget: int | None, cases: Sequence[Case | IntakeCase], *, flag: str = "--approve-budget") -> int:
     """Return the call cap that a task run sizes against, or 0 for the standard cap.
 
     `--approve-budget N` with `APPROVED_CALLS` < N <= `JOURNEY_CALLS` raises the cap to N. A larger N on a task run
@@ -54,7 +72,7 @@ class Sizer:
     def plan(self, repeats: int) -> Plan:
         """Return the plan for `repeats`. A plan that does not fit stops with the smallest approval and the repeats table."""
         try:
-            return size_plan(self.contract, self.cases, repeats, self.options, self.cap)
+            return size_plan(self.contract, self.cases, repeats, self.options, self.cap, measured=True)
         except Stop as error:
             raise self.stop(str(error), {}, repeats, fitting=True) from None
 
@@ -68,7 +86,7 @@ class Sizer:
         smallest = self._smallest(repeats) if fitting else None
         if smallest is not None:
             text += f"; --approve-budget {smallest} is the smallest approved number that fits"
-            shown = self.estimate(size_plan(self.contract, self.cases, repeats, self.options, smallest), repeats)
+            shown = self.estimate(size_plan(self.contract, self.cases, repeats, self.options, smallest, measured=True), repeats)
             extra |= {"smallest_approval": smallest, "estimate": shown, "approve": "call run with --approve-budget CALLS",
                       **self.notes.warnings}
         if not self.repeats_given:
@@ -81,7 +99,7 @@ class Sizer:
         rows: list[dict[str, object]] = []
         for repeats in TABLE_REPEATS:
             try:
-                plan = size_plan(self.contract, self.cases, repeats, self.options, self.cap)
+                plan = size_plan(self.contract, self.cases, repeats, self.options, self.cap, measured=True)
             except Stop as error:
                 rows.append({"repeats": repeats, "fits": False, "stop": str(error)})
                 continue
@@ -91,7 +109,7 @@ class Sizer:
 
     def _fits(self, cap: int, repeats: int) -> bool:
         try:
-            _ = size_plan(self.contract, self.cases, repeats, self.options, cap)
+            _ = size_plan(self.contract, self.cases, repeats, self.options, cap, measured=True)
         except Stop:
             return False
         return True

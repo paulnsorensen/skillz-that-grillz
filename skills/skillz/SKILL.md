@@ -40,14 +40,14 @@ Ask for a target when the mode requires one.
 | `improve <path>` | `optimize`, `tighten` | a `SKILL.md` or agent file | yes, unless it reuses a current audit | the analytics cache; the target after approval | approved fixes + residual findings |
 | `audit <path>` | none | a `SKILL.md` or agent file | yes | the analytics cache only; never the target | calibrated report |
 | `wedge <path>` | none | a `SKILL.md` | no | the target skill: each selected CLI, its delivery files, its call site, and any dependency write | an offload brief, then one CLI per selected candidate, each in its own directory when wedged, or with a stated reason |
-| `autoimprove <path>` | `experiment` | a skill directory; no contract or manifest | cases that the user approves; agent-drafted session cases when analytics exists | isolated run directory | a holdout gate verdict and a private candidate patch |
+| `autoimprove <path>` | `experiment` | a skill directory; no contract or manifest | cases that the user approves; agent-drafted session cases when analytics exists | isolated run directory | baseline `report.json`; optional search for a holdout verdict and candidate patch |
 
 `audit` never modifies the target. The Usage ceremony of `audit` and `improve` runs `scripts/agent-session-analytics.pyz ingest`, which creates or refreshes the analytics cache.
 `references/analytics-ceremony.md` has the details. Skip Usage and the raw-log fallback write no cache.
 
-For `autoimprove`, read `references/experiments.md`. Follow its workflow, not the shared audit protocol.
+For `autoimprove`, use `references/experiments.md` only for case authoring and technical details.
+Follow `references/autoimprove-run.md` for approvals, execution, and reports. It replaces the older run procedure and the shared audit protocol.
 Before you write or check `evals/evals.json`, `evals/journeys.json`, or `evals/autoimprove.json`, read `references/eval-formats.md`.
-Read `references/autoimprove-run.md` before you run `autoimprove`; it has the run, question, and report steps.
 
 ## Shared protocol
 

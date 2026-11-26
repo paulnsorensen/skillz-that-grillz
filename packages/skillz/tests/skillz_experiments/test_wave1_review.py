@@ -13,8 +13,9 @@ import pytest
 from skillz_experiments import _runtime
 from skillz_experiments._budget import SECONDS_PER_CALL, Budget, CallTimeout
 from skillz_experiments.gate import DEFAULT_STATISTICS
-from skillz_experiments.run import Stop, _open, _outcomes, _plan, run
+from skillz_experiments.run import Stop, _open, _outcomes, run
 from skillz_experiments.run._session import Session
+from skillz_experiments.run._sizing import baseline_plan
 from test_run_search import MODEL, Search
 
 Maker = Callable[..., Path]
@@ -150,12 +151,10 @@ def test_a_checkpoint_reads_the_budget_through_one_snapshot(
 def test_the_per_call_estimate_adds_the_sandbox_seconds_of_one_evaluation(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
-    original = _plan.size_plan
-
     def sized(*arguments: object, **options: object) -> object:
-        return dataclasses.replace(original(*arguments, **options), sandbox_seconds=300)  # pyright: ignore[reportArgumentType]
+        return dataclasses.replace(baseline_plan(*arguments, **options), sandbox_seconds=300)  # pyright: ignore[reportArgumentType]
 
-    monkeypatch.setattr(_open, "size_plan", sized)
+    monkeypatch.setattr(_open, "baseline_plan", sized)
     session, _state = _session_for(tmp_path, make_target, write_draft, approvals)
     try:
         assert session.budget.call_seconds == SECONDS_PER_CALL + 300

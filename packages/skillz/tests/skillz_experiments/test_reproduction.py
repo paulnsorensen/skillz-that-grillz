@@ -14,8 +14,8 @@ import pytest
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._evals_format import parse_journeys
 from skillz_experiments._intake import DRAFT_NAME, case_hash, load_draft, split_cases
-from skillz_experiments.run._plan import VALIDATION_REPEATS, repeat_indices
-from skillz_experiments.run._reproduce import floor_cases, reproductions
+from skillz_experiments.run._plan import VALIDATION_REPEATS
+from skillz_experiments.run._reproduce import floor_cases, reproduction_entry
 
 
 def _case(**extra: object) -> dict[str, object]:
@@ -82,11 +82,10 @@ def test_an_omitted_or_false_regression_gives_the_same_case_data_and_hash(tmp_pa
 @pytest.mark.ac("gh-651:AC-3")
 def test_a_regression_case_with_no_scored_outcome_records_null_with_a_reason() -> None:
     case = Case("r", "f", "train", "request", {"a": "b"}, {}, "session", True, regression=True)
-    plain = Case("p", "f", "train", "request", {"a": "b"}, {}, "skill", True)
-    found = reproductions([case, plain], {}, {})
-    assert found == {"r": {"split": "train", "solvable": "unknown", "scores": [], "reproduces": None,
-                           "reason": "no scored seed outcome"}}
-    assert floor_cases(found) == set()
+    found = reproduction_entry(case, [])
+    assert found == {"split": "train", "solvable": "unknown", "scores": [], "reproduces": None,
+                     "reason": "no scored seed outcome"}
+    assert floor_cases({"r": found}) == set()
 
 
 @pytest.mark.ac("gh-651:AC-3")
@@ -98,12 +97,10 @@ def test_a_seed_score_just_above_zero_is_partial_and_unmet_keeps_the_lowest_leve
         return {"score": score, "criteria": {"gap": {"level": level, "reason": f"level {level}", "met": False}}}
 
     scores, levels = [5e-13] + [0.0] * (VALIDATION_REPEATS - 1), [1] + [2] * (VALIDATION_REPEATS - 1)
-    items: dict[tuple[object, object, object], dict[str, object]] = {
-        ("validation", "v", repeat): outcome(score, level)
-        for repeat, score, level in zip(repeat_indices("validation"), scores, levels, strict=True)}
-    found = reproductions([case], items, {})
-    assert (found["v"]["reproduces"], found["v"]["state"]) == (False, "partial") and floor_cases(found) == set()
-    assert found["v"]["unmet"] == {"gap": {"level": 1, "reason": "level 1"}}
+    found = reproduction_entry(case, [outcome(score, level) for score, level in zip(scores, levels, strict=True)])
+    assert (found["scores"], found["reproduces"], found["state"]) == (scores, False, "partial")
+    assert found["unmet"] == {"gap": {"level": 1, "reason": "level 1"}}
+    assert floor_cases({"v": found}) == set()
 
 
 @pytest.mark.ac("gh-663:AC-1")
@@ -119,25 +116,25 @@ def test_the_reproduction_state_follows_the_seed_scores_and_only_pass_to_pass_is
         first: float, rest: float, reproduces: bool, state: str, floor: bool) -> None:
     scores = [first] + [rest] * (VALIDATION_REPEATS - 1)
     case = Case("v", "f", "validation", "request", {"a": "b"}, {}, "session", True, regression=True)
-    items: dict[tuple[object, object, object], dict[str, object]] = {
-        ("validation", "v", repeat): {"score": score} for repeat, score in zip(repeat_indices("validation"), scores, strict=True)}
-    found = reproductions([case], items, {})
-    assert (found["v"]["reproduces"], found["v"]["state"]) == (reproduces, state)
-    assert floor_cases(found) == ({"v"} if floor else set())
+    found = reproduction_entry(case, [{"score": score} for score in scores])
+    assert (found["scores"], found["reproduces"], found["state"]) == (scores, reproduces, state)
+    assert floor_cases({"v": found}) == ({"v"} if floor else set())
 
 
 @pytest.mark.ac("gh-663:AC-1")
 @pytest.mark.ac("gh-663:AC-2")
 @pytest.mark.parametrize(("score", "state", "floor"), [
     (0.0, "fail-to-pass", False), (0.5, "partial", False), (1.0, "pass-to-pass", True)])
-def test_a_single_repeat_train_case_and_a_holdout_case_take_a_state_from_one_score(
+def test_a_train_and_holdout_case_take_a_state_from_their_seed_slots(
         score: float, state: str, floor: bool) -> None:
     outcome: dict[str, object] = {"score": score}
     train = Case("t", "f", "train", "request", {"a": "b"}, {}, "session", True, regression=True)
     held = Case("h", "g", "holdout", "request", {"a": "b"}, {}, "session", True, regression=True)
-    found = reproductions([train, held], {("train", "t", None): outcome}, {"h": outcome})
-    for name in ("t", "h"):
-        assert (found[name]["state"], found[name]["reproduces"]) == (state, score == 0.0)
+    found = {"t": reproduction_entry(train, [outcome]), "h": reproduction_entry(held, [outcome, outcome])}
+    assert found["t"]["scores"] == [score]
+    assert found["h"]["scores"] == [score, score]
+    for entry in found.values():
+        assert (entry["state"], entry["reproduces"]) == (state, score == 0.0)
     assert floor_cases(found) == ({"t", "h"} if floor else set())
 
 
@@ -145,17 +142,17 @@ def test_a_single_repeat_train_case_and_a_holdout_case_take_a_state_from_one_sco
 @pytest.mark.ac("gh-663:AC-2")
 def test_a_record_with_no_scored_outcome_carries_no_state_and_a_stale_state_never_makes_a_floor_case() -> None:
     holdout = Case("h", "f", "holdout", "request", {"a": "b"}, {}, "session", True, regression=True)
-    found = reproductions([holdout], {}, {})
-    assert "state" not in found["h"] and found["h"]["reproduces"] is None
+    found = reproduction_entry(holdout, [])
+    assert "state" not in found and found["reproduces"] is None
     assert floor_cases({"x": {"reproduces": False}, "y": {"state": "fail-to-pass"}, "z": {"state": "partial"}}) == set()
 
 
 @pytest.mark.ac("gh-663:AC-2")
 def test_floor_cases_picks_only_the_pass_to_pass_cases_from_a_mixed_set() -> None:
     cases = [Case(name, "f", "train", "request", {"a": "b"}, {}, "session", True, regression=True) for name in "abc"]
-    items: dict[tuple[object, object, object], dict[str, object]] = {
-        ("train", "a", None): {"score": 1.0}, ("train", "b", None): {"score": 0.5}, ("train", "c", None): {"score": 0.0}}
-    assert floor_cases(reproductions(cases, items, {})) == {"a"}
+    scores = (1.0, 0.5, 0.0)
+    assert floor_cases({case.identifier: reproduction_entry(case, [{"score": score}])
+                        for case, score in zip(cases, scores, strict=True)}) == {"a"}
 
 
 @pytest.mark.ac("gh-651:AC-9")
@@ -164,6 +161,6 @@ def test_a_holdout_regression_case_keeps_only_the_level_of_each_unmet_criterion(
                                           "ok": {"level": 4, "reason": "fine", "met": True}}}
     held = Case("h", "f", "holdout", "request", {"a": "b"}, {}, "session", True, regression=True)
     trained = Case("t", "g", "train", "request", {"a": "b"}, {}, "session", True, regression=True)
-    found = reproductions([held, trained], {("train", "t", None): outcome}, {"h": outcome})
-    assert found["h"]["unmet"] == {"gap": {"level": 2}} and found["h"]["reproduces"] is True
-    assert found["t"]["unmet"] == {"gap": {"level": 2, "reason": "the draft quotes the holdout text"}}
+    held_entry = reproduction_entry(held, [outcome, outcome])
+    assert held_entry["unmet"] == {"gap": {"level": 2}} and held_entry["reproduces"] is True
+    assert reproduction_entry(trained, [outcome])["unmet"] == {"gap": {"level": 2, "reason": "the draft quotes the holdout text"}}

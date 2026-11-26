@@ -39,7 +39,8 @@ def _runner_claim(record: dict[str, object], outcomes: Sequence[Mapping[str, obj
     if same and ("baseline_scores" not in gate or "baseline_skipped" in gate):
         coverage = "unknown"
     calls, budget = record.get("calls"), mapping(record.get("budget", {}))
-    approved = budget.get("maximum")
+    maximum, prior = budget.get("maximum"), budget.get("prior_calls", 0)
+    approved = maximum + prior if type(maximum) is int and type(prior) is int else None
     checks = {
         "preflight": "pass" if isinstance(record.get("preflight"), dict) else "fail",
         "holdout-isolated": "fail" if any(item.get("arm") == "search" and item.get("split") == "holdout"

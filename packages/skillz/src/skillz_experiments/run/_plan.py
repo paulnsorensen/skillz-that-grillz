@@ -20,6 +20,7 @@ from skillz_experiments._budget import (
 from skillz_experiments._candidate import NEW_CLI, WEDGE_PREFIX
 from skillz_experiments._cases import Case, CodedError, Split
 from skillz_experiments._contract import Contract
+from skillz_experiments._intake import IntakeCase
 from skillz_experiments.run._wedge_targets import TargetPlan, mcp_text, never_editable
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._stop import Stop
@@ -74,7 +75,7 @@ class Plan:
         return min(gate_seconds(self.reserve) + self.sandbox_gate, ceilings(self.sized.journey, self.sized.cap)[1])
 
 
-def _command_seconds(contract: Contract, cases: Sequence[Case], options: ClaudeOptions) -> int:
+def command_seconds(contract: Contract, cases: Sequence[Case | IntakeCase], options: ClaudeOptions) -> int:
     """Return the sandbox time of one evaluation: one limit per sandbox run, taken at the costliest scored kind.
 
     A command or hybrid grader runs one sandbox. A `capture` argv runs one more. The result is 0 when no scored case runs one.
@@ -84,61 +85,48 @@ def _command_seconds(contract: Contract, cases: Sequence[Case], options: ClaudeO
     return runs * options.sandbox_seconds
 
 
-def case_calls(contract: Contract, case: Case) -> int:
+def case_calls(contract: Contract, case: Case | IntakeCase) -> int:
     """Return the worst-case invocation count of one evaluation of `case`. A journey case counts its `max_turns`."""
     return contract.calls(case.kind, case.journey.max_turns if case.journey is not None else 1)
 
 
 def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int, sandbox_seconds: int = 0,
           journey: bool = False, holdout_costs: Sequence[int] | None = None,
-          headroom_costs: Sequence[int] | None = None, reproduce_costs: Sequence[int] = (), cap: int = 0) -> Plan:
-    """Size the run. Shrink the search share to fit the cap; stop when the fixed cost alone exceeds it.
+          headroom_costs: Sequence[int] | None = None, reproduce_costs: Sequence[int] = (), cap: int = 0,
+          measured: bool = False) -> Plan:
+    """Size the search and reserve the gate, retries, and replay before the search spends any calls.
 
-    `metric` counts metric calls: one search evaluation of one case. A metric call costs `per_evaluation` model calls.
-    `Plan.metric_calls` and `reflection_calls` keep that unit. `holdout_calls` and `sized.calls` count model calls.
-    `holdout_calls` is the gate reserve. It holds the gate and `HOLDOUT_RETRIES_PER_ARM` retries per arm,
-    because a failed holdout call stays claimed.
-    `replay_calls` is one pass of the winner over the holdout cases, for the replay phase. It adds to `sized.calls`,
-    to the holdout reserve, and to the reserved seconds. The replay has no retry.
-    `sandbox_seconds` is the sandbox time of one evaluation: the limit times the sandbox runs of the costliest scored kind.
-    The sandbox time of every evaluation adds to the estimate and to the gate reserve, shared across parallel calls.
-    The search shrinks until both caps hold, sandbox time and the slow-rate gate reserve (ADR-005) included.
-    `journey` is True when a scored case is a journey. The run then gets the journey ceiling in place of the standard cap.
-    A journey run also sizes the search from `JOURNEY_SEARCH_CALLS` model calls, so the search holds as many metric calls
-    as that allowance buys at `per_evaluation`. A task-only run keeps `SEARCH_CASE_FACTOR` metric calls per searched run:
-    one run per train case and `VALIDATION_REPEATS` runs per validation case. The admission check, the search
-    allowance, and its overshoot margin count the same `VALIDATION_REPEATS` runs per validation case.
-    `holdout_costs` lists the model calls of each holdout case. The default is `per_evaluation` for each of `holdout` cases.
-    A retry costs the costliest holdout case, so the reserve covers one failed attempt of any case.
-    The headroom pass scores the seed once on each train case and `VALIDATION_REPEATS` times on each validation case.
-    Its validation scores stand in for the seed
-    validation pass that GEPA already pays inside `metric_calls`, so only the train cases add cost. `headroom_costs` lists
-    the model calls of each train case; the default is `per_evaluation` for each of `train` cases. The sum is
-    `headroom_calls`. It adds to `sized.calls`, so the approved total and the ceilings include it. The count of train
-    cases is `headroom_outcomes`: the search ceiling adds it, so the headroom train scores do not shrink the search.
+    Metric and reflection allowances keep their original units. With a finished baseline, the call and time
+    estimates exclude the seed validation pass, train headroom, and the baseline slots that the gate reuses.
+    Still leave one preflight allowance for adapters that cannot reuse a recorded live pass.
     """
     max_calls, max_seconds = ceilings(journey, cap)
     costs = list(holdout_costs) if holdout_costs is not None else [per_evaluation] * holdout
-    holdout_evaluations = 2 * holdout * repeats + 2 * HOLDOUT_RETRIES_PER_ARM + holdout
+    reused_holdout = min(repeats, 2) if measured else 0
+    gate_repeats = 2 * repeats - reused_holdout
+    holdout_evaluations = holdout * (gate_repeats + 1) + 2 * HOLDOUT_RETRIES_PER_ARM
     retry_calls = 2 * HOLDOUT_RETRIES_PER_ARM * (max(costs) if costs else per_evaluation)
     holdout_pass = sum(costs)
-    headroom = sum(headroom_costs) if headroom_costs is not None else per_evaluation * train
+    headroom = 0 if measured else sum(headroom_costs) if headroom_costs is not None else per_evaluation * train
     headroom_outcomes = len(headroom_costs) if headroom_costs is not None else train
-    reproduce = sum(reproduce_costs)
-    holdout_calls = 2 * holdout_pass * repeats + retry_calls
+    reproduce = sum(reproduce_costs) if not measured else 0
+    holdout_calls = holdout_pass * gate_repeats + retry_calls
     if PREFLIGHT_CALLS + holdout_calls + holdout_pass > max_calls:
         raise Stop("budget-unapproved", f"the preflight, the holdout gate, and the replay alone need "
                    + f"{PREFLIGHT_CALLS + holdout_calls + holdout_pass} calls; the cap is {max_calls}"
                    + "; lower --repeats or the holdout size", {})
     slow_gate_extra = gate_seconds(holdout_calls + holdout_pass) - estimate(search_calls=holdout_calls + holdout_pass).seconds
+    validation_credit = VALIDATION_REPEATS * validation if measured else 0
+    seed_evaluations = 0 if measured else headroom_outcomes + len(reproduce_costs)
 
     def sandbox_total(metric: int) -> int:
-        return math.ceil((metric + headroom_outcomes + len(reproduce_costs) + holdout_evaluations) * sandbox_seconds / MAX_CONCURRENT_CALLS)
+        evaluated = max(0, metric - validation_credit) + seed_evaluations + holdout_evaluations
+        return math.ceil(evaluated * sandbox_seconds / MAX_CONCURRENT_CALLS)
 
     def size(metric: int) -> Estimate:
-        return estimate(preflight_calls=PREFLIGHT_CALLS, holdout=2 * holdout_pass, calls_per_evaluation=1,
-                        repeats=repeats, search_calls=metric * per_evaluation + headroom + reproduce, retry_calls=retry_calls,
-                        replay_calls=holdout_pass,
+        return estimate(preflight_calls=PREFLIGHT_CALLS, holdout=holdout_calls - retry_calls,
+                        search_calls=max(0, metric - validation_credit) * per_evaluation + headroom + reproduce,
+                        retry_calls=retry_calls, replay_calls=holdout_pass,
                         reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), journey=journey, cap=cap)
 
     def fits(metric: int) -> bool:
@@ -173,21 +161,16 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
                 headroom_calls=headroom, headroom_outcomes=headroom_outcomes, reproduce_calls=reproduce)
 
 
-def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions, cap: int = 0) -> Plan:
-    """Size the run from per-case call costs. `_prepare` and `_verify_budget` share this, so their estimates match.
-
-    The holdout reserve sums the holdout case costs. A search metric call costs the mean over the searched runs:
-    each train case once and each validation case `VALIDATION_REPEATS` times.
-    The headroom pass charges the train case costs only. GEPA pays the validation pass of the seed in its own calls.
-    It also scores each holdout regression case once: those calls are `reproduce_calls`, outside `headroom_calls`.
-    """
+def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions, cap: int = 0,
+              *, measured: bool = False) -> Plan:
+    """Size search from per-case costs. Charge each metric call at the mean cost of the searched cases."""
     split = {name: [case_calls(contract, case) for case in cases if case.split == name]
              for name in cast(tuple[str, ...], get_args(Split))}
     searched = split["train"] + VALIDATION_REPEATS * split["validation"]
     per_evaluation = max(1, math.ceil(sum(searched) / len(searched))) if searched else 1
     return _plan(len(split["train"]), len(split["validation"]), len(split["holdout"]), per_evaluation, repeats,
-                 _command_seconds(contract, cases, options), journey=any(case.journey is not None for case in cases),
-                 holdout_costs=split["holdout"], headroom_costs=split["train"],
+                 command_seconds(contract, cases, options), journey=any(case.journey is not None for case in cases),
+                 holdout_costs=split["holdout"], headroom_costs=split["train"], measured=measured,
                  reproduce_costs=[case_calls(contract, case) for case in cases if case.split == "holdout" and case.regression], cap=cap)
 
 

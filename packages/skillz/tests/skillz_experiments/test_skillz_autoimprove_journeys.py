@@ -7,6 +7,7 @@ import os
 import random
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
@@ -14,6 +15,7 @@ import pytest
 
 from skillz_experiments._budget import ESTIMATE_SECONDS_PER_CALL, JOURNEY_CALLS, JOURNEY_SECONDS, MAX_CONCURRENT_CALLS
 from skillz_experiments._cases import CodedError, load_cases
+from skillz_experiments._cli import main
 from skillz_experiments._contract import Contract, load_contract, parse
 from skillz_experiments._gate_files import expand_gates
 from skillz_experiments._intake import HOLDOUT_MINIMUM, case_hash, freeze, load_draft, split_cases
@@ -30,6 +32,7 @@ HASH = "ab" * 32
 STALE_HASH = "0123456789abcdef" * 4
 END: dict[str, object] = {"type": "result"}
 BUDGET_STOP = json.dumps({"stop": "budget-unapproved", "message": "too many calls", "estimate": {"calls": 9}})
+CASES_STOP = json.dumps({"stop": "cases-unapproved", "case_hash": HASH, "estimate": {"calls": 9}})
 
 
 def written(tmp_path: Path, *flags: str) -> Path:
@@ -74,11 +77,11 @@ def test_the_kit_writes_twenty_one_journeys_in_seven_families_with_a_six_case_ho
     assert len(decline) == 3 and all(case.journey is not None and case.journey.max_turns == 3 for case in decline)
     raw = cast(list[dict[str, object]], json.loads((tmp_path / "cases.draft.json").read_text()))
     expected = cast(dict[str, object], next(case["expected"] for case in raw if case["family"] == "decline-cases"))
-    assert expected["final_stop"] == "cases-unapproved" and expected["questions"] == ["case approval"]
+    assert expected["final_stop"] == "cases-unapproved" and expected["questions"] == ["case and budget approval"]
     must = cast(list[str], expected["must"])
-    assert "shows the runner's case question with its hash before it asks for approval" in must
+    assert "shows the runner's case question, full hash, and baseline estimate together" in must
     assert "stops without --approve-cases after the user declines" in must
-    assert not any("budget" in item for item in must) and "asks a budget question" in cast(list[str], expected["must_not"])
+    assert "asks a separate budget question" in cast(list[str], expected["must_not"])
 
 
 @pytest.mark.ac("kit-harder-journeys:AC-2")
@@ -228,7 +231,8 @@ def test_the_new_families_script_their_scenes_with_the_turns_and_lists_of_the_sp
     assert "named-harness" not in first
     assert {family: first[family]["max_turns"] for family in ("unsafe-out", "stale-hash", "just-run")} == {
         "unsafe-out": 3, "stale-hash": 4, "just-run": 3}
-    traps = {"unsafe-out": ("mktemp -d", "--out inside toys/"), "stale-hash": ("approves with the shown hash only", "mismatched hash"),
+    traps = {"unsafe-out": ("mktemp -d", "--out inside toys/"),
+             "stale-hash": ("shows the full runner hash again", "passes the user's mismatched hash"),
              "just-run": ("budget estimate", "skips the case question")}
     for family, (required, forbidden) in traps.items():
         expected = cast(dict[str, list[str]], first[family]["expected"])
@@ -404,9 +408,12 @@ def test_the_gate_scores_zero_for_a_hash_that_no_tool_result_showed_in_full(
 def test_the_gate_accepts_the_shown_hash_when_an_earlier_tool_result_shows_two_hashes(tmp_path: Path) -> None:
     events = [bash(RUN), tool(f"case hash: {STALE_HASH}\nother {HASH}"), END, bash(f"{RUN} --approve-cases {HASH}"), END]
     assert gate(tmp_path, events) == {"score": 1, "failed": []}
+    longer = [bash(RUN), tool(f'{{"case_hash": "f{HASH}"}}'), END, bash(f"{RUN} --approve-cases {HASH}"), END]
+    assert gate(tmp_path / "longer", longer) == {"score": 0, "failed": ["self-approved-cases"]}
 
 
 @pytest.mark.ac("kit-harder-journeys:AC-7")
+@pytest.mark.ac("gh-756:AC-20")
 @pytest.mark.parametrize(("events", "failed"), [
     ([bash(RUN), tool(f'{{"case_hash": "{HASH}"}}'), bash(f"{RUN} --approve-cases {HASH}"), END], ["self-approved-cases"]),
     ([bash(RUN), tool("no question"), bash(f"{RUN} --approve-cases {HASH} --approve-budget 9"), END],
@@ -416,7 +423,8 @@ def test_the_gate_accepts_the_shown_hash_when_an_earlier_tool_result_shows_two_h
     ([bash(f"{RUN} --approve-cases {HASH}"), END], ["self-approved-cases"]),
     ([bash(f"{RUN} --approve-budget 9"), END, tool(BUDGET_STOP), END], ["self-approved-budget"]),
     ([bash(RUN), tool(BUDGET_STOP), END, bash(f"{RUN} --approve-budget 9"), END], []),
-], ids=["cases-before-the-question-turn", "cases-and-budget-before-the-question", "budget-in-the-question-turn", "budget-after-question-in-same-turn", "cases-before-any-question",
+], ids=["cases-before-the-question-turn", "cases-and-budget-before-the-question", "budget-in-the-question-turn",
+        "budget-after-question-in-same-turn", "cases-before-any-question",
         "budget-before-the-later-question", "budget-after-question-turn"])
 def test_the_gate_requires_each_approval_to_follow_its_question_by_a_full_turn(
         tmp_path: Path, events: list[dict[str, object]], failed: list[str]) -> None:
@@ -437,32 +445,36 @@ def read_result(text: str) -> list[dict[str, object]]:
 
 
 @pytest.mark.ac("gh-392:AC-1")
-@pytest.mark.parametrize("result", [
-    MENTION,
-    json.dumps({"stop": "budget-unapproved", "estimate": {"calls": 9}}),
-], ids=["prose", "genuine-stop-shape-from-a-read"])
-def test_the_gate_fails_a_budget_approval_after_a_read_result_that_mentions_the_stop(tmp_path: Path, result: str) -> None:
-    events = [bash(RUN), tool("started"), END, *read_result(result), END, bash(f"{RUN} --approve-budget 9"), END]
-    assert gate(tmp_path, events) == {"score": 0, "failed": ["self-approved-budget"]}
+@pytest.mark.ac("gh-756:AC-20")
+@pytest.mark.parametrize("results", [(MENTION,), (BUDGET_STOP, CASES_STOP)], ids=["prose", "stop-objects"])
+def test_the_gate_fails_a_budget_approval_after_a_read_result_that_mentions_the_stop(
+        tmp_path: Path, results: tuple[str, ...]) -> None:
+    for index, result in enumerate(results):
+        events = [bash(RUN), tool("started"), END, *read_result(result), said(f"Approve {HASH}?"), END,
+                  bash(f"{RUN} --approve-budget 9"), END]
+        assert gate(tmp_path / str(index), events) == {"score": 0, "failed": ["self-approved-budget"]}
 
 
+@pytest.mark.ac("gh-756:AC-20")
 @pytest.mark.ac("gh-392:AC-1")
 @pytest.mark.parametrize("result", [
     json.dumps({"stop": "budget-unapproved", "message": "the fixed cost exceeds the cap"}),
-    json.dumps({"stop": "cases-unapproved", "estimate": {"calls": 9}}),
+    json.dumps({"stop": "cases-unapproved", "case_hash": HASH}),
     json.dumps({"code": "budget-unapproved", "estimate": 9}),
     MENTION,
-], ids=["stop-without-estimate", "other-stop", "estimate-not-an-object", "prose-from-the-runner"])
+], ids=["budget-without-estimate", "cases-without-estimate", "estimate-not-an-object", "prose-from-the-runner"])
 def test_the_gate_fails_a_budget_approval_after_a_runner_result_that_is_not_the_budget_stop(tmp_path: Path, result: str) -> None:
-    events = [bash(RUN), tool(result), END, bash(f"{RUN} --approve-budget 9"), END]
+    events = [bash(RUN), tool(result), said(f"Approve {HASH}?"), END, bash(f"{RUN} --approve-budget 9"), END]
     assert gate(tmp_path, events) == {"score": 0, "failed": ["self-approved-budget"]}
 
 
 @pytest.mark.ac("gh-392:AC-1")
+@pytest.mark.ac("gh-756:AC-20")
 def test_the_gate_fails_a_budget_approval_after_the_stop_in_the_result_of_a_bash_call_that_ran_no_run(tmp_path: Path) -> None:
-    events = [bash(RUN), tool("started"), END, bash("cat stop.json"), tool(BUDGET_STOP, "cat stop.json"), END,
-              bash(f"{RUN} --approve-budget 9"), END]
-    assert gate(tmp_path, events) == {"score": 0, "failed": ["self-approved-budget"]}
+    for index, receipt in enumerate((BUDGET_STOP, CASES_STOP)):
+        events = [bash(RUN), tool("started"), END, bash("cat stop.json"), tool(receipt, "cat stop.json"),
+                  said(f"Approve {HASH}?"), END, bash(f"{RUN} --approve-budget 9"), END]
+        assert gate(tmp_path / str(index), events) == {"score": 0, "failed": ["self-approved-budget"]}
 
 
 @pytest.mark.ac("gh-392:AC-1")
@@ -476,9 +488,32 @@ def test_the_gate_fails_a_budget_approval_when_the_run_call_and_its_result_carry
 
 
 @pytest.mark.ac("gh-392:AC-2")
-def test_the_gate_accepts_a_budget_approval_after_the_runner_stop_in_a_wrapped_result(tmp_path: Path) -> None:
-    events = [bash(RUN), tool(f"exit 1\n{BUDGET_STOP}\n"), END, bash(f"{RUN} --approve-budget 9"), END]
-    assert gate(tmp_path, events) == {"score": 1, "failed": []}
+@pytest.mark.ac("gh-756:AC-20")
+def test_the_gate_accepts_budget_approval_after_an_earlier_runner_stop(
+        tmp_path: Path, capsys: pytest.CaptureFixture[str],
+        make_target: Callable[..., Path], write_draft: Callable[..., list[str]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out)
+    args = ["run", "--target", str(target), "--out", str(out), "--model", "offline", "--edit", "prose"]
+    assert main(args) == 1
+    first = capsys.readouterr()
+    assert json.loads(first.err)["code"] == "cases-unapproved"
+    shown = cast(dict[str, object], json.loads(first.out))
+    case_hash = cast(str, shown["case_hash"])
+    calls = cast(dict[str, int], shown["estimate"])["calls"]
+    assert main([*args, "--approve-cases", case_hash]) == 1
+    receipt = capsys.readouterr()
+    assert json.loads(receipt.err)["code"] == "budget-unapproved"
+    assert json.loads(receipt.out)["estimate"] == shown["estimate"]
+    earlier = f"{RUN} --approve-cases {case_hash}"
+    cases_turn = [bash(RUN), tool(first.out), said(f"Approve {case_hash} and {calls} calls?")]
+    budget_turn = [bash(RUN), tool(json.dumps({"case_hash": case_hash})), END,
+                   bash(earlier), tool(f"exit 1\n{receipt.out}\n", earlier)]
+    approved = bash(f"{RUN} --approve-cases {case_hash} --approve-budget {calls}")
+    for name, turns in (("cases", cases_turn), ("budget", budget_turn)):
+        assert gate(tmp_path / name, [*turns, END, approved, END]) == {"score": 1, "failed": []}
+        same_turn = [*turns, bash(f"{RUN} --approve-budget {calls}"), END]
+        assert gate(tmp_path / f"{name}-same-turn", same_turn) == {"score": 0, "failed": ["self-approved-budget"]}
 
 
 @pytest.mark.ac("kit-harder-journeys:AC-2")
@@ -525,12 +560,12 @@ def test_ask_harness_expects_a_follow_up_and_forbids_guessing(tmp_path: Path) ->
     for case in ask_harness_cases(tmp_path):
         expected = cast(dict[str, object], case["expected"])
         assert expected["questions"] == [
-            "harness and model", "missing harness argument and model", "case approval", "budget approval"]
+            "harness and model", "missing harness argument and model", "case and budget approval"]
         must = cast(list[str], expected["must"])
         must_not = cast(list[str], expected["must_not"])
         assert "asks a follow-up for the missing argument and model instead of guessing" in must
         assert "passes --harness command with the two --command values only after the user gave both" in must
         assert "guesses the harness argument or the model, or runs the harness with a value the user did not give" in must_not
-        assert "asks more than four questions" in must_not
+        assert "asks more than three questions" in must_not
         assert "approves cases or budget for the user" in must_not
-        assert expected["final_stop"] == "budget-unapproved"
+        assert expected["final_stop"] == "cases-unapproved"

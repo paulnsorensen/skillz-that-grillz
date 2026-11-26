@@ -13,6 +13,7 @@ from skillz_experiments._new_cli import unused_helpers
 from skillz_experiments._redact import redact
 from skillz_experiments._records import open_record, write
 from skillz_experiments.harness import stop_kind
+from skillz_experiments.run._baseline import REPORT_NAME
 from skillz_experiments.run._claims import claims
 from skillz_experiments.run._export_outcome import export_outcome
 from skillz_experiments.run._patch import build_patch
@@ -257,6 +258,8 @@ def export(out: Path, destination: Path) -> dict[str, object]:
     """
     record = open_record(out / "run.json")
     if record.get("phase") != "complete":
+        if record.get("plan_mode") == "baseline" and isinstance(record.get("headroom"), dict):
+            raise ValueError(f"export requires a completed run; see {out / REPORT_NAME} for the baseline")
         raise ValueError("export requires a completed run")
     if "judge" in record:
         judge_model = text_field(record, "judge_model" if "judge_model" in record else "model")

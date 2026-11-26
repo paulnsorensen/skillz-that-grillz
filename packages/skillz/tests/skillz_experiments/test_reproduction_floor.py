@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import pytest
 
+from skillz_experiments._records import read
 from skillz_experiments.run import Stop
 
 from _reproduction_runs import Approver, Drafter, Maker, go, record, seed_one_on_train, splits, start
@@ -89,4 +90,5 @@ def test_a_floor_case_stays_out_of_its_family_mean_and_a_too_easy_stop_carries_t
     # Each train family has one floor case and one other case: only the other case adds to the mean.
     assert {item["cases"] for item in headroom["families"].values() if item["split"] == "train"} == {1}
     baseline = cast(dict[str, Any], caught.value.data["baseline"])  # pyright: ignore[reportExplicitAny]
-    assert baseline["headroom"]["reproduction"] == headroom["reproduction"]
+    assert baseline == read(out / "report.json")
+    assert set(baseline["cases"]) >= floors

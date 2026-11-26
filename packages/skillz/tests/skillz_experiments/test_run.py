@@ -21,7 +21,7 @@ from skillz_experiments.search import Progress
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
-from fake_provider import FakeRunProvider, ProviderCrash
+from fake_provider import FakeRunProvider, ProviderCrash, search_approval
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -163,13 +163,19 @@ def test_unapproved_budget_stops_with_the_estimate_and_makes_no_model_call(tmp_p
     assert provider.evaluated == [] and provider.prompts == [] and not (out / "run.json").exists()
 
 
-def test_oversized_holdout_fails_closed_before_any_approval_is_asked(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
-    target, out = make_target(tmp_path), tmp_path / "run"
+def test_oversized_holdout_requires_its_own_approval(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out, provider = make_target(tmp_path), tmp_path / "run", Recorder()
     _ = write_draft(out)
-    case_hash, _calls = approvals(target, out)
+    case_hash, calls = approvals(target, out)
+    baseline = run(target, out, "local-test", live=True, repeats=40, approve_cases=case_hash,
+                   approve_budget=calls, factory=provider.factory)
+    assert baseline["search"] == "not-run"
+    evaluated = list(provider.evaluated)
     with pytest.raises(Stop) as caught:
-        _ = run(target, out, "local-test", live=True, repeats=40, approve_cases=case_hash, approve_budget=200)
+        _ = run(target, out, "local-test", search=True, live=True, approve_budget=200, factory=provider.factory)
     assert caught.value.code == "budget-unapproved"
+    assert cast(dict[str, int], caught.value.data["estimate"])["calls"] > 200
+    assert provider.evaluated == evaluated and not provider.prompts
 
 
 def test_a_run_without_live_stops_after_the_approvals_and_makes_no_call(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
@@ -203,12 +209,17 @@ def test_a_failed_gate_keeps_the_search_and_resumes_with_the_approved_budget_wit
     target, out, provider = make_target(tmp_path), tmp_path / "run", Recorder()
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
+    baseline = run(target, out, "local-test", live=True, approve_cases=case_hash,
+                   approve_budget=calls, factory=provider.factory)
+    assert baseline["search"] == "not-run"
+    prior_calls = cast(int, read(out / "run.json")["calls"])
+    search_calls = search_approval(target, out, "local-test")
 
     def factory(_model: str, budget: Budget, checkpoint: Callable[[], None]) -> Provider:
         return Failing(provider, budget, checkpoint)
 
     with pytest.raises(ProviderCrash, match="fell over"):
-        _ = run(target, out, "local-test", live=True, approve_cases=case_hash, approve_budget=calls, factory=factory)
+        _ = run(target, out, "local-test", live=True, search=True, approve_budget=search_calls, factory=factory)
     record = read(out / "run.json")
     assert record["phase"] == "searched" and record["failure"] == "provider fell over"
     spent = cast(int, record["calls"])
@@ -217,7 +228,7 @@ def test_a_failed_gate_keeps_the_search_and_resumes_with_the_approved_budget_wit
     assert result["phase"] == "complete"
     assert len(provider.evaluated) > searched
     assert not any(not held for _, held in provider.evaluated[searched:])
-    assert cast(int, read(out / "run.json")["calls"]) <= calls and spent < calls
+    assert spent < cast(int, read(out / "run.json")["calls"]) <= prior_calls + search_calls
     assert run(target, out, "local-test", live=True, factory=factory) == result
 
 
@@ -268,8 +279,11 @@ def test_prose_and_cli_run_proposes_a_helper_edit_and_exports_it_without_holdout
     target, out, provider = make_target(tmp_path, helper=True), tmp_path / "run", Recorder()
     _ = write_draft(out)
     case_hash, calls = approvals(target, out, edit="prose+cli")
-    result = run(target, out, "local-test", live=True, edit="prose+cli", approve_cases=case_hash,
-                 approve_budget=calls, factory=provider.factory)
+    baseline = run(target, out, "local-test", live=True, edit="prose+cli", approve_cases=case_hash,
+                   approve_budget=calls, factory=provider.factory)
+    assert baseline["search"] == "not-run"
+    result = run(target, out, "local-test", live=True, search=True, approve_budget=search_approval(target, out, "local-test"),
+                 factory=provider.factory)
     assert result["phase"] == "complete" and provider.prompts
     payload = cast(dict[str, dict[str, str]], json.loads(provider.prompts[0].rsplit("\n", 1)[1]))
     assert set(payload["candidate"]) == {"SKILL.md", "scripts/echo.py"}

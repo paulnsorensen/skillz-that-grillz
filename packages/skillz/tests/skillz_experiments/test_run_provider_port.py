@@ -53,9 +53,9 @@ def test_a_fake_provider_receives_the_recorded_preflight_evidence(
     target, state = make_target(tmp_path), State()
     out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state)
     recorded = read(out / "run.json")["preflight"]
-    assert state.preflights == [None]
+    assert state.preflights == [None, recorded]
     result = run(target, out, MODEL, live=True, factory=state.factory())
-    assert result["phase"] == "complete" and state.preflights == [None, recorded]
+    assert result["phase"] == "complete" and state.preflights == [None, recorded, recorded]
 
 
 @pytest.mark.ac("gh-398:AC-2")

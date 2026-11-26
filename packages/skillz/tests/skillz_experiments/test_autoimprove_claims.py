@@ -24,7 +24,8 @@ from skillz_experiments.run._patch import Patch
 from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.run._ports import Ports
 from skillz_experiments.run._replay import apply_patches, drift, prepare_copy
-from test_run_search import MODEL, Provider, Search
+from fake_provider import search_approval
+from test_run_search import MODEL, Provider, Search, run_search
 
 if TYPE_CHECKING:
     from .conftest import JudgedRun
@@ -46,7 +47,10 @@ def _finished(tmp_path: Path, make_target: Maker, write_draft: Drafter, approval
     state = Search(target)
     state.suffix = suffix
     state.score_of = scores
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    baseline = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert baseline["search"] == "not-run"
+    calls = search_approval(target, out, MODEL)
+    result = run(target, out, MODEL, search=True, live=True, approve_budget=calls, factory=state.factory)
     assert result["phase"] == "complete"
     return target, out, state, calls, read(out / "run.json")
 
@@ -152,6 +156,8 @@ def test_the_replay_applies_the_exported_patch_with_git_to_a_clean_copy_outside_
     monkeypatch.setattr(subprocess, "run", spy)
     state = Search(target)
     _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    calls = search_approval(target, out, MODEL)
+    _ = run(target, out, MODEL, search=True, live=True, approve_budget=calls, factory=state.factory)
     record = read(out / "run.json")
     winner = cast(dict[str, str], record["winner"])
     assert record["winner_hash"] != record["seed_hash"] and _export_status(record, out) == "supported"
@@ -258,7 +264,8 @@ def test_the_replay_scores_the_patched_copy_once_on_each_holdout_case_and_record
 def test_a_short_replay_budget_or_drifting_replay_scores_make_the_export_claim_inconclusive(
         cause: str, tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, _done, rewound = _gated(tmp_path, make_target, write_draft, approvals)
-    maximum = cast(dict[str, int], rewound["budget"])["maximum"]
+    budget = cast(dict[str, int], rewound["budget"])
+    maximum = budget["maximum"] + budget["prior_calls"]
     state = Search(target)
     if cause == "budget":
         rewound["calls"] = maximum - 1
@@ -307,8 +314,9 @@ def test_the_plan_counts_replay_calls_in_the_estimate_the_approval_and_the_holdo
     budget = cast(dict[str, int], record["budget"])
     assert planned["replay_calls"] == 6 * state.contract.calls("echo")
     assert budget["maximum"] == calls == planned["calls"]
-    assert budget["reserve"] == planned["holdout_retry_calls"] + planned["replay_calls"] + 2 * 6 * 3 * state.contract.calls("echo")
-    assert cast(int, record["calls"]) <= calls and (out / "run.json").is_file()
+    missing_slots = 6 * (2 * 3 - 2)  # Search reuses two seed holdout scores per case.
+    assert budget["reserve"] == planned["holdout_retry_calls"] + planned["replay_calls"] + missing_slots * state.contract.calls("echo")
+    assert cast(int, record["calls"]) <= calls + budget["prior_calls"] and (out / "run.json").is_file()
 
 
 def _first_holdout(record: dict[str, object]) -> str:
@@ -374,7 +382,10 @@ def test_any_failed_runner_check_refutes_the_runner_claim_and_no_other_claim(
         victim = next(item for item in outcomes if item.get("arm") == "winner" and item.get("split") == "holdout")
         outcomes.remove(victim)
     elif check == "calls-within-approval":
-        record["calls"] = budget["maximum"] + 1
+        maximum = budget["maximum"] + budget["prior_calls"]
+        record["calls"] = maximum
+        assert _claims(record, out)["runner"]["checks"][check] == "pass"
+        record["calls"] = maximum + 1
     else:
         budget["maximum"] = bound + 10
         record["calls"] = bound + 1
@@ -447,7 +458,9 @@ def test_the_judge_prompt_names_no_arm_and_no_candidate_identity() -> None:
 
 @pytest.mark.ac("skillz-autoimprove-claims:AC-12")
 def test_no_judge_prompt_of_a_real_run_holds_an_arm_name_or_a_candidate_hash(judged: JudgedRun) -> None:
-    result = judged.start()
+    assert judged.start()["search"] == "not-run"
+    result = run(judged.target, judged.out, "task-model", live=True, search=True,
+                 approve_budget=search_approval(judged.target, judged.out, "task-model"))
     record = read(judged.out / "run.json")
     assert result["phase"] == "complete" and record["winner_hash"] and record["seed_hash"]
     requests = [cast(dict[str, object], json.loads(line)) for line in judged.log.read_text().splitlines()]
@@ -483,7 +496,7 @@ def test_the_replay_ignores_a_git_repository_above_the_run_directory(
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
     state = Search(target)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     record = read(tmp_path / "run" / "run.json")
     assert record["winner_hash"] != record["seed_hash"]
     assert _export_status(record, tmp_path / "run") == "supported" and _replay_of(record)["reasons"] == []
@@ -683,13 +696,15 @@ def test_the_gate_precheck_leaves_the_replay_reserve_unspent(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals)
     cost = state.contract.calls("echo")
-    maximum = cast(dict[str, int], record["budget"])["maximum"]
+    budget = cast(dict[str, int], record["budget"])
+    maximum = budget["maximum"] + budget["prior_calls"]
     outcomes = cast(list[dict[str, object]], record["outcomes"])
-    record["outcomes"] = [item for item in outcomes if item.get("split") != "holdout"]
+    record["outcomes"] = [item for item in outcomes if item.get("split") != "holdout"
+                          or (item.get("arm") == "baseline" and cast(int, item["repeat"]) < 2)]
     for key in ("gate", "replay"):
         del record[key]
     record["phase"] = "searched"
-    gate_need, replay_need = 2 * 6 * 3 * cost, 6 * cost
+    gate_need, replay_need = 6 * (2 * 3 - 2) * cost, 6 * cost
     record["calls"] = maximum - gate_need - replay_need + 1
     write(out / "run.json", record)
     short = Search(target)
@@ -733,7 +748,7 @@ def test_a_tie_run_replays_nothing_and_never_applies(
     case_hash, calls = approvals(target, out)
     state = Search(target)
     state.score_of = lambda _text, _split: 0.0
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     assert record["phase"] == "complete" and record["winner_hash"] == record["seed_hash"]
     replay = _replay_of(record)
@@ -754,7 +769,7 @@ def test_a_tie_run_exports_no_patch_file_and_names_the_reason(
     case_hash, calls = approvals(target, out)
     state = Search(target)
     state.score_of = lambda _text, _split: 0.0
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     assert cast(dict[str, object], read(out / "run.json")["gate"])["reasons"] == ["winner-equals-baseline"]
     destination = tmp_path / "exported"
     _ = capsys.readouterr()

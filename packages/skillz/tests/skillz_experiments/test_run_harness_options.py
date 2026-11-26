@@ -81,7 +81,14 @@ class _Driver:
 
     def finish(self) -> tuple[int, dict[str, object], dict[str, object]]:
         case_hash, calls = self.approve()
-        return self.call("--approve-cases", case_hash, "--approve-budget", calls)
+        code, baseline, error = self.call("--approve-cases", case_hash, "--approve-budget", calls)
+        if code != 0:
+            return code, baseline, error
+        assert baseline["search"] == "not-run" and not error
+        code, search_budget, error = self.call("--search")
+        assert code == 1 and error["code"] == "budget-unapproved"
+        search_calls = str(cast(dict[str, int], search_budget["estimate"])["calls"])
+        return self.call("--search", "--approve-budget", search_calls)
 
 
 @pytest.fixture

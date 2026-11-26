@@ -157,7 +157,7 @@ def run_gate(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
         record["gate"] = {**outcome.data(), "repeats": repeats, **_score_retained_baseline(state, holdout, repeats)}
     else:
         _ = state.budget.remaining()
-        rejected = next((item for item in outcomes if item.get("arm") == "baseline"
+        rejected = next((item for item in outcomes if item.get("arm") == "baseline" and item.get("split") == "holdout"
                          and item.get("status") == "candidate-contract-rejected" and not timed_out(item)), None)
         if rejected is not None:
             raise baseline_rejected(rejection_detail(rejected))

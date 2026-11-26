@@ -6,8 +6,13 @@ and writes only the members its test cares about, so a new protocol member is on
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
+from typing import cast
 
 from skillz_experiments.evaluation import CheckResult
+from skillz_experiments.harness import Configuration
+from skillz_experiments.run import Stop, run
+from skillz_experiments.run._state import Factory
 
 PASSED = CheckResult(True, None, "pass")
 
@@ -65,3 +70,24 @@ class FakeRunProvider:
     def check_candidate(self, candidate: object) -> CheckResult:
         del candidate
         return PASSED
+
+
+def search_approval(target: Path, out: Path, model: str, *, configuration: Configuration | None = None) -> int:
+    """Read the separate search estimate without making a provider call."""
+    try:
+        _ = run(target, out, model, search=True, configuration=configuration)
+    except Stop as stopped:
+        if stopped.code != "budget-unapproved":
+            raise
+        return cast(dict[str, int], stopped.data["estimate"])["calls"]
+    raise AssertionError("search did not ask for its separate budget")
+
+
+def approved_search(target: Path, out: Path, model: str, case_hash: str, baseline_calls: int, *,
+                    factory: Factory | None = None, statistics: Mapping[str, float] | None = None) -> dict[str, object]:
+    """Measure a new baseline, then request and approve search with the same fake provider."""
+    baseline = run(target, out, model, live=True, approve_cases=case_hash, approve_budget=baseline_calls,
+                   factory=factory, statistics=statistics)
+    assert baseline["search"] == "not-run"
+    return run(target, out, model, live=True, search=True, approve_budget=search_approval(target, out, model),
+               factory=factory)

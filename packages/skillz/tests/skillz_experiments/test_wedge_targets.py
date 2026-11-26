@@ -37,7 +37,7 @@ from skillz_experiments.search import Edit
 from skillz_experiments.run._wedge_fit import WEDGE_EDIT_LIMIT
 from skillz_experiments.run._wedge_targets import plan_targets
 from skillz_experiments.run import Stop, export, run
-from fake_provider import FakeRunProvider
+from fake_provider import FakeRunProvider, search_approval
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -784,6 +784,11 @@ def test_the_gate_scores_the_winner_with_rebuilt_bytes_and_the_baseline_with_see
         world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
     _ = world.contract("scripts/beta.pyz")
     out = prepared(world, tmp_path, write_draft, approvals)
+    measurement = Recorder()
+    baseline = run(world.skill, out, MODEL, live=True, factory=measurement.factory)
+    assert baseline["search"] == "not-run"
+    with pytest.raises(Stop, match="live model calls"):
+        _ = run(world.skill, out, MODEL, search=True, approve_budget=search_approval(world.skill, out, MODEL))
     recorder = Recorder()
     session = _gated(out, recorder, {BETA: BETA_SOURCE.replace("v1", "v2")})
     try:
@@ -796,7 +801,9 @@ def test_the_gate_scores_the_winner_with_rebuilt_bytes_and_the_baseline_with_see
     winner = [data for data in betas if data != seed_bytes]
     holdout = len(session.cases_for("holdout"))
     repeats = cast(int, session.record["repeats"])
-    assert betas.count(seed_bytes) == holdout * repeats and len(winner) == holdout * repeats
+    assert betas.count(seed_bytes) == holdout * (repeats - 2)
+    assert len(winner) == holdout * repeats
+    assert all(candidate.frozen["scripts/beta.pyz"] == seed_bytes for candidate in measurement.seen)
     assert all('print("beta v2")' in archive_text(data, "beta/__init__.py") for data in winner)
 
 

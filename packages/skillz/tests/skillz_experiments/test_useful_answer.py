@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, NoReturn, cast
@@ -22,6 +21,7 @@ from skillz_experiments.run._baseline import baseline_report
 from skillz_experiments.run._outcomes import FIELD_LIMIT
 from skillz_experiments.run._plan import VALIDATION_REPEATS
 
+from fake_provider import approved_search
 from test_run_search import MODEL, Search, _start  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -62,8 +62,11 @@ def _stopped(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals
         return real(*args, **kwargs)  # pyright: ignore[reportAny]
 
     monkeypatch.setattr(_session, "pareto_search", spy)
+    measured = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    assert measured["search"] == "not-run"
     with pytest.raises(Stop) as stopped:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run(target, out, MODEL, live=True, search=True, factory=state.factory)
+    assert stopped.value.data["baseline"] == measured
     return target, out, state, calls, stopped.value, grants
 
 
@@ -78,30 +81,25 @@ def test_a_too_easy_stop_reports_the_failing_baseline_criteria_spent_calls_and_w
     record = read(out / "run.json")
     cases = cast(list[Json], read(out / "cases.json")["cases"])
     validation = [case for case in cases if case["split"] == "validation"]
-    # Nothing past the headroom pass ran, and the report says so instead of implying a search or an export.
-    assert grants == [] and state.proposals == 0 and state.invokes == 0 and state.holdout_calls == 0
+    # Measurement reaches each holdout twice without running the search or the gate.
+    held = {case["id"] for case in cases if case["split"] == "holdout"}
+    assert held and state.holdout_calls == 2 * len(held)
+    assert grants == [] and state.proposals == 0 and state.invokes == 0
     assert {key: baseline[key] for key in ("search", "holdout_gate", "replay", "export")} == {
         "search": "not-run", "holdout_gate": "not-run", "replay": "not-run", "export": "unavailable"}
-    assert record["phase"] == "prepared" and "export" in str(stop.data["next"]) and "no improvement" in str(stop.data["next"])
-    # The failing validation family shows beside the saturated train families, with its redacted unmet criterion.
-    failing = cast(list[Json], baseline["failing"])
-    assert Counter(item["case_id"] for item in failing) == Counter(
-        {case["id"]: VALIDATION_REPEATS for case in validation})
-    assert all(item["split"] == "validation" and item["score"] == 0.5 for item in failing)
-    assert {item["family"] for item in failing} == {case["family"] for case in validation}
-    reasons = [cast(str, item["criteria"]["answer"]["reason"]) for item in failing]
+    assert record["phase"] == "prepared" and "harder cases" in str(stop.data["next"])
+    measured = cast(dict[str, Json], baseline["cases"])
+    assert set(measured) == {case["id"] for case in cases} == set(cast(list[str], baseline["exposed"]))
+    assert all(measured[case["id"]]["family"] == case["family"] for case in validation)
+    reasons = [cast(str, unmet["answer"]["reason"])
+               for case in validation for unmet in cast(list[Json], measured[case["id"]]["unmet"])]
+    assert len(reasons) == VALIDATION_REPEATS * len(validation)
     assert all("no status check" in reason and SECRET not in reason for reason in reasons)
-    assert cast(Json, baseline["headroom"])["verdict"] == "too-easy"
-    # Spent counts come from the record; the approved ceiling and the estimate stay separate from them.
-    spent = cast(Json, baseline["spent"])
-    assert spent["calls"] == record["calls"] and 0 < spent["calls"] < approved
-    assert spent["calls_by_role"] == record["calls_by_role"] and spent["retries"] == 0
-    assert baseline["approved_calls"] == approved
-    assert baseline["estimate"] == {key: cast(Json, record["estimate"])[key] for key in ("calls", "seconds")}
-    assert baseline["scored"] == {"outcomes": len(cast(list[object], record["outcomes"])), "failed": 0,
-                                  "cases": sum(case["split"] != "holdout" for case in cases)}
-    assert baseline["unscored"] == {"holdout_cases": sum(case["split"] == "holdout" for case in cases),
-                                    "pending_cases": 0}
+    assert all(measured[case["id"]]["scores"] == [0.5, 0.5] for case in validation)
+    assert cast(Json, record["headroom"])["verdict"] == "too-easy"
+    calls_by_role = cast(dict[str, int], baseline["calls_by_role"])
+    assert calls_by_role == record["calls_by_role"] and 0 < sum(calls_by_role.values()) == cast(int, record["calls"]) <= approved
+    assert cast(Json, record["budget"])["maximum"] == approved and record["retries"] == 0
 
 
 @pytest.mark.ac("autoimprove-useful-answer:AC-3")
@@ -116,11 +114,13 @@ def test_the_cli_resume_prints_the_same_baseline_and_export_still_refuses_with_n
         raise AssertionError(f"a session started: {args!r} {kwargs!r}")
 
     monkeypatch.setattr("skillz_experiments.run._run.Session", no_session)
-    code = _cli.main(["run", "--target", str(target), "--out", str(out), "--model", MODEL, "--live"])
+    code = _cli.main(["run", "--target", str(target), "--out", str(out), "--model", MODEL, "--live", "--search"])
     printed = capsys.readouterr()
+    diagnostics = [line for line in printed.err.splitlines() if not line.startswith("skillz-experiment: warning:")]
     assert code == 1 and started == []
     assert json.loads(printed.out) == json.loads(json.dumps(stop.data))
-    assert json.loads(printed.err)["code"] == "cases-too-easy" and json.loads(printed.err)["error"] == str(stop)
+    diagnostic, = diagnostics
+    assert json.loads(diagnostic)["code"] == "cases-too-easy" and json.loads(diagnostic)["error"] == str(stop)
     destination = tmp_path / "export"
     assert _cli.main(["export", str(out), "--out", str(destination)]) == 1
     assert "export requires a completed run" in capsys.readouterr().err and not destination.exists()
@@ -129,18 +129,17 @@ def test_the_cli_resume_prints_the_same_baseline_and_export_still_refuses_with_n
 
 
 @pytest.mark.ac("autoimprove-useful-answer:AC-2")
-def test_a_resume_with_an_unreadable_case_file_reports_unknown_coverage_instead_of_a_guess(
+def test_a_search_request_with_an_unreadable_case_file_returns_the_persisted_baseline(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
         monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, state, _, stop, _ = _stopped(tmp_path, make_target, write_draft, approvals, monkeypatch)
     _ = (out / "cases.json").write_text("not json", encoding="utf-8")
     with pytest.raises(Stop) as again:
-        _ = run(target, out, MODEL, live=True, factory=state.factory)
+        _ = run(target, out, MODEL, live=True, search=True, factory=state.factory)
     baseline, first = cast(Json, again.value.data["baseline"]), cast(Json, stop.data["baseline"])
     assert again.value.code == "cases-too-easy"
-    assert baseline["unscored"] == {"holdout_cases": None, "pending_cases": None}
-    assert [item["family"] for item in cast(list[Json], baseline["failing"])] == [None] * len(cast(list[Json], first["failing"]))
-    assert baseline["spent"] == first["spent"] and baseline["search"] == "not-run"
+    assert baseline == first == read(out / "report.json")
+    assert baseline["search"] == "not-run" and not state.prompts
 
 
 @pytest.mark.ac("autoimprove-useful-answer:AC-2")
@@ -182,7 +181,7 @@ def test_the_baseline_keeps_one_seed_outcome_per_run_and_lists_only_unmet_criter
 def test_a_completed_run_still_exports_its_report(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = approved_search(target, out, MODEL, case_hash, calls, factory=state.factory)
     assert result["phase"] == "complete" and "baseline" not in result
     exported = export(out, tmp_path / "export")
     assert exported["sharing"] == "private-local-only" and (tmp_path / "export" / "report.json").is_file()

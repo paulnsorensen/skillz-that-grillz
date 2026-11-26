@@ -36,12 +36,12 @@ from skillz_experiments._budget import (
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, PREFLIGHT_CALLS, VALIDATION_REPEATS
 from skillz_experiments.run._plan import (
-    _command_seconds as command_seconds,  # pyright: ignore[reportPrivateUsage]
+    command_seconds,
     _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
     size_plan,
 )
 from typing_extensions import override
-from fake_provider import FakeProvider, FakeRunProvider
+from fake_provider import FakeProvider, FakeRunProvider, approved_search
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FAKE = FIXTURES / "fake_claude.py"
@@ -335,8 +335,7 @@ def start(tmp_path: Path, max_turns: int) -> tuple[Path, Path, str, Callable[...
     return target, out, cast(str, cases.value.data["case_hash"]), factory, prompts
 
 
-def test_journey_budget_estimate_shows_a_separate_journey_line_and_asks_once(tmp_path: Path) -> None:
-    # Six turns, because the six preflight calls (gh-176) leave no search for seven turns under the journey cap.
+def test_journey_baseline_budget_estimate_has_its_own_journey_line(tmp_path: Path) -> None:
     target, out, approved, factory, _ = start(tmp_path, 6)
     with pytest.raises(Stop) as asked:
         _ = run(target, out, MODEL, live=True, approve_cases=approved)
@@ -348,8 +347,9 @@ def test_journey_budget_estimate_shows_a_separate_journey_line_and_asks_once(tmp
                     "ceiling_seconds": JOURNEY_SECONDS}
     calls = cast(int, estimate["calls"])
     result = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=factory)
-    assert result["phase"] == "complete"
+    assert result["search"] == "not-run"
     record = read(out / "run.json")
+    assert record["plan_mode"] == "baseline" and record["estimate"] == estimate
     budget = cast(dict[str, object], record["budget"])
     assert (budget["maximum"], budget["seconds"], budget["journey"]) == (calls, JOURNEY_SECONDS, True)
     assert cast(int, record["calls"]) <= calls
@@ -359,7 +359,8 @@ def test_journey_budget_run_stops_before_any_call_when_the_estimate_exceeds_the_
     target, out, approved, _, _ = start(tmp_path, 50)
     with pytest.raises(Stop) as asked:
         _ = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=5000)
-    assert asked.value.code == "budget-unapproved" and "the cap is 1000" in str(asked.value)
+    assert asked.value.code == "budget-unapproved" and "the cap of 1000 calls" in str(asked.value)
+    assert not (out / "run.json").exists()
 
 
 def test_journey_budget_single_turn_run_keeps_the_200_call_cap(tmp_path: Path, make_target: Callable[..., Path],
@@ -382,7 +383,7 @@ def test_journey_scored_in_validation_minibatches_and_the_holdout_gate_with_thre
     with pytest.raises(Stop) as asked:
         _ = run(target, out, MODEL, live=True, approve_cases=approved)
     calls = cast(int, cast(dict[str, object], asked.value.data["estimate"])["calls"])
-    result = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=factory)
+    result = approved_search(target, out, MODEL, approved, calls, factory=factory)
     assert result["phase"] == "complete"
     record = read(out / "run.json")
     cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])

@@ -18,13 +18,12 @@ from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, stop_kind
 from skillz_experiments.run._fault import FaultLatch
 from skillz_experiments.run._finalists import Finalists
-from skillz_experiments.run._headroom import run_headroom
 from skillz_experiments.run._holdout import run_gate
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._open import freeze_compatibility, freeze_identities, open_budget
 from skillz_experiments.run._outcomes import failed_outcome, is_failed, search_counts
 from skillz_experiments.run._record_fields import (
-    PHASES, POST_GATE_PHASES, differences, field, judge_flag, number_field, phase, record_outcomes, text_field,
+    PHASES, POST_GATE_PHASES, differences, field, int_field, judge_flag, number_field, phase, record_outcomes, text_field,
 )
 from skillz_experiments.run._plan import VALIDATION_REPEATS
 from skillz_experiments.run._ports import PatchApplier
@@ -68,6 +67,8 @@ class Session:
         freeze_identities(self.record, self.seed, model, configuration, judged, self.contract)
         freeze_compatibility(self.record, self.cases, self.contract, configuration)
         self.budget = open_budget(self.record, self.cases, self.contract, self.sizing)
+        budget = mapping(field(self.record, "budget"))
+        self._prior_calls = int_field(budget, "prior_calls") if "prior_calls" in budget else 0
         self.faults = FaultLatch(self.lock)
         self._search_cases = {case.identifier: case for case in self.cases if case.split != "holdout"}
         self._checks = CheckMemo()
@@ -113,7 +114,7 @@ class Session:
     def checkpoint(self) -> None:
         with self.lock:
             spent = self.budget.snapshot()
-            self.record["calls"] = spent.calls
+            self.record["calls"] = self._prior_calls + spent.calls
             self.record["retries"] = spent.retries
             self.record["calls_by_role"] = dict(sorted(spent.calls_by_role.items()))
             self.record["seconds_by_role"] = {role: round(seconds, 3) for role, seconds in sorted(spent.seconds_by_role.items())}
@@ -228,12 +229,10 @@ class Session:
             raise baseline_rejected(checked.reason)
 
     def headroom(self) -> None:
-        """Score the seed on every train case and on each validation repeat. Stop with `cases-too-easy` when a family is saturated."""
         self.telemetry.phase("cases")
-        run_headroom(self, self._searching)
+        _ = mapping(field(self.record, "headroom"))
 
     def search(self, earlier: Sequence[Mapping[str, object]] = ()) -> None:
-        """Run one resumable search. Holdout cases never enter it."""
         searching = self._searching
         finalists = Finalists(self, searching, self._built) if self.record.get("val_policy", "full") == "subset" else None
         searching.earlier = tuple(earlier)
@@ -241,25 +240,14 @@ class Session:
         trigger = "metric-count"
         timed_out = False
         budget_stopped = False
-        self.budget.reserve_time(number_field(mapping(field(self.record, "budget")), "reserve_seconds"))
-        try:
-            self.headroom()
-        except BudgetExhausted:
-            self.take_budget_stop()
-            budget_stopped = True
-            reason = "budget-exhausted-best-validated"
-            timed_out = self.budget.out_of_time()
-        finally:
-            self.budget.reserve_time(0.0)
+        self.headroom()
         self.telemetry.phase("search")
         files = {name: self.seed.files[name] for name in self.seed.editable}
         train = [case.identifier for case in self.cases_for("train")]
         validation = [case.identifier for case in self.cases_for("validation")]
         spent = len(searching.search_outcomes())
         allowance = searching.search_ceiling() - spent
-        if budget_stopped:
-            pass
-        elif finalists is not None and finalists.search_done():
+        if finalists is not None and finalists.search_done():
             searching.mark_start()
         elif allowance >= 1 and searching.stalled():
             reason, trigger = "converged-stalled", "stall"

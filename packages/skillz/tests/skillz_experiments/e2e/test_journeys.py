@@ -5,6 +5,7 @@ import json
 import socketserver
 import subprocess
 import threading
+from collections import Counter
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from pathlib import Path
@@ -214,18 +215,41 @@ def test_an_otlp_endpoint_receives_the_run_phase_case_and_model_call_spans_of_a_
     spans = exported_spans(received)
     attrs = [cast(dict[str, object], span["attrs"]) for span in spans]
     record = read_record(scenario.out)
-    (run,) = [span for span in spans if span["name"] == "skillz.run"]
-    assert {span["traceId"] for span in spans} == {run["traceId"]}
-    assert cast(dict[str, object], run["attrs"])["skillz.run_id"] == record["run_id"]
-    phases = {cast(dict[str, object], span["attrs"])["skillz.phase"]: span for span in spans if span["name"] == "skillz.phase"}
-    assert set(phases) == {"preflight", "cases", "search", "holdout", "replay"}
-    assert all(span["parentSpanId"] == run["spanId"] for span in phases.values())
-    search = cast(dict[str, object], phases["search"]["attrs"])
-    assert search["skillz.stop_trigger"] == cast(dict[str, object], record["search"])["stop_trigger"]
+    roots = [span for span in spans if span["name"] == "skillz.run"]
+    assert len(roots) == 2 and len({root["traceId"] for root in roots}) == 2
+    assert {span["traceId"] for span in spans} == {root["traceId"] for root in roots}
+    assert all(cast(dict[str, object], root["attrs"])["skillz.run_id"] == record["run_id"] for root in roots)
+    work: dict[object, dict[object, object]] = {}
+    for root in roots:
+        phases = {cast(dict[str, object], span["attrs"])["skillz.phase"]: span for span in spans
+                  if span["name"] == "skillz.phase" and span["traceId"] == root["traceId"]}
+        assert all(span["parentSpanId"] == root["spanId"] for span in phases.values())
+        work[root["traceId"]] = {name: phase["spanId"] for name, phase in phases.items()}
+        if "search" in phases:
+            search = cast(dict[str, object], phases["search"]["attrs"])
+            assert search["skillz.stop_trigger"] == cast(dict[str, object], record["search"])["stop_trigger"]
+    assert {frozenset(group) for group in work.values()} == {
+        frozenset({"preflight", "cases"}), frozenset({"preflight", "cases", "search", "holdout", "replay"})}
     cases = [span for span in spans if span["name"] == "skillz.case"]
     scored = [item for item in cast(list[dict[str, object]], record["outcomes"]) if item.get("case_id") is not None]
     assert len(cases) == len(scored)
     assert {cast(dict[str, object], span["attrs"])["skillz.arm"] for span in cases} == {"baseline", "search", "winner", "replay"}
+    baseline_trace = next(trace for trace, phases in work.items() if set(phases) == {"preflight", "cases"})
+    measured: Counter[object] = Counter()
+    later_baseline: Counter[object] = Counter()
+    for span in cases:
+        tags = cast(dict[str, object], span["attrs"])
+        if span["traceId"] == baseline_trace:
+            assert tags["skillz.arm"] in {"baseline", "search"}
+            assert span["parentSpanId"] == work[baseline_trace]["cases"]
+            measured[tags["skillz.case_id"]] += 1
+        elif tags["skillz.arm"] == "baseline":
+            assert span["parentSpanId"] == work[span["traceId"]]["holdout"]
+            later_baseline[tags["skillz.case_id"]] += 1
+    assert measured == {case["id"]: 2 for case in scenario.draft}
+    missing = max(0, cast(int, record["repeats"]) - 2)
+    held = {row["case_id"] for row in holdout(record)}
+    assert held and later_baseline == Counter({case: missing for case in held})
     case_ids = {span["spanId"] for span in cases}
     calls = [span for span in spans if span["name"] == "skillz.model_call"]
     by_role = {role: [cast(dict[str, object], span["attrs"]) for span in calls

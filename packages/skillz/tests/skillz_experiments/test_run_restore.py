@@ -39,16 +39,16 @@ from skillz_experiments._budget import (
 )
 from skillz_experiments.search import Edit, overshoot
 from skillz_experiments.run import Stop, export, run, summary
-from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM
+from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, VALIDATION_REPEATS
 from skillz_experiments.run._state import Factory
 from skillz_experiments.run._plan import (
-    _command_seconds as command_seconds,  # pyright: ignore[reportPrivateUsage]
+    command_seconds,
     _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
     plan_estimate,
 )
 from skillz_experiments.run._open import engine_hash
 from skillz_experiments.run._session import Session
-from fake_provider import PASSED, FakeRunProvider, ProviderCrash
+from fake_provider import PASSED, FakeRunProvider, ProviderCrash, search_approval
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -162,11 +162,16 @@ def _stopped_at_gate(tmp_path: Path, target: Path, write_draft: Drafter, approva
     """Run until the first holdout call fails. The record keeps the search at phase `searched`."""
     out = tmp_path / "run"
     _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
+    case_hash, calls = approvals(target, out, configuration=configuration)
+    factory = state.factory() if configuration is None else None
+    baseline = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
+                   factory=factory, configuration=configuration)
+    assert baseline["search"] == "not-run"
+    search_calls = search_approval(target, out, MODEL, configuration=configuration)
     state.fail_holdout = True
     with pytest.raises(ProviderCrash, match="fell over"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                factory=state.factory() if configuration is None else None, configuration=configuration)
+        _ = run(target, out, MODEL, search=True, live=True, approve_budget=search_calls,
+                factory=factory, configuration=configuration)
     state.fail_holdout = False
     assert read(out / "run.json")["phase"] == "searched"
     return out
@@ -179,6 +184,15 @@ def _prepared(tmp_path: Path, target: Path, write_draft: Drafter, approvals: App
     case_hash, calls = approvals(target, out)
     with pytest.raises(Stop) as caught:
         _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls)
+    assert caught.value.code == "live-required"
+    return out
+
+
+def _search_prepared(tmp_path: Path, target: Path, write_draft: Drafter, approvals: Approver, state: State) -> Path:
+    out = _prepared(tmp_path, target, write_draft, approvals)
+    assert run(target, out, MODEL, live=True, factory=state.factory())["search"] == "not-run"
+    with pytest.raises(Stop) as caught:
+        _ = run(target, out, MODEL, search=True, approve_budget=search_approval(target, out, MODEL))
     assert caught.value.code == "live-required"
     return out
 
@@ -308,11 +322,11 @@ def test_resume_hands_the_recorded_preflight_to_the_harness_and_runs_it_once_per
     configuration = _harness(tmp_path, monkeypatch, state)
     out = _stopped_at_gate(tmp_path, target, write_draft, approvals, state, configuration)
     recorded = read(out / "run.json")["preflight"]
-    assert state.preflights == [None]
+    assert state.preflights == [None, recorded]
     result = run(target, out, MODEL, live=True, configuration=configuration)
-    assert result["phase"] == "complete" and state.preflights == [None, recorded]
+    assert result["phase"] == "complete" and state.preflights == [None, recorded, recorded]
     _ = run(target, out, MODEL, live=True, configuration=configuration)
-    assert len(state.preflights) == 2
+    assert len(state.preflights) == 3
 
 
 def test_a_resume_with_another_installed_codex_version_stops_as_environment_differs(
@@ -460,13 +474,12 @@ def test_a_baseline_that_fails_the_candidate_contract_stops_the_gate(
 
 def test_resuming_a_rejected_baseline_never_promotes(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
-    target, out, state = make_target(tmp_path), tmp_path / "run", State(reject_baseline=True)
-    _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
-    for attempt in range(12):
+    target, state = make_target(tmp_path), State()
+    out = _search_prepared(tmp_path, target, write_draft, approvals, state)
+    state.reject_baseline = True
+    for _attempt in range(12):
         with pytest.raises(Stop) as caught:
-            _ = run(target, out, MODEL, live=True, approve_cases=case_hash if attempt == 0 else None,
-                    approve_budget=calls if attempt == 0 else None, factory=state.factory())
+            _ = run(target, out, MODEL, live=True, factory=state.factory())
         assert caught.value.code == "baseline-contract-rejected" and "next" in caught.value.data
     record = read(out / "run.json")
     assert record["phase"] == "searched" and "gate" not in record
@@ -475,14 +488,12 @@ def test_resuming_a_rejected_baseline_never_promotes(
 @pytest.mark.parametrize("rejection", ["helper fixture 0 fails on stdout", None])
 def test_a_rejected_baseline_reports_its_reason_as_the_stop_detail_on_every_run(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver, rejection: str | None) -> None:
-    target, out = make_target(tmp_path), tmp_path / "run"
-    state = State(reject_baseline=True, rejection=rejection)
-    _ = write_draft(out)
-    case_hash, calls = approvals(target, out)
-    for attempt in range(2):
+    target, state = make_target(tmp_path), State(rejection=rejection)
+    out = _search_prepared(tmp_path, target, write_draft, approvals, state)
+    state.reject_baseline = True
+    for _attempt in range(2):
         with pytest.raises(Stop) as caught:
-            _ = run(target, out, MODEL, live=True, approve_cases=case_hash if attempt == 0 else None,
-                    approve_budget=calls if attempt == 0 else None, factory=state.factory())
+            _ = run(target, out, MODEL, live=True, factory=state.factory())
         assert caught.value.code == "baseline-contract-rejected"
         assert caught.value.data.get("detail") == rejection
         assert ("detail" in caught.value.data) == (rejection is not None)
@@ -698,7 +709,7 @@ class _Spending(FakeRunProvider):
 def test_a_resume_with_less_time_than_the_reserve_still_reaches_the_gate(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, state = make_target(tmp_path), State()
-    out = _prepared(tmp_path, target, write_draft, approvals)
+    out = _search_prepared(tmp_path, target, write_draft, approvals, state)
     record = read(out / "run.json")
     budget = cast(dict[str, object], record["budget"])
     # Only half of the gate reserve is left: preflight runs, the search stops at once, and the gate runs.
@@ -714,7 +725,7 @@ def test_a_resume_with_less_time_than_the_reserve_still_reaches_the_gate(
 def test_a_slow_search_stops_at_the_gate_reserve_and_the_run_still_completes(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, state = make_target(tmp_path), State()
-    out = _prepared(tmp_path, target, write_draft, approvals)
+    out = _search_prepared(tmp_path, target, write_draft, approvals, state)
     record = read(out / "run.json")
     budget = cast(dict[str, object], record["budget"])
     reserved = cast(float, budget["reserve_seconds"])
@@ -726,14 +737,17 @@ def test_a_slow_search_stops_at_the_gate_reserve_and_the_run_still_completes(
     result = run(target, out, MODEL, live=True, factory=factory)
     recorded = read(out / "run.json")
     assert result["phase"] == "complete" and "gate" in recorded
-    # How many 0.2 s calls fit before the deadline varies, so the stop reason follows the gh-319 AC-4 rule:
-    # a time stop with more than half of the search ceiling unspent is time-exhausted; otherwise it is a budget stop.
     search = cast(dict[str, object], recorded["search"])
+    assert search["stop_trigger"] == "search-deadline"
     cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
-    validation = sum(case["split"] == "validation" for case in cases)
-    ceiling = cast(int, cast(dict[str, object], recorded["estimate"])["metric_calls"]) - overshoot(validation)
-    expected = "time-exhausted" if 2 * cast(int, search["scored"]) < ceiling else "budget-exhausted"
+    validation = VALIDATION_REPEATS * sum(case["split"] == "validation" for case in cases)
+    estimate = cast(dict[str, object], recorded["estimate"])
+    reused_train = cast(int, cast(dict[str, object], estimate["headroom"])["outcomes"])
+    ceiling = cast(int, estimate["metric_calls"]) - overshoot(validation) + reused_train
+    spent = cast(int, search["scored"]) + cast(int, search["failed"])
+    expected = "time-exhausted" if 2 * spent < ceiling else "budget-exhausted"
     assert str(search["reason"]).startswith(expected)
+    assert "reason" not in cast(dict[str, object], recorded["gate"])
 
 
 def test_a_resume_in_the_searched_phase_gets_the_reserved_time_back(
@@ -782,12 +796,12 @@ def test_a_prepared_run_records_the_engine_hash(
 def test_a_completed_run_returns_its_summary_even_when_the_target_moved(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, state = make_target(tmp_path), State()
-    out = _prepared(tmp_path, target, write_draft, approvals)
+    out = _search_prepared(tmp_path, target, write_draft, approvals, state)
     summary = run(target, out, MODEL, live=True, factory=state.factory())
     assert summary["phase"] == "complete" and "isolation" not in summary
     moved = tmp_path / "moved"
     _ = shutil.copytree(target, moved)
-    assert run(moved, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
+    assert run(moved, out, MODEL, live=True, factory=state.factory()) == summary
 
 
 def test_a_taken_seed_name_stops_the_run_before_the_live_preflight(
@@ -827,7 +841,8 @@ def test_a_run_that_recorded_the_claude_backend_still_resumes(
     record = read(out / "run.json")
     record["isolation"] = "claude"
     write(out / "run.json", record)
-    assert run(target, out, MODEL, live=True, factory=state.factory())["phase"] == "complete"
+    assert run(target, out, MODEL, live=True, factory=state.factory())["search"] == "not-run"
+    assert state.evaluated
 
 
 def test_a_terminated_run_resumed_with_another_flag_reports_the_termination_first(
@@ -1091,7 +1106,7 @@ def test_a_current_schema_run_with_an_older_engine_hash_stops_before_provider_cr
 def test_a_supplied_configuration_sizes_the_run_from_its_task_role_and_leaves_claude_options_out_of_the_stops(
         tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
     target, out = _command_target(tmp_path, make_target), tmp_path / "run"
-    _ = write_draft(out)
+    identifiers = write_draft(out)
     roles = tmp_path / "roles.json"
     _ = roles.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "command": [sys.executable],
                                      "sandbox_seconds": 100}))
@@ -1104,10 +1119,7 @@ def test_a_supplied_configuration_sizes_the_run_from_its_task_role_and_leaves_cl
         _ = run(target, out, MODEL, configuration=configuration, approve_cases=case_hash)
     assert budget.value.code == "budget-unapproved" and "claude_options" not in budget.value.data
     estimate = cast(dict[str, int], budget.value.data["estimate"])
-    headroom = cast(dict[str, int], cast(dict[str, object], budget.value.data["estimate"])["headroom"])
-    evaluations = (estimate["metric_calls"] + headroom["outcomes"] + 2 * estimate["holdout_cases"] * estimate["repeats"]
-                   + 2 * HOLDOUT_RETRIES_PER_ARM + estimate["holdout_cases"])
-    assert estimate["sandbox_seconds"] == math.ceil(evaluations * 100 / MAX_CONCURRENT_CALLS)
+    assert estimate["sandbox_seconds"] == math.ceil(2 * len(identifiers) * 100 / MAX_CONCURRENT_CALLS)
 
 @pytest.mark.parametrize("change", ["seed", "target"])
 def test_a_resume_with_another_seed_or_target_stops_before_any_call(
@@ -1130,7 +1142,8 @@ def test_a_resume_with_the_recorded_seed_runs(
     target, state = make_target(tmp_path), State()
     out = _prepared(tmp_path, target, write_draft, approvals)
     seed = cast(int, read(out / "run.json")["split_seed"])
-    assert run(target, out, MODEL, live=True, seed=seed, factory=state.factory())["phase"] == "complete"
+    assert run(target, out, MODEL, live=True, seed=seed, factory=state.factory())["search"] == "not-run"
+    assert state.evaluated
 
 
 def test_a_first_call_waits_for_the_run_lock_before_it_writes_the_record(
@@ -1238,7 +1251,7 @@ def test_the_summary_reconciles_calls_with_the_worst_case_bound_and_flags_oversp
     assert isinstance(finished["calls"], int) and isinstance(finished["calls_upper_bound"], int)
     assert finished["calls"] <= finished["calls_upper_bound"] and finished["calls_upper_bound"] > 0
     assert "usage_gap" not in finished
-    assert read(out / "run.json")["preflight_calls"] == 1 and finished["calls"] > 1
+    assert read(out / "run.json")["preflight_calls"] == 2 and finished["calls"] > 2
     unrecorded = read(out / "run.json")
     del unrecorded["preflight_calls"]
     unrecorded["calls"] = finished["calls_upper_bound"] + 3

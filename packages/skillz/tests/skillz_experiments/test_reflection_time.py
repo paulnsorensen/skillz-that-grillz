@@ -18,17 +18,17 @@ from skillz_experiments._budget import (
     Estimate,
 )
 from skillz_experiments._candidate import TEXT_FILE_LIMIT, Candidate
-from skillz_experiments._records import read
+from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._edit_plan import ReflectionNotes, editable_chars, reflection_time
+from skillz_experiments.search import Edit
 from test_default_edit import MODEL
-from test_press_autoimprove import Spy, prepare, tamper
+from test_run_search import Search
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
-Approver = Callable[..., tuple[str, int]]
 HUGE_CHARS = 600_000
 """Editable characters under `PACKAGE_LIMIT` that make three reflection calls outlast the approved seconds cap."""
 
@@ -48,22 +48,29 @@ def _huge_helpers(target: Path) -> Path:
     return target
 
 
-def _sized(target: Path, out: Path, write_draft: Drafter) -> tuple[Stop, str]:
-    """Approve the cases and return the `budget-unapproved` stop of an explicit `prose+cli` run and the case hash."""
+def search_receipt(target: Path, out: Path, cases: Stop, *, edit: Edit | None = None, repeats: int | None = None) -> Stop:
+    """Measure the seed, then get the separate search receipt without making search calls."""
+    assert cases.code == "cases-unapproved"
+    calls = cast(dict[str, int], cases.data["estimate"])["calls"]
+    result = run(target, out, MODEL, live=True, edit=edit, approve_cases=cast(str, cases.data["case_hash"]),
+                 approve_budget=calls, factory=Search(target).factory, repeats=repeats)
+    assert result["search"] == "not-run"
+    with pytest.raises(Stop) as budget:
+        _ = run(target, out, MODEL, search=True)
+    assert budget.value.code == "budget-unapproved"
+    return budget.value
+
+
+def _sized(target: Path, out: Path, write_draft: Drafter) -> Stop:
     _ = write_draft(out)
     with pytest.raises(Stop) as cases:
-        _ = run(target, out, MODEL, live=True, edit="prose+cli")
-    case_hash = cast(str, cases.value.data["case_hash"])
-    with pytest.raises(Stop) as budget:
-        _ = run(target, out, MODEL, live=True, edit="prose+cli", approve_cases=case_hash)
-    assert budget.value.code == "budget-unapproved"
-    return budget.value, case_hash
+        _ = run(target, out, MODEL, edit="prose+cli")
+    return search_receipt(target, out, cases.value, edit="prose+cli")
 
 
-def _approve(target: Path, out: Path, stop: Stop, case_hash: str) -> dict[str, object]:
-    """Approve the budget of `stop`, stop at `live-required`, and return the prepared run record."""
+def _approve(target: Path, out: Path, stop: Stop) -> dict[str, object]:
     with pytest.raises(Stop) as ready:
-        _ = run(target, out, MODEL, edit="prose+cli", approve_cases=case_hash, approve_budget=cast(int, _estimate(stop)["calls"]))
+        _ = run(target, out, MODEL, search=True, approve_budget=cast(int, _estimate(stop)["calls"]))
     assert ready.value.code == "live-required"
     return read(out / "run.json")
 
@@ -82,8 +89,8 @@ def test_the_reflection_block_charges_each_reflection_call_by_the_editable_size(
 def test_the_budget_question_and_the_run_record_hold_the_reflection_block(
         tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
     target, out = _huge_helpers(make_target(tmp_path, helper=True)), tmp_path / "run"
-    stop, case_hash = _sized(target, out, write_draft)
-    record = _approve(target, out, stop, case_hash)
+    stop = _sized(target, out, write_draft)
+    record = _approve(target, out, stop)
     estimate = cast(dict[str, object], record["estimate"])
     chars = editable_chars(cast(dict[str, str], record["seed"]), cast(list[str], record["editable"]))
     calls = cast(int, estimate["reflection_calls"])
@@ -110,18 +117,18 @@ def test_the_warning_starts_when_the_projected_seconds_pass_the_cap() -> None:
 def test_a_huge_editable_set_warns_in_the_budget_question_and_on_an_approved_run(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, capsys: pytest.CaptureFixture[str]) -> None:
     target, out = _huge_helpers(make_target(tmp_path, helper=True)), tmp_path / "run"
-    stop, case_hash = _sized(target, out, write_draft)
+    stop = _sized(target, out, write_draft)
     warning = cast(str, stop.data["reflection_time_warning"])
     assert "the search can stop at the deadline" in warning and str(APPROVED_SECONDS) in warning
     assert "warning: " + warning in capsys.readouterr().err
-    _ = _approve(target, out, stop, case_hash)
+    _ = _approve(target, out, stop)
     assert "warning: " + warning in capsys.readouterr().err
 
 
 @pytest.mark.ac("gh-571:AC-3")
 def test_a_small_editable_set_has_no_reflection_time_warning(
         tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
-    stop, _ = _sized(make_target(tmp_path, helper=True), tmp_path / "run", write_draft)
+    stop = _sized(make_target(tmp_path, helper=True), tmp_path / "run", write_draft)
     assert "reflection_time_warning" not in stop.data
     assert "reflection" in _estimate(stop)
 
@@ -130,31 +137,28 @@ def test_a_small_editable_set_has_no_reflection_time_warning(
 def test_the_editable_size_changes_no_call_count_second_count_or_budget(
         tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
     small_target = make_target(tmp_path / "small", helper=True)
-    small, small_hash = _sized(small_target, tmp_path / "small-run", write_draft)
+    small = _sized(small_target, tmp_path / "small-run", write_draft)
     huge_target = _huge_helpers(make_target(tmp_path / "huge", helper=True))
-    huge, huge_hash = _sized(huge_target, tmp_path / "huge-run", write_draft)
+    huge = _sized(huge_target, tmp_path / "huge-run", write_draft)
     assert "reflection_time_warning" in huge.data
     totals = [{key: value for key, value in _estimate(stop).items() if key != "reflection"} for stop in (small, huge)]
     assert totals[0] == totals[1]
     # The seconds stay the flat estimate: every call at ESTIMATE_SECONDS_PER_CALL over the concurrency, plus the sandbox time.
     flat = math.ceil(cast(int, totals[1]["calls"]) * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS)
     assert totals[1]["seconds"] == flat + cast(int, totals[1].get("sandbox_seconds", 0))
-    budgets = [_approve(root, out, stop, hashed)["budget"] for root, out, stop, hashed in (
-        (small_target, tmp_path / "small-run", small, small_hash),
-        (huge_target, tmp_path / "huge-run", huge, huge_hash))]
+    budgets = [_approve(root, out, stop)["budget"] for root, out, stop in (
+        (small_target, tmp_path / "small-run", small), (huge_target, tmp_path / "huge-run", huge))]
     assert budgets[0] == budgets[1]
 
 
 @pytest.mark.ac("gh-571:AC-5")
 def test_a_run_recorded_without_the_reflection_block_still_resumes(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
-    prep = prepare(tmp_path, make_target, write_draft, approvals)
-
-    def drop_block(record: dict[str, object]) -> None:
-        del cast(dict[str, object], record["estimate"])["reflection"]
-
-    tamper(prep.out, drop_block)
-    result = run(prep.target, prep.out, MODEL, live=True, factory=Spy().factory)
+        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
+    target, out = make_target(tmp_path, helper=True), tmp_path / "run"
+    record = _approve(target, out, _sized(target, out, write_draft))
+    del cast(dict[str, object], record["estimate"])["reflection"]
+    write(out / "run.json", record)
+    result = run(target, out, MODEL, live=True, factory=Search(target).factory)
     assert result["phase"] == "complete"
 
 
@@ -225,23 +229,19 @@ def test_a_sizing_stop_still_follows_the_size_warning_on_stderr(
     with pytest.raises(Stop) as cases:
         _ = run(target, out, MODEL, live=True, edit="prose+cli", repeats=50)
     _ = capsys.readouterr()
-    with pytest.raises(Stop) as sized:
-        _ = run(target, out, MODEL, live=True, edit="prose+cli", repeats=50,
-                approve_cases=cast(str, cases.value.data["case_hash"]))
-    assert sized.value.code == "budget-unapproved" and "lower --repeats" in str(sized.value)
-    # The stop shows the estimate of the plan at the smallest approval that fits, not of a plan under the 200 cap (gh-588).
-    smallest = cast(int, sized.value.data["smallest_approval"])
-    assert APPROVED_CALLS < cast(int, cast(dict[str, object], sized.value.data["estimate"])["calls"]) <= smallest
+    sized = search_receipt(target, out, cases.value, edit="prose+cli", repeats=50)
+    assert "lower --repeats" in str(sized)
+    # Compare the receipt to the smallest approval that fits this search (gh-588).
+    smallest = cast(int, sized.data["smallest_approval"])
+    assert APPROVED_CALLS < cast(int, _estimate(sized)["calls"]) <= smallest
     assert "more than the reflection limit" in capsys.readouterr().err
 
 
 @pytest.mark.ac("gh-571:AC-5")
 def test_a_resumed_run_with_an_altered_reflection_block_still_resumes(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
-    prep = prepare(tmp_path, make_target, write_draft, approvals)
-
-    def alter(record: dict[str, object]) -> None:
-        cast(dict[str, dict[str, int]], record["estimate"])["reflection"]["seconds"] += 99999
-
-    tamper(prep.out, alter)
-    assert run(prep.target, prep.out, MODEL, live=True, factory=Spy().factory)["phase"] == "complete"
+        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
+    target, out = make_target(tmp_path, helper=True), tmp_path / "run"
+    record = _approve(target, out, _sized(target, out, write_draft))
+    cast(dict[str, dict[str, int]], record["estimate"])["reflection"]["seconds"] += 99999
+    write(out / "run.json", record)
+    assert run(target, out, MODEL, live=True, factory=Search(target).factory)["phase"] == "complete"

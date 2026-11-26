@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
@@ -58,7 +59,7 @@ def _contract(kinds: dict[str, object]) -> dict[str, object]:
 def test_each_judged_outcome_stores_a_reason_and_a_met_verdict_per_criterion(
         judged: JudgedRun, mode: str, level: int, met: bool) -> None:
     _mode(judged, mode)
-    assert judged.start()["phase"] == "complete"
+    assert judged.start()["search"] == "not-run"
     rows = _judged_outcomes(judged.out)
     assert rows
     for item in rows:
@@ -86,7 +87,7 @@ def test_the_scoring_policy_label_differs_between_an_audit_and_a_rubric_contract
 
 @pytest.mark.ac("gh-301:AC-2")
 def test_a_rubric_run_freezes_the_criteria_label_in_run_json(judged: JudgedRun) -> None:
-    assert judged.start()["phase"] == "complete"
+    assert judged.start()["search"] == "not-run"
     frozen = cast(dict[str, str], read(judged.out / "run.json")["judge"])
     assert frozen["scoring_policy"] == CRITERIA_SCORING_POLICY
 
@@ -95,7 +96,7 @@ def test_a_rubric_run_freezes_the_criteria_label_in_run_json(judged: JudgedRun) 
 def test_export_lists_each_case_that_scores_zero_on_every_repeat_with_redacted_reasons(
         judged: JudgedRun, tmp_path: Path) -> None:
     _mode(judged, "case-reason")
-    assert judged.start()["phase"] == "complete"
+    assert judged.start(search=True)["phase"] == "complete"
     record = read(judged.out / "run.json")
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     rows = [item for item in outcomes if isinstance(item.get("criteria"), dict)]
@@ -127,7 +128,7 @@ def test_export_lists_each_case_that_scores_zero_on_every_repeat_with_redacted_r
 
 @pytest.mark.ac("gh-301:AC-3")
 def test_export_lists_no_zero_case_when_every_case_scores(judged: JudgedRun, tmp_path: Path) -> None:
-    assert judged.start()["phase"] == "complete"
+    assert judged.start(search=True)["phase"] == "complete"
     _ = export(judged.out, tmp_path / "export")
     report = read(tmp_path / "export" / "report.json")
     assert report["zero_cases"] == []
@@ -157,26 +158,26 @@ def test_a_case_with_a_nonzero_or_non_numeric_repeat_is_not_a_zero_case(score: o
     assert zero_cases([_verdict_row(0, {"edge": 1}), _verdict_row(score, {"edge": 1})]) == []
 
 
+@pytest.mark.ac("gh-756:AC-3")
 def test_a_holdout_rationale_never_reaches_a_proposer_prompt(judged: JudgedRun) -> None:
-    """Smoke the full run: the search reasons reach the proposer, and no holdout reason does.
-
-    The run judges the holdout cases after the search ends, so this run cannot leak them.
-    `test_a_recorded_holdout_rationale_stays_out_of_the_search_feedback` pins the resume path that could.
-    """
+    """Only search case IDs and reasons can reach the proposer after measurement of all splits."""
     _mode(judged, "case-reason")
-    assert judged.start()["phase"] == "complete"
+    assert judged.start(search=True)["phase"] == "complete"
     rows = _judged_outcomes(judged.out)
-    holdout = {str(item["case_id"]) for item in rows if item.get("split") == "holdout"}
-    search = {str(item["case_id"]) for item in rows if item.get("split") != "holdout"}
-    assert holdout and search
+    holdout = {str(item["case_id"]) for item in rows if item["split"] == "holdout"}
+    measured = set(cast(list[str], read(judged.out / "run.json")["exposed"]))
+    selection = {str(item["case_id"]) for item in rows if item["arm"] == "search"}
+    assert holdout and selection
+    assert selection <= measured - holdout
     for item in rows:
         reason = cast(dict[str, dict[str, object]], item["criteria"])["answer"]["reason"]
         assert reason == f"rationale<{item['case_id']}>"
-    prompts = _proposer_prompts(judged.log)
-    assert prompts
-    assert any(f"rationale<{case}>" in prompt for case in search for prompt in prompts)
-    for case in holdout:
-        assert all(f"rationale<{case}>" not in prompt for prompt in prompts)
+    prompts = "\n".join(_proposer_prompts(judged.log))
+    reasons = {match[1] for match in re.finditer(r"rationale<([a-z0-9-]+)>", prompts)}
+    tokens = {match[0] for match in re.finditer(r"[a-zA-Z0-9_-]+", prompts)}
+    assert reasons and reasons <= measured - holdout
+    assert holdout.isdisjoint(tokens)
+    assert holdout.isdisjoint({part.removeprefix("request-").removesuffix("-end") for part in tokens})
 
 
 def _holdout_ids(judged: JudgedRun, split_seed: int) -> list[str]:
@@ -211,7 +212,7 @@ def test_a_resumed_run_keeps_recorded_holdout_rationales_out_of_every_proposer_p
         for case in holdout for arm in ("search", "baseline")]
     write(path, record)
     _mode(judged, "case-reason")
-    assert judged.start()["phase"] == "complete"
+    assert judged.start(search=True)["phase"] == "complete"
     train = {str(item["case_id"]) for item in _judged_outcomes(judged.out) if item.get("split") in {"train", "validation"}}
     assert train and not train & set(holdout)
     prompts = _proposer_prompts(judged.log)
