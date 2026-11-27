@@ -10,6 +10,7 @@ import pytest
 
 from fake_provider import search_approval
 from skillz_experiments._cases import mapping
+from skillz_experiments._cli import main
 from skillz_experiments._records import read
 from skillz_experiments.harness import Configuration
 from skillz_experiments.run import run
@@ -80,3 +81,28 @@ def test_a_default_baseline_keeps_the_six_call_preflight_allowance(
     _, with_roles = approvals(target, out, MODEL, configuration=Configuration.single("claude", MODEL))
     assert calls == with_roles
     assert preflight_calls(None) == preflight_calls(Configuration.single("claude", MODEL).identity()) == PREFLIGHT_CALLS == 6
+
+
+def _preview_calls(capsys: pytest.CaptureFixture[str], target: Path, draft: Path, *extra: str) -> int:
+    assert main(["plan", "--target", str(target), "--draft", str(draft), "--edit", "prose", *extra]) == 0
+    preview = mapping(mapping(cast(object, json.loads(capsys.readouterr().out)))["preview"])
+    return cast(int, mapping(preview["estimate"])["calls"])
+
+
+@pytest.mark.ac("gh-756:AC-10")
+def test_a_preview_with_four_claude_roles_sizes_the_eight_call_preflight_that_search_approval_counts(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, capsys: pytest.CaptureFixture[str]) -> None:
+    target, out = _judged_target(tmp_path, make_target), tmp_path / "run"
+    _ = write_draft(out, families=6)
+    draft = out / "cases.draft.json"
+    roles = tmp_path / "roles.json"
+    _ = roles.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "roles": {"simulator": {}}}), encoding="utf-8")
+    three = tmp_path / "three.json"
+    _ = three.write_text(json.dumps({"schema_version": 1, "adapter": "claude"}), encoding="utf-8")
+    default = _preview_calls(capsys, target, draft)
+    assert _preview_calls(capsys, target, draft, "--harness-config", str(three)) == default
+    configured = _preview_calls(capsys, target, draft, "--harness-config", str(roles))
+    base = Configuration.single("claude", MODEL)
+    four = Configuration(base.roles | {"simulator": base.roles["judge"]})
+    assert Configuration.identity_from_file(roles) == {name: {"adapter": "claude"} for name in four.roles}
+    assert configured - default == preflight_calls(four.identity()) - PREFLIGHT_CALLS == 2

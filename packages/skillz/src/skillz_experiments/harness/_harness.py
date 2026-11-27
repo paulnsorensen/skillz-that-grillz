@@ -71,6 +71,15 @@ class Configuration:
         return roles["task"].options
 
     @classmethod
+    def identity_from_file(cls, path: Path) -> dict[str, object]:
+        """Return the adapter of each role in the role file, as the frozen identity shows it, without a model or executable check.
+
+        `claude_preflight_calls` reads it, so an offline preview sizes the preflight like a live run.
+        """
+        values, root = cls._role_values(path)
+        return {name: {"adapter": parse_role_offline(value, root).adapter} for name, value in values.items()}
+
+    @classmethod
     def single(cls, adapter: str, model: str, options: ClaudeOptions | None = None) -> Configuration:
         """Return a configuration that runs every role on one headless harness: `claude` or `codex`.
 

@@ -240,13 +240,46 @@ def test_the_report_applies_the_search_too_easy_rule_to_train_families(
     headroom = mapping(read(out / "run.json")["headroom"])
     train = {name: mapping(entry) for name, entry in mapping(headroom["families"]).items()
              if mapping(entry)["split"] == "train"}
-    assert train and all(entry["cases"] == 1 for entry in train.values())
+    assert train and all(entry["cases"] == 1 and entry["mean"] == pytest.approx(0.85) for entry in train.values())
     assert headroom["verdict"] == "ok"
     assert report["family_means"] == {
-        "train": {name: pytest.approx(0.85) for name in train},
+        "train": {name: pytest.approx(0.925) for name in train},
         "validation": {name: 0.0 for name in mapping(mapping(report["family_means"])["validation"])},
         "holdout": mapping(report["family_means"])["holdout"]}
     assert mapping(report["saturated_families"])["train"] == []
+
+
+@pytest.mark.ac("gh-756:AC-6")
+@pytest.mark.usefixtures("host_login")
+def test_the_report_means_cover_both_measured_repeats_and_saturation_follows_the_search_rule(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, state, approved, calls = start(
+        tmp_path, make_target, write_draft, approvals, regression=lambda case: str(case["id"]).endswith("-0"))
+    seen: Counter[str] = Counter()
+    lock = threading.Lock()
+
+    def score(text: str, split: str, case_id: str) -> float | None:
+        """Score each train floor case 1.0, and each other train case 1.0 on its first repeat and 0.0 on its second."""
+        if "improved" in text:
+            return None
+        if split != "train" or case_id.endswith("-0"):
+            return 1.0 if split == "train" else 0.0
+        with lock:
+            seen[case_id] += 1
+            return 1.0 if seen[case_id] == 1 else 0.0
+
+    state.case_score_of = score
+    report = measure(state, target, out, approved, calls)
+    headroom = mapping(read(out / "run.json")["headroom"])
+    train = {name: mapping(entry) for name, entry in mapping(headroom["families"]).items()
+             if mapping(entry)["split"] == "train"}
+    assert train and {entry["mean"] for entry in train.values()} <= {0.0, 1.0}
+    cases = {name: mapping(entry) for name, entry in mapping(report["cases"]).items()}
+    assert all(sorted(cast(list[float], entry["scores"])) == [0.0, 1.0]
+               for name, entry in cases.items() if entry["split"] == "train" and not name.endswith("-0"))
+    assert mapping(report["family_means"])["train"] == {name: pytest.approx(0.75) for name in train}
+    assert mapping(report["saturated_families"])["train"] == sorted(
+        name for name, entry in train.items() if entry["mean"] == 1.0)
 
 
 @pytest.mark.ac("gh-756:AC-4")

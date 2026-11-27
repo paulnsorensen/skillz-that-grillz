@@ -236,7 +236,7 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
     # Without `--kind`, run also evaluates every journey kind, so the preview sizes against that same set.
     evaluated = tuple(dict.fromkeys((*(chosen or ()), *(() if kinds or chosen is None else journeys))))
     if contract is not None:
-        options = ClaudeOptions()
+        options, roles = ClaudeOptions(), None
         try:
             if harness_config is not None and sandbox_seconds is not None:
                 raise CodedError("usage", "--harness-config cannot combine with --sandbox-seconds")
@@ -247,6 +247,7 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
                 capture = chosen is not None and any(contract.kinds[kind].capture for kind in chosen)
                 options = Configuration.sizing_options_from_file(harness_config, require_conversation=conversation,
                                                                  require_capture=capture)
+                roles = Configuration.identity_from_file(harness_config)
             elif sandbox_seconds is not None:
                 options = ClaudeOptions.parse({"sandbox_seconds": sandbox_seconds})
         except FAILURES as error:
@@ -255,7 +256,7 @@ def validate(target: Path, draft: Path | None = None, seed: int | None = None,
             unavailable_reason = "configuration-invalid"
         try:
             preview_data = plan(target, contract, planned if sizing_ready else None, edit=edit, repeats=repeats,
-                                planning_call_cap=planning_call_cap, options=options, kinds=evaluated)
+                                planning_call_cap=planning_call_cap, options=options, kinds=evaluated, harness=roles)
             if failure := preview_data.pop("_failure", None):
                 detail = cast(dict[str, str], failure)
                 findings.append(_finding(detail["code"], "error", detail.get("file", ""), detail["message"]))
