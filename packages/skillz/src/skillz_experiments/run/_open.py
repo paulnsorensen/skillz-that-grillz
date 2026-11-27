@@ -14,10 +14,11 @@ from skillz_experiments._audit import GraderKind
 from skillz_experiments._audit import identity as judge_identity
 from skillz_experiments._budget import APPROVED_CALLS, JOURNEY_CALLS, SECONDS_PER_CALL, Budget, BudgetExhausted, ceilings
 from skillz_experiments._candidate import Candidate
-from skillz_experiments._cases import Case, CodedError, Split, digest, mapping
-from skillz_experiments._contract import RUBRIC_GRADERS, Contract
+from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
+from skillz_experiments._contract import RUBRIC_GRADERS, Contract, parse
+from skillz_experiments._records import read
 from skillz_experiments.harness import ClaudeOptions, Configuration
-from skillz_experiments.run._plan import VALIDATION_REPEATS, plan_estimate, size_plan
+from skillz_experiments.run._plan import VALIDATION_REPEATS, plan_estimate, preflight_calls, size_plan
 from skillz_experiments.run._sizing import baseline_plan
 from skillz_experiments.run._record_fields import (
     POST_GATE_PHASES, count_map, field, int_field, number_field, phase, text_field,
@@ -83,6 +84,24 @@ def judge_kind(contract: Contract) -> GraderKind:
     return "criteria" if any(kind in RUBRIC_GRADERS for kind in contract.grader_types().values()) else "audit"
 
 
+def frozen_inputs(record: dict[str, object], out: Path, configuration: Configuration | None) -> tuple[Contract, list[Case]]:
+    """Check the frozen harness, contract, and dataset of `record`. Return the contract and all its cases.
+
+    A first open freezes the harness identity. `Session` and `approve_search` both call this one owner.
+    """
+    if configuration is not None:
+        identity = configuration.identity()
+        if record.setdefault("harness", identity) != identity:
+            raise CodedError("harness-changed", "harness configuration differs from the frozen record; create a new run")
+    contract = parse(field(record, "contract"), text_field(record, "contract_source"))
+    if contract.identity != text_field(record, "contract_hash"):
+        raise ValueError("contract differs from the frozen record; create a new run")
+    path = out / "cases.json"
+    if digest(read(path)) != text_field(record, "dataset_hash"):
+        raise ValueError("dataset differs from the frozen record")
+    return contract, load_cases(path, contract.grader_types())
+
+
 def freeze_identities(record: dict[str, object], seed: Candidate, model: str, configuration: Configuration | None,
                       judged: bool, contract: Contract) -> None:
     if configuration is not None:
@@ -90,10 +109,6 @@ def freeze_identities(record: dict[str, object], seed: Candidate, model: str, co
         if not isinstance(target, str):
             raise ValueError("run lacks candidate boundary; create a new run")
         configuration.check_boundary(Path(target))
-        identity = configuration.identity()
-        _ = record.setdefault("harness", identity)
-        if record["harness"] != identity:
-            raise CodedError("harness-changed", "harness configuration differs from the frozen record; create a new run")
     if judged:
         judge_model = configuration.roles["judge"].model if configuration is not None else model
         _ = record.setdefault("judge_model", judge_model)
@@ -103,12 +118,6 @@ def freeze_identities(record: dict[str, object], seed: Candidate, model: str, co
             raise ValueError("judge differs from the frozen record; create a new run")
     if seed.identity != text_field(record, "seed_hash"):
         raise ValueError("seed differs from the frozen record")
-    _check_validation_policy(record)
-    if "seconds_per_call" not in mapping(field(record, "estimate")):
-        raise ValueError("run was prepared by an older runner; create a new run")
-    _ = record.setdefault("engine_hash", engine_hash())
-    if record["engine_hash"] != engine_hash():
-        raise ValueError("evaluator differs from the frozen record; create a new run")
 
 
 def validation_policy() -> dict[str, object]:
@@ -211,8 +220,9 @@ def verify_budget(record: dict[str, object], cases: list[Case], contract: Contra
     repeats = int_field(record, "repeats")
     cap = _cap(budget)
     baseline = record.get("plan_mode") == "baseline"
-    plan = baseline_plan(contract, cases, sizing, cap) if baseline else size_plan(
-        contract, cases, repeats, sizing, cap, measured=record.get("plan_mode") == "search")
+    preflight = preflight_calls(record.get("harness"))
+    plan = (baseline_plan(contract, cases, sizing, cap, preflight) if baseline
+            else size_plan(contract, cases, repeats, sizing, cap, preflight))
     expected = plan_estimate(plan, 2 if baseline else repeats, count["holdout"])
     recorded = mapping(field(record, "estimate"))
     maximum = max(plan.sized.calls, 1)

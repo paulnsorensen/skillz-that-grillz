@@ -992,7 +992,7 @@ def test_a_supplied_configuration_refuses_option_values_and_its_roots_stop_befor
 
 def test_sandbox_time_of_command_graders_adds_to_the_estimate_and_the_gate_reserve() -> None:
     plain, slow = plan_run(6, 6, 6, 1, 3), plan_run(6, 6, 6, 1, 3, 30)
-    gate_evaluations = 2 * 6 * 3 + 2 * HOLDOUT_RETRIES_PER_ARM + 6
+    gate_evaluations = 6 * (2 * 3 - 2 + 1) + 2 * HOLDOUT_RETRIES_PER_ARM
     assert slow.sandbox_gate == math.ceil(gate_evaluations * 30 / MAX_CONCURRENT_CALLS)
     assert slow.sized.calls == plain.sized.calls
     assert slow.sized.seconds == plain.sized.seconds + slow.sandbox_total > plain.sized.seconds

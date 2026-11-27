@@ -18,11 +18,12 @@ from skillz_experiments.run._stop import Stop
 TABLE_REPEATS = (1, 2, 3)
 
 
-def baseline_plan(contract: Contract, cases: Sequence[Case | IntakeCase], options: ClaudeOptions, cap: int) -> Plan:
+def baseline_plan(contract: Contract, cases: Sequence[Case | IntakeCase], options: ClaudeOptions, cap: int,
+                  preflight: int = PREFLIGHT_CALLS) -> Plan:
     """Size two seed evaluations per scored case and no search, gate, or replay."""
     sandbox = command_seconds(contract, cases, options)
     sandbox_total = math.ceil(2 * len(cases) * sandbox / MAX_CONCURRENT_CALLS)
-    sized = estimate(preflight_calls=PREFLIGHT_CALLS, search_calls=2 * sum(case_calls(contract, case) for case in cases),
+    sized = estimate(preflight_calls=preflight, search_calls=2 * sum(case_calls(contract, case) for case in cases),
                      journey=any(case.journey is not None for case in cases), cap=cap)
     return Plan(0, 0, 0, 0, type(sized)(sized.calls, sized.seconds + sandbox_total, sized.journey, cap),
                 sandbox_total=sandbox_total, sandbox_seconds=sandbox)
@@ -64,6 +65,7 @@ class Sizer:
     holdout_cases: int
     notes: ReflectionNotes
     shown: Mapping[str, object]
+    preflight: int = PREFLIGHT_CALLS
 
     def estimate(self, plan: Plan, repeats: int) -> dict[str, object]:
         """Return the shown estimate of `plan`: the `plan_estimate` that `verify_budget` checks, and the reflection block."""
@@ -72,7 +74,7 @@ class Sizer:
     def plan(self, repeats: int) -> Plan:
         """Return the plan for `repeats`. A plan that does not fit stops with the smallest approval and the repeats table."""
         try:
-            return size_plan(self.contract, self.cases, repeats, self.options, self.cap, measured=True)
+            return size_plan(self.contract, self.cases, repeats, self.options, self.cap, self.preflight)
         except Stop as error:
             raise self.stop(str(error), {}, repeats, fitting=True) from None
 
@@ -86,7 +88,7 @@ class Sizer:
         smallest = self._smallest(repeats) if fitting else None
         if smallest is not None:
             text += f"; --approve-budget {smallest} is the smallest approved number that fits"
-            shown = self.estimate(size_plan(self.contract, self.cases, repeats, self.options, smallest, measured=True), repeats)
+            shown = self.estimate(size_plan(self.contract, self.cases, repeats, self.options, smallest, self.preflight), repeats)
             extra |= {"smallest_approval": smallest, "estimate": shown, "approve": "call run with --approve-budget CALLS",
                       **self.notes.warnings}
         if not self.repeats_given:
@@ -99,7 +101,7 @@ class Sizer:
         rows: list[dict[str, object]] = []
         for repeats in TABLE_REPEATS:
             try:
-                plan = size_plan(self.contract, self.cases, repeats, self.options, self.cap, measured=True)
+                plan = size_plan(self.contract, self.cases, repeats, self.options, self.cap, self.preflight)
             except Stop as error:
                 rows.append({"repeats": repeats, "fits": False, "stop": str(error)})
                 continue
@@ -109,7 +111,7 @@ class Sizer:
 
     def _fits(self, cap: int, repeats: int) -> bool:
         try:
-            _ = size_plan(self.contract, self.cases, repeats, self.options, cap, measured=True)
+            _ = size_plan(self.contract, self.cases, repeats, self.options, cap, self.preflight)
         except Stop:
             return False
         return True

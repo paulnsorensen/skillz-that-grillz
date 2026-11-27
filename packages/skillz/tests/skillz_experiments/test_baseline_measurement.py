@@ -220,3 +220,67 @@ def test_measurement_resumes_only_missing_slots_and_reports_all_splits(
     usage = mapping(report["usage_by_role"])
     assert mapping(usage["task"])["input_tokens"] == 20 * len(ids)
     assert mapping(usage["judge"])["output_tokens"] == 6 * len(ids)
+
+
+@pytest.mark.ac("gh-756:AC-6")
+@pytest.mark.usefixtures("host_login")
+def test_the_report_applies_the_search_too_easy_rule_to_train_families(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, state, approved, calls = start(
+        tmp_path, make_target, write_draft, approvals, regression=lambda case: str(case["id"]).endswith("-0"))
+
+    def score(text: str, split: str, case_id: str) -> float | None:
+        """Score the seed 1.0 on each train floor case, 0.85 on each other train case, and 0 elsewhere."""
+        if "improved" in text:
+            return None
+        return (1.0 if case_id.endswith("-0") else 0.85) if split == "train" else 0.0
+
+    state.case_score_of = score
+    report = measure(state, target, out, approved, calls)
+    headroom = mapping(read(out / "run.json")["headroom"])
+    train = {name: mapping(entry) for name, entry in mapping(headroom["families"]).items()
+             if mapping(entry)["split"] == "train"}
+    assert train and all(entry["cases"] == 1 for entry in train.values())
+    assert headroom["verdict"] == "ok"
+    assert report["family_means"] == {
+        "train": {name: pytest.approx(0.85) for name in train},
+        "validation": {name: 0.0 for name in mapping(mapping(report["family_means"])["validation"])},
+        "holdout": mapping(report["family_means"])["holdout"]}
+    assert mapping(report["saturated_families"])["train"] == []
+
+
+@pytest.mark.ac("gh-756:AC-4")
+@pytest.mark.usefixtures("host_login")
+def test_the_baseline_warns_on_stderr_and_records_the_seed_warnings_and_unscorable_cases_in_the_report(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver,
+        capsys: pytest.CaptureFixture[str]) -> None:
+    target, out, state, approved, calls = start(tmp_path, make_target, write_draft, approvals, regression=lambda _case: False)
+    seed_zero(state)
+    report = measure(state, target, out, approved, calls)
+    captured = capsys.readouterr()
+    headroom = mapping(read(out / "run.json")["headroom"])
+    warnings = cast(list[str], headroom["warnings"])
+    assert any(text.startswith("suspect-zero:") for text in warnings)
+    assert report["warnings"] == warnings
+    assert report["unscorable"] == headroom["unscorable"] == []
+    printed = [line for line in captured.err.splitlines() if line.startswith("skillz-experiment: warning: ")]
+    assert printed == [f"skillz-experiment: warning: {text}" for text in warnings]
+    assert captured.out == ""
+    assert read(out / "report.json") == report
+
+
+@pytest.mark.ac("gh-756:AC-4")
+@pytest.mark.usefixtures("host_login")
+def test_the_report_names_each_case_that_a_setup_fault_zeroes_on_every_repeat(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    target, out, state, approved, calls = start(tmp_path, make_target, write_draft, approvals, regression=lambda _case: False)
+    seed_zero(state)
+    state.extra = {"gate_fault": "timeout"}
+    report = measure(state, target, out, approved, calls)
+    unscorable = cast(list[dict[str, object]], report["unscorable"])
+    frozen = [case for case in cast(list[dict[str, object]], read(out / "cases.json")["cases"])
+              if case["split"] in ("train", "validation")]
+    assert unscorable and sorted(str(item["case_id"]) for item in unscorable) == sorted(str(case["id"]) for case in frozen)
+    assert all(str(item["cause"]).startswith("setup fault timeout") for item in unscorable)
+    assert unscorable == mapping(read(out / "run.json")["headroom"])["unscorable"]
+    assert read(out / "report.json") == report

@@ -50,7 +50,6 @@ if TYPE_CHECKING:
 
 LISTENER_REACHED = "network isolation failed: the runner-owned listener accepted a connection from the Bash probe"
 
-
 # The private file in the run directory that holds the tool transcript of a failed live preflight.
 PREFLIGHT_TRANSCRIPT = "preflight.events.json"
 
@@ -58,6 +57,7 @@ PREFLIGHT_TRANSCRIPT = "preflight.events.json"
 # Bash sweep as a sandbox-escape test, so each call has one plain task and the prompts avoid words such as "sealed".
 SANDBOX_CHECK = "Bash sandbox check"
 READ_CHECK = "file-access check"
+PREFLIGHT_CALLS = 2  # One budgeted `_call` per check above, for each Claude role.
 SANDBOX_INTRO = ("This is a check of the Bash sandbox in this workspace. Run each command below with the Bash tool, "
                  + "exactly as written and in the given order. The sandbox blocks some of these commands, so a failed "
                  + "command is a normal result: continue with the next command. Do not change a command, and do not "

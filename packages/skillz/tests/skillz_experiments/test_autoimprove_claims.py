@@ -21,7 +21,7 @@ from skillz_experiments._records import read, write
 from skillz_experiments.run import Stop, _export, _patch, _replay_phase, _session, export, run, summary
 from skillz_experiments.run._open import engine_hash
 from skillz_experiments.run._patch import Patch
-from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.run._plan import VALIDATION_REPEATS, _plan  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.run._ports import Ports
 from skillz_experiments.run._replay import apply_patches, drift, prepare_copy
 from fake_provider import search_approval
@@ -304,11 +304,13 @@ def test_a_resume_in_the_replay_phase_does_not_repeat_a_scored_replay_outcome(
 def test_the_plan_counts_replay_calls_in_the_estimate_the_approval_and_the_holdout_reserve(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     plan = _plan(6, 6, 6, 1, 3)
-    without = estimate(preflight_calls=6, holdout=12, repeats=3, search_calls=plan.metric_calls,
-                       retry_calls=plan.retry_calls, reflection_calls=plan.reflection_calls)
-    assert plan.replay_calls == 6 and plan.headroom_calls == 6
-    assert plan.sized.calls == without.calls + plan.replay_calls + plan.headroom_calls
-    assert plan.holdout_calls == 2 * 6 * 3 + plan.retry_calls and plan.reserve == plan.holdout_calls + 6
+    gate_repeats = 2 * 3 - 2
+    without = estimate(preflight_calls=6, holdout=plan.holdout_calls - plan.retry_calls,
+                       search_calls=plan.metric_calls - VALIDATION_REPEATS * 6, retry_calls=plan.retry_calls,
+                       reflection_calls=plan.reflection_calls)
+    assert plan.replay_calls == 6
+    assert plan.sized.calls == without.calls + plan.replay_calls
+    assert plan.holdout_calls == 6 * gate_repeats + plan.retry_calls and plan.reserve == plan.holdout_calls + 6
     _target, out, state, calls, record = _finished(tmp_path, make_target, write_draft, approvals)
     planned = cast(dict[str, int], record["estimate"])
     budget = cast(dict[str, int], record["budget"])

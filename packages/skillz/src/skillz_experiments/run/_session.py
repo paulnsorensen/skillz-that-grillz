@@ -9,10 +9,9 @@ from typing import cast, final
 
 from skillz_experiments._budget import SEARCH_ROLES, BudgetExhausted, CallTimeout
 from skillz_experiments._candidate import Candidate, candidate_files, load_frozen
-from skillz_experiments._cases import Case, CodedError, Split, digest, load_cases, mapping
-from skillz_experiments._contract import parse
+from skillz_experiments._cases import Case, CodedError, Split, mapping
 from skillz_experiments.evaluation import CheckMemo
-from skillz_experiments._records import open_record, read, write
+from skillz_experiments._records import open_record, write
 from skillz_experiments.run._wedge_targets import Rebuilder, reopen
 from skillz_experiments.gate import Statistics
 from skillz_experiments.harness import ClaudeOptions, Configuration, EnvironmentDiffers, stop_kind
@@ -20,7 +19,7 @@ from skillz_experiments.run._fault import FaultLatch
 from skillz_experiments.run._finalists import Finalists
 from skillz_experiments.run._holdout import run_gate
 from skillz_experiments.run._leaderboard import Leaderboard
-from skillz_experiments.run._open import freeze_compatibility, freeze_identities, open_budget
+from skillz_experiments.run._open import freeze_compatibility, freeze_identities, frozen_inputs, open_budget
 from skillz_experiments.run._outcomes import failed_outcome, is_failed, search_counts
 from skillz_experiments.run._record_fields import (
     PHASES, POST_GATE_PHASES, differences, field, int_field, judge_flag, number_field, phase, record_outcomes, text_field,
@@ -48,10 +47,12 @@ class Session:
         self.statistics = statistics
         if phase(self.record) not in PHASES:
             raise Stop("run-record-tampered", "the recorded phase is unknown; create a new run", {})
-        self.contract = parse(field(self.record, "contract"), text_field(self.record, "contract_source"))
-        if self.contract.identity != text_field(self.record, "contract_hash"):
-            raise ValueError("contract differs from the frozen record; create a new run")
-        imported, judged = self._import_cases()
+        self.outcomes = record_outcomes(self.record)
+        options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
+        configuration = supplied if supplied is not None else (
+            Configuration.split(adapter, model, judge_flag(self.record), options) if factory is None else None)
+        self.sizing = options if configuration is None else configuration.sizing_options()
+        self.contract, imported = frozen_inputs(self.record, out, configuration)
         self.cases = [case for case in imported if case.eligible]
         editable = field(self.record, "editable")
         if not isinstance(editable, list) or not all(isinstance(name, str) for name in cast(list[object], editable)):
@@ -59,11 +60,7 @@ class Session:
         self.seed = Candidate(candidate_files(field(self.record, "seed")), tuple(cast(list[str], editable)), self.contract,
                               frozen=self._seed_frozen())
         self.edit: Edit = cast(Edit, text_field(self.record, "edit"))
-        self.outcomes = record_outcomes(self.record)
-        options = ClaudeOptions.parse(mapping(self.record.get("claude_options", {})))
-        configuration = supplied if supplied is not None else (
-            Configuration.split(adapter, model, judge_flag(self.record), options) if factory is None else None)
-        self.sizing = options if configuration is None else configuration.sizing_options()
+        judged = any(self.contract.judged(case.kind) for case in imported)
         freeze_identities(self.record, self.seed, model, configuration, judged, self.contract)
         freeze_compatibility(self.record, self.cases, self.contract, configuration)
         self.budget = open_budget(self.record, self.cases, self.contract, self.sizing)
@@ -103,13 +100,6 @@ class Session:
     @property
     def phase(self) -> str:
         return text_field(self.record, "phase")
-
-    def _import_cases(self) -> tuple[list[Case], bool]:
-        """Load the frozen cases. Return them and whether any case needs a judge."""
-        if text_field(self.record, "dataset_hash") != digest(read(self.out / "cases.json")):
-            raise ValueError("dataset differs from the frozen record")
-        imported = load_cases(self.out / "cases.json", self.contract.grader_types())
-        return imported, any(self.contract.judged(case.kind) for case in imported)
 
     def checkpoint(self) -> None:
         with self.lock:

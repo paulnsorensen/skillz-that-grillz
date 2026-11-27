@@ -9,9 +9,11 @@ from typing import Any, cast
 
 import pytest
 
-from skillz_experiments._records import read
+from fake_provider import search_approval
+from skillz_experiments._records import read, write
 from skillz_experiments.gate import Statistics, holdout_deltas, verdict
 from skillz_experiments.run import Stop, run
+from skillz_experiments.run._holdout import arm_scores, holdout_tokens
 from test_run_search import MODEL, Search, run_search
 
 # One case drops from 1 to 0 while nine cases gain 0.5: the mean delta (0.35) exceeds 2*SE (0.30).
@@ -161,3 +163,71 @@ def test_the_holdout_gate_does_not_promote_a_winner_whose_evaluations_of_a_prote
     assert (gate["verdict"], gate["reasons"]) == ("inconclusive", [f"unscored-protected:{victim}"])
     claims = cast(dict[str, Any], result["claims"])  # pyright: ignore[reportExplicitAny]
     assert claims["improvement"]["status"] == "inconclusive" and claims["apply"] is False
+
+
+def _holdout_outcome(arm: str, case_id: str, repeat: int, score: float, tokens: int) -> dict[str, object]:
+    return {"arm": arm, "split": "holdout", "case_id": case_id, "repeat": repeat, "score": score,
+            "task_usage": {"input_tokens": tokens, "cached_input_tokens": 0, "output_tokens": 0}}
+
+
+@pytest.mark.ac("gh-651:AC-10")
+def test_the_approved_repeat_count_caps_the_baseline_scores_and_tokens_that_the_gate_reads() -> None:
+    outcomes = [_holdout_outcome("baseline", "a", 0, 1.0, 100), _holdout_outcome("baseline", "a", 1, 0.0, 300),
+                _holdout_outcome("winner", "a", 0, 0.0, 50)]
+    assert arm_scores(outcomes, "baseline") == {"a": [1.0, 0.0]}
+    assert arm_scores(outcomes, "baseline", 2) == {"a": [1.0, 0.0]}
+    assert arm_scores(outcomes, "baseline", 1) == {"a": [1.0]}
+    assert holdout_tokens(outcomes) == {"a": (200.0, 50.0)}
+    assert holdout_tokens(outcomes, 1) == {"a": (100.0, 50.0)}
+
+
+@pytest.mark.ac("gh-651:AC-12")
+def test_a_one_repeat_gate_guards_the_floor_with_the_first_baseline_repeat_and_keeps_both_in_the_record(
+        tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
+        approvals: Callable[..., tuple[str, int]]) -> None:
+    target, out = make_target(tmp_path), tmp_path / "run"
+    _ = write_draft(out, families=6)
+    approved, calls = approvals(target, out)
+    measured = Search(target)
+    state = Search(target)
+    victim = ""
+
+    def score(text: str, split: str, case_id: str) -> float | None:
+        if split != "holdout":
+            return None
+        improved = "improved" in text
+        return (1 / 3 if improved else 1.0) if case_id == victim else float(improved)
+
+    measured.case_score_of = state.case_score_of = score
+    with pytest.raises(Stop) as prepared:
+        _ = run(target, out, MODEL, repeats=1, approve_cases=approved, approve_budget=calls)
+    assert prepared.value.code == "live-required"
+    holdout = [case for case in cast(list[dict[str, str]], read(out / "cases.json")["cases"])
+               if case["split"] == "holdout"]
+    held = sorted(case["id"] for case in holdout)
+    victim = held[0]
+    family = next(case["family"] for case in holdout if case["id"] == victim)
+    _ = run(target, out, MODEL, live=True, repeats=1, approve_cases=approved, approve_budget=calls,
+            factory=measured.factory)
+    record = read(out / "run.json")
+    stored = next(item for item in cast(list[dict[str, object]], record["outcomes"])
+                  if (item.get("arm"), item.get("split"), item.get("case_id"), item.get("repeat"))
+                  == ("baseline", "holdout", victim, 1))
+    stored["score"] = 0.0
+    write(out / "run.json", record)
+    result = run(target, out, MODEL, live=True, search=True, approve_budget=search_approval(target, out, MODEL),
+                 factory=state.factory)
+    final = read(out / "run.json")
+    gate = cast(dict[str, Any], final["gate"])  # pyright: ignore[reportExplicitAny]
+    # Both baseline repeats mask the loss (mean 0.5); the first repeat alone shows a lost passed case.
+    for lost in (-1 / 6, -2 / 3):
+        deltas = {case_id: (lost if case_id == victim else 1.0) for case_id in held}
+        assert verdict(deltas).verdict == "promote", json.dumps(deltas)
+    assert gate["repeats"] == 1
+    assert (gate["verdict"], gate["reasons"]) == ("inconclusive", [f"negative-flip:{victim}"])
+    kept = [item["score"] for item in cast(list[dict[str, object]], final["outcomes"])
+            if (item.get("arm"), item.get("case_id")) == ("baseline", victim) and item.get("split") == "holdout"]
+    assert sorted(cast(list[float], kept)) == [0.0, 1.0]
+    families = cast(dict[str, Any], result["claims"])["improvement"]["families"]  # pyright: ignore[reportExplicitAny]
+    assert families[family]["mean_delta"] == pytest.approx(
+        (sum(case["family"] == family for case in holdout) - 1 - 2 / 3) / sum(case["family"] == family for case in holdout))

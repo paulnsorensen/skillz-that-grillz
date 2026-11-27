@@ -248,13 +248,13 @@ def test_the_gate_reserve_charges_the_slow_call_rate_while_the_estimate_charges_
 
 @pytest.mark.ac("gh-571-calibrate:AC-2")
 def test_a_gate_heavy_plan_reserve_is_not_cut_to_the_estimate_seconds() -> None:
-    # 3 train, 3 validation, and 30 holdout cases: the gate calls cost more at 60 seconds each than the whole plan at 30.
-    plan = plan_run(3, 3, 30, 1, 1, 20)
-    assert plan.sandbox_gate == 920 and plan.reserve == 92
-    assert plan.reserve_seconds == gate_seconds(plan.reserve) + plan.sandbox_gate == 3680
-    assert plan.reserve_seconds > plan.sized.seconds == 3500
+    # 3 train, 3 validation, and 40 holdout cases: the gate calls cost more at 60 seconds each than the whole plan at 30.
+    plan = plan_run(3, 3, 40, 1, 1, 20)
+    assert plan.sandbox_gate == 820 and plan.reserve == 82
+    assert plan.reserve_seconds == gate_seconds(plan.reserve) + plan.sandbox_gate == 3280
+    assert plan.reserve_seconds > plan.sized.seconds == 3025
     budget = approve(plan.sized, plan.sized.calls, reserve=plan.reserve, reserve_time=plan.reserve_seconds)
-    assert budget.reserve_seconds == 3680 <= budget.seconds
+    assert budget.reserve_seconds == 3280 <= budget.seconds
 
 
 @pytest.mark.ac("gh-571-calibrate:AC-2")
@@ -274,6 +274,6 @@ def test_a_plan_that_fits_leaves_the_search_its_time_after_the_slow_rate_gate_re
 
 @pytest.mark.ac("gh-571-calibrate:AC-2")
 def test_a_gate_reserve_that_leaves_no_search_time_stops_at_planning() -> None:
-    # 30 holdout cases with 100 sandbox seconds: the slow-rate reserve alone passes the 7200-second cap.
+    # 30 holdout cases with 200 sandbox seconds: the slow-rate reserve alone passes the 7200-second cap.
     with pytest.raises(Stop, match="seconds; the cap is 7200"):
-        _ = plan_run(1, 1, 30, 1, 1, 100)
+        _ = plan_run(1, 1, 30, 1, 1, 200)

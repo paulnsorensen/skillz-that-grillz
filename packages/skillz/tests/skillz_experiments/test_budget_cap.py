@@ -135,6 +135,24 @@ def test_the_approval_stop_of_a_plan_that_fits_shows_the_table_with_the_real_pla
     assert table[-1]["calls"] == cast(dict[str, object], stop.data["estimate"])["calls"]
 
 
+@pytest.mark.ac("gh-588:AC-2")
+def test_a_search_approval_takes_the_repeats_that_the_table_offers_and_freezes_them(
+        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
+    target, out, case_hash = _start(tmp_path, make_target, write_draft, large=True)
+    table = cast(list[dict[str, object]], _refused(target, out, case_hash).data["repeats_table"])
+    assert read(out / "run.json")["repeats_given"] is False and table[0]["repeats"] == 1
+    with pytest.raises(Stop) as approved:
+        _ = run(target, out, MODEL, search=True, repeats=1, approve_budget=cast(int, table[0]["calls"]))
+    assert approved.value.code == "live-required"
+    record = read(out / "run.json")
+    assert record["plan_mode"] == "search" and record["repeats"] == 1 and record["repeats_given"] is True
+    assert cast(dict[str, object], record["estimate"])["repeats"] == 1
+    assert cast(dict[str, object], cast(dict[str, object], record["compatibility"])["fields"])["repeats"] == 1
+    with pytest.raises(CodedError) as changed:
+        _ = run(target, out, MODEL, live=True, search=True, repeats=2)
+    assert changed.value.code == "run-config-differs"
+
+
 @pytest.mark.ac("gh-588:AC-3")
 def test_a_finished_run_records_its_unspent_reserve_and_the_summary_shows_it(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Callable[..., tuple[str, int]],

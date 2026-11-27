@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import cast
 
 from skillz_experiments._cases import Case, CodedError, Split
 from skillz_experiments.run._baseline_report import write_baseline_report
 from skillz_experiments.run._headroom import score_seed_slots, seed_headroom
 from skillz_experiments.run._outcomes import holdout_unscored, is_failed
 from skillz_experiments.run._reproduce import reproduction_entry
+from skillz_experiments.run._signals import warn
 from skillz_experiments.run._state import RunState
 
 _SPLITS: tuple[Split, ...] = ("train", "validation", "holdout")
@@ -58,7 +60,8 @@ def measure_baseline(state: RunState) -> dict[str, object]:
         state.checkpoint()
         raise CodedError("baseline-faulted", f"{missing} seed evaluations have no score; resume in the same run directory")
     headroom = _headroom(state, cases, measured)
-    report = write_baseline_report(state.out, state.record, cases, measured, state.seed.identity)
+    report = write_baseline_report(state.out, state.record, cases, measured, state.seed.identity, headroom)
+    warn(cast(list[str], headroom["warnings"]))
     state.record["headroom"] = headroom
     state.checkpoint()
     return report

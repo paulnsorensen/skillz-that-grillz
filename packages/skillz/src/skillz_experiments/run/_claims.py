@@ -8,6 +8,7 @@ from typing import cast
 
 from skillz_experiments._cases import Case, mapping
 from skillz_experiments.gate import holdout_deltas
+from skillz_experiments.run._holdout import within_repeats
 from skillz_experiments.run._outcomes import by_repeat_order, holdout_scores, holdout_unscored
 from skillz_experiments.run._record_fields import record_outcomes
 
@@ -72,8 +73,17 @@ def _export_claim(record: dict[str, object]) -> dict[str, object]:
 
 def _families(record: dict[str, object], arms: Mapping[str, Mapping[str, Mapping[int, float]]],
               holdout: Sequence[Case]) -> dict[str, object]:
-    """Return the holdout case count and the mean paired delta of each family. A paired delta is winner mean minus baseline mean."""
-    paired = holdout_deltas(by_repeat_order(arms["baseline"]), by_repeat_order(arms["winner"])).deltas
+    """Return the holdout case count and the mean paired delta of each family. A paired delta is winner mean minus baseline mean.
+
+    Only the repeats below the approved `repeats` count, by the rule of `within_repeats`, as in the gate.
+    """
+    approved = record.get("repeats")
+    cap = approved if type(approved) is int else None
+    capped = {arm: by_repeat_order({case_id: kept for case_id, found in scores.items()
+                                    if (kept := {repeat: score for repeat, score in found.items()
+                                                 if within_repeats(repeat, cap)})})
+              for arm, scores in arms.items()}
+    paired = holdout_deltas(capped["baseline"], capped["winner"]).deltas
     tie = record.get("winner_hash") == record.get("seed_hash")
     deltas: dict[str, list[float]] = {}
     counts: dict[str, int] = {}

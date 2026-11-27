@@ -169,15 +169,10 @@ def test_a_run_with_min_token_saving_records_saturated_scores_and_does_not_stop(
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-5")
-def test_the_plan_charges_the_headroom_at_the_train_case_cost_on_its_own_line(
+def test_the_plan_counts_one_headroom_outcome_per_train_case_and_charges_the_search_no_headroom_calls(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
-    plan = _plan(3, 2, 6, 2, 3, headroom_costs=[2, 4, 6])
-    without = _plan(3, 2, 6, 2, 3, headroom_costs=[])
-    assert (plan.headroom_calls, plan.headroom_outcomes) == (12, 3)
-    assert plan.sized.calls == without.sized.calls + 12
-    default = _plan(3, 2, 6, 2, 3)
-    assert (default.headroom_calls, default.headroom_outcomes) == (6, 3)
-    assert default.sized.calls == without.sized.calls + 6
+    plan = _plan(3, 2, 6, 2, 3)
+    assert plan.headroom_outcomes == 3
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     baseline = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
     assert baseline["search"] == "not-run"
@@ -186,7 +181,7 @@ def test_the_plan_charges_the_headroom_at_the_train_case_cost_on_its_own_line(
     assert asked.value.code == "budget-unapproved"
     planned = cast(dict[str, Any], asked.value.data["estimate"])  # pyright: ignore[reportExplicitAny]
     train = _cases(out, "train")
-    assert planned["headroom"] == {"calls": 0, "outcomes": len(train)}
+    assert planned["headroom"] == {"outcomes": len(train)}
     estimate = cast(dict[str, int], _record(out)["estimate"])
     assert estimate["calls"] == calls and planned["reflection"]["calls"] > 0
 
@@ -322,21 +317,22 @@ def test_a_budget_stop_during_measurement_does_not_start_the_gate(
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-5")
-def test_the_sandbox_time_estimate_includes_the_headroom_evaluations() -> None:
-    plan = _plan(3, 5, 6, 2, 3, 30, headroom_costs=[2, 2, 2])
-    evaluations = plan.metric_calls + 3 + 2 * 6 * 3 + 2 * HOLDOUT_RETRIES_PER_ARM + 6
+def test_the_sandbox_time_estimate_counts_the_search_and_gate_evaluations_but_no_headroom_pass() -> None:
+    plan = _plan(3, 5, 6, 2, 3, 30)
+    gate_repeats = 2 * 3 - min(3, 2)
+    evaluations = plan.metric_calls - VALIDATION_REPEATS * 5 + 6 * (gate_repeats + 1) + 2 * HOLDOUT_RETRIES_PER_ARM
     assert plan.sandbox_total == math.ceil(evaluations * 30 / MAX_CONCURRENT_CALLS)
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-5")
-def test_a_headroom_pass_that_pushes_the_fixed_cost_over_the_call_cap_names_calls_not_seconds() -> None:
+def test_a_holdout_gate_that_pushes_the_fixed_cost_over_the_call_cap_names_calls_not_seconds() -> None:
     messages: list[str] = []
-    for train in range(1, 2 * APPROVED_CALLS):
+    for holdout in range(1, 2 * APPROVED_CALLS):
         try:
-            _ = _plan(train, 1, 6, 1, 3)
+            _ = _plan(1, 1, holdout, 1, 3)
         except Stop as stop:
             messages.append(str(stop))
-    named = [message for message in messages if "headroom pass alone need" in message]
+    named = [message for message in messages if "the holdout gate, and the replay alone need" in message]
     assert named, messages[:1]
     assert all("calls; the cap is" in message and "seconds" not in message.split("cap is")[0] for message in named)
 
@@ -344,7 +340,7 @@ def test_a_headroom_pass_that_pushes_the_fixed_cost_over_the_call_cap_names_call
 @pytest.mark.ac("gh-459:AC-1")
 def test_the_plan_stops_when_the_validation_pass_leaves_too_little_search_room() -> None:
     with pytest.raises(Stop) as stop:
-        _ = _plan(20, 26, 6, 2, 1, 0, holdout_costs=[2] * 6, headroom_costs=[2] * 20)
+        _ = _plan(20, 26, 12, 2, 1, 0, holdout_costs=[2] * 12)
     assert stop.value.code == "budget-unapproved"
     assert "26 validation cases" in str(stop.value)
     assert "--seed" in str(stop.value)
@@ -352,7 +348,7 @@ def test_the_plan_stops_when_the_validation_pass_leaves_too_little_search_room()
 
 @pytest.mark.ac("gh-459:AC-2")
 def test_the_plan_admits_a_run_with_enough_search_room_after_the_validation_pass() -> None:
-    plan = _plan(33, 5, 8, 2, 1, 0, holdout_costs=[2] * 8, headroom_costs=[2] * 33)
+    plan = _plan(33, 5, 8, 2, 1, 0, holdout_costs=[2] * 8)
     assert search_allowance(plan.metric_calls, VALIDATION_REPEATS * 5) >= MINIMUM_SEARCH_MARGIN
 
 
@@ -363,7 +359,7 @@ def test_every_admitted_plan_leaves_the_minimum_margin_at_runtime() -> None:
         for validation in (1, 6, 11, 26):
             for holdout in (2, 6, 8):
                 try:
-                    plan = _plan(train, validation, holdout, 2, 1, 0, holdout_costs=[2] * holdout, headroom_costs=[2] * train)
+                    plan = _plan(train, validation, holdout, 2, 1, 0, holdout_costs=[2] * holdout)
                 except Stop as stop:
                     assert stop.code == "budget-unapproved"
                     continue

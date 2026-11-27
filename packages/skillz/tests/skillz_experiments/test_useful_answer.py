@@ -10,14 +10,14 @@ from typing import Any, NoReturn, cast
 import pytest
 
 from skillz_experiments import _cli
-from skillz_experiments._cases import CodedError
+from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._intake import DRAFT_NAME, DraftCase
-from skillz_experiments._cases import digest
 from skillz_experiments._records import read
 from skillz_experiments._validate import validate
 from skillz_experiments._seed import fixture_misses
 from skillz_experiments.run import Stop, _session, export, run
-from skillz_experiments.run._baseline import baseline_report
+from skillz_experiments.run._baseline import REPORT_NAME, baseline_finished
+from skillz_experiments.run._baseline_report import write_baseline_report
 from skillz_experiments.run._outcomes import FIELD_LIMIT
 from skillz_experiments.run._plan import VALIDATION_REPEATS
 
@@ -100,6 +100,11 @@ def test_a_too_easy_stop_reports_the_failing_baseline_criteria_spent_calls_and_w
     calls_by_role = cast(dict[str, int], baseline["calls_by_role"])
     assert calls_by_role == record["calls_by_role"] and 0 < sum(calls_by_role.values()) == cast(int, record["calls"]) <= approved
     assert cast(Json, record["budget"])["maximum"] == approved and record["retries"] == 0
+    estimate = cast(Json, record["estimate"])
+    assert baseline["calls"] == record["calls"] and baseline["retries"] == 0
+    assert baseline["approved_calls"] == approved
+    assert baseline["estimate"] == {"calls": estimate["calls"], "seconds": estimate["seconds"]}
+    assert baseline == read(out / "report.json")
 
 
 @pytest.mark.ac("autoimprove-useful-answer:AC-3")
@@ -143,39 +148,35 @@ def test_a_search_request_with_an_unreadable_case_file_returns_the_persisted_bas
 
 
 @pytest.mark.ac("autoimprove-useful-answer:AC-2")
-def test_the_baseline_keeps_one_seed_outcome_per_run_and_lists_only_unmet_criteria(tmp_path: Path) -> None:
-    """A resume replaces a stale failure; a met criterion and a non-seed arm stay out; a long reason is cut."""
-    document: dict[str, object] = {"schema_version": 1, "seed": 1, "approved_hash": "h", "fixtures": {},
-                "cases": [{"id": "v1", "family": "fam", "split": "validation"}, {"id": "h1", "split": "holdout"}],
-                "pending": [{"id": "p1"}]}
-    _ = (tmp_path / "cases.json").write_text(json.dumps(document), encoding="utf-8")
-    failed = {"arm": "search", "score": 0.0, "status": "evaluation-failed"}
-    verdicts = {"met": {"level": 4, "met": True, "reason": "fine"}, "miss": {"level": 2, "reason": "x" * 400}}
-    record: dict[str, object] = {
-        "dataset_hash": digest(document), "calls": 7, "retries": 1, "calls_by_role": {"task": 4, "judge": 3},
-        "seconds_by_role": {"task": 12.5, "judge": 3.25}, "budget": {"maximum": 99}, "estimate": {"calls": 99, "seconds": 900},
-        "headroom": {"ceiling": 0.9, "families": {}, "verdict": "too-easy"},
-        "outcomes": [failed | {"split": "validation", "case_id": "v1", "repeat": 0},
-                     failed | {"split": "validation", "case_id": "v1", "repeat": 1},
-                     {"arm": "search", "split": "train", "case_id": "t1", "score": 0.5, "criteria": verdicts},
-                     {"arm": "search", "split": "validation", "case_id": "v1", "repeat": 0, "score": 1.0},
-                     {"arm": "baseline", "split": "validation", "case_id": "v1", "repeat": 0, "score": 0.0}]}
-    baseline = baseline_report(record, tmp_path)
-    failing = cast(list[Json], baseline["failing"])
-    assert [(item["case_id"], item["repeat"], item["score"], item["status"], item["family"]) for item in failing] == [
-        ("v1", 1, None, "evaluation-failed", "fam"), ("t1", None, 0.5, None, None)]
-    assert failing[0]["criteria"] == {} and list(cast(Json, failing[1]["criteria"])) == ["miss"]
-    reason = cast(str, failing[1]["criteria"]["miss"]["reason"])
-    assert failing[1]["criteria"]["miss"]["level"] == 2 and len(reason) == FIELD_LIMIT and reason.endswith("[truncated]")
-    assert baseline["scored"] == {"outcomes": 3, "failed": 1, "cases": 2}
-    assert baseline["unscored"] == {"holdout_cases": 1, "pending_cases": 1}
-    assert baseline["spent"] == {"calls": 7, "retries": 1, "calls_by_role": {"task": 4, "judge": 3},
-                                 "seconds_by_role": {"task": 12.5, "judge": 3.25}}
-    assert (baseline["approved_calls"], baseline["estimate"]) == (99, {"calls": 99, "seconds": 900})
-    # A case file that differs from the frozen dataset hash, and outcomes that do not load, give unknown values.
-    changed = baseline_report(record | {"dataset_hash": "other", "outcomes": "broken"}, tmp_path)
-    assert (changed["failing"], changed["scored"]) == (None, None)
-    assert changed["unscored"] == {"holdout_cases": None, "pending_cases": None} and changed["search"] == "not-run"
+def test_the_baseline_report_lists_only_unmet_criteria_with_redacted_and_cut_reasons(tmp_path: Path) -> None:
+    """A met criterion stays out of `unmet`; a secret is redacted; a long reason is cut at `FIELD_LIMIT`."""
+    case = Case("v1", "fam", "validation", "request", {}, None, "test", True)
+    verdicts = {"met": {"level": 4, "met": True, "reason": "fine"},
+                "miss": {"level": 2, "reason": f"api_key={SECRET} " + "x" * 400}}
+    measured: dict[str, list[dict[str, object]]] = {
+        "v1": [{"score": 0.5, "criteria": verdicts}, {"score": 1.0}]}
+    headroom: dict[str, object] = {"families": {"fam": {"split": "validation", "mean": 0.75}}, "warnings": [], "unscorable": []}
+    record: dict[str, object] = {"exposed": ["v1"], "calls": 2, "retries": 0, "budget": {"maximum": 9},
+                                 "estimate": {"calls": 8, "seconds": 60}, "calls_by_role": {"task": 2},
+                                 "seconds_by_role": {}, "outcomes": []}
+    report = write_baseline_report(tmp_path, record, [case], measured, "seed", headroom)
+    unmet = cast(list[dict[str, Json]], cast(Json, report["cases"])["v1"]["unmet"])
+    assert [list(item) for item in unmet] == [["miss"], []]
+    reason = cast(str, unmet[0]["miss"]["reason"])
+    assert unmet[0]["miss"]["level"] == 2 and SECRET not in reason
+    assert len(reason) == FIELD_LIMIT and reason.endswith("[truncated]")
+    assert read(tmp_path / REPORT_NAME) == json.loads(json.dumps(report))
+    assert report["search"] == "not-run" and report["export"] == "unavailable"
+
+
+@pytest.mark.ac("gh-756:AC-7")
+def test_baseline_finished_needs_the_baseline_plan_and_a_headroom_block() -> None:
+    headroom = {"verdict": "too-easy"}
+    assert baseline_finished({"plan_mode": "baseline", "headroom": headroom})
+    assert not baseline_finished({"plan_mode": "baseline"})
+    assert not baseline_finished({"plan_mode": "search", "headroom": headroom})
+    assert not baseline_finished({"headroom": headroom})
+
 
 @pytest.mark.ac("autoimprove-useful-answer:AC-3")
 def test_a_completed_run_still_exports_its_report(

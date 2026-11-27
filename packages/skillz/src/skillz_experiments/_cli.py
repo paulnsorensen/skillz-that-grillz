@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Literal, cast
 
@@ -58,11 +58,11 @@ app = fromargs.App("skillz-experiment", help="Local, bounded skill experiments. 
 
 
 def _completed(out: Path, search: bool) -> bool:
-    try:
-        record = read(out / "run.json")
-    except (OSError, ValueError):
-        return False
-    return record.get("phase") == "complete" or (not search and record.get("plan_mode") == "baseline" and "headroom" in record)
+    from skillz_experiments.run import summary
+    with suppress(OSError, ValueError):
+        report = summary(read(out / "run.json"))
+        return report["phase"] == "complete" or (not search and report["baseline_finished"] is True)
+    return False
 
 
 def _run_harness(model: str, target: Path, harness: RunHarness | None, harness_config: Path | None,

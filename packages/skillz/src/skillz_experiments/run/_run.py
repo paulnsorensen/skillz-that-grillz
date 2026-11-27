@@ -40,13 +40,13 @@ from skillz_experiments.harness import (
     host_report,
     refuses_claude_options,
 )
-from skillz_experiments.run._baseline import REPORT_NAME
+from skillz_experiments.run._baseline import REPORT_NAME, baseline_finished
 from skillz_experiments.run._baseline_pass import measure_baseline
 from skillz_experiments.run._continuation import approve_search, close_provider
 from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
 from skillz_experiments.run._edit_plan import plan_edit, seed_or_prose
-from skillz_experiments.run._plan import plan_estimate, scored_kinds
+from skillz_experiments.run._plan import plan_estimate, preflight_calls, scored_kinds
 from skillz_experiments.run._sizing import baseline_plan, budget_data, raised_cap
 from skillz_experiments.run._resume import (
     check_resume,
@@ -56,7 +56,6 @@ from skillz_experiments.run._resume import (
     open_lock,
     refuse_nono,
     refuse_terminated,
-    refuse_too_easy,
     require_private,
     statistics_flag,
     resolve_statistics,
@@ -142,7 +141,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     scored = [case for case in cases if case.scored]
     sizing = options if configuration is None else configuration.sizing_options()
     cap = raised_cap(approve_budget if approve_cases == expected else None, scored)
-    plan = baseline_plan(contract, scored, sizing, cap)
+    plan = baseline_plan(contract, scored, sizing, cap, preflight_calls(configuration.identity() if configuration else None))
     shown = plan_estimate(plan, 2, sum(case.split == "holdout" for case in scored))
     details: dict[str, object] = {"estimate": shown, "statistics": resolved.data(),
                                   **({} if configuration is not None else {"claude_options": options.data()})}
@@ -335,24 +334,22 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                        {"next": "wait for the other run to finish, then call run again"}) from None
         if (path := out / "run.json").exists():
             record = open_record(path)
-            complete, baseline = record.get("phase") == "complete", record.get("plan_mode") == "baseline"
+            complete, finished = record.get("phase") == "complete", baseline_finished(record)
             if not complete:
                 refuse_nono(record)
             check_engine(record)
             refuse_terminated(record)
-            if complete or (baseline and "headroom" in record and not search):
+            if complete or (finished and not search):
                 check_val_policy(record, val_policy)
                 if statistics_given:
                     check_statistics(statistics_given, frozen_statistics(record))
-                return read(out / REPORT_NAME) if baseline else summary(record, out)
-            if not baseline:
-                refuse_too_easy(record, out)
+                return read(out / REPORT_NAME) if finished else summary(record, out)
             frozen = frozen_statistics(record)
             check_statistics(statistics_given, frozen)
             check_resume(record, target, edit, repeats, seed, model, adapter, given, configuration is not None,
                          judge_model, history, val_policy)
-            if baseline and "headroom" in record:
-                approve_search(record, out, approve_budget, configuration)
+            if finished:
+                approve_search(record, out, approve_budget, configuration, repeats)
         else:
             frozen = _prepare(target, out, model, adapter, edit, repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,

@@ -102,19 +102,20 @@ def test_the_budget_estimate_pins_calls_metric_holdout_replay_and_reserve_at_two
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
     # Each of the 9 validation journeys runs `VALIDATION_REPEATS` times per search candidate (gh-500).
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (994, 73, 210, 48, 258)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.reserve) == (894, 96, 114, 48, 162)
     assert plan.reserve == plan.holdout_calls + plan.replay_calls
-    # The seconds are 994 calls at 30 seconds over 2 concurrent calls, plus the sandbox time.
-    assert plan.sized.seconds == math.ceil(994 * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS) + plan.sandbox_total == 16020
-    # The call cap binds: one more metric call (9 model calls) does not fit, and room for it grows the search.
+    # The seconds are 894 calls at 30 seconds over 2 concurrent calls, plus the sandbox time.
+    assert plan.sized.seconds == math.ceil(894 * ESTIMATE_SECONDS_PER_CALL / MAX_CONCURRENT_CALLS) + plan.sandbox_total == 14390
+    # The measured plan sizes the search from the cases and fits the cap with room to spare.
+    assert plan.sized.calls <= JOURNEY_CALLS and plan.sized.seconds <= JOURNEY_SECONDS
+    # A call ceiling below the estimate by one metric call (9 model calls) shrinks the search.
     per_evaluation = 9
-    assert plan.sized.calls + per_evaluation > JOURNEY_CALLS
 
-    def one_more_metric_call(_journey: bool, _cap: int = 0) -> tuple[int, int]:
-        return plan.sized.calls + per_evaluation, JOURNEY_SECONDS
+    def one_metric_call_less(_journey: bool, _cap: int = 0) -> tuple[int, int]:
+        return plan.sized.calls - per_evaluation, JOURNEY_SECONDS
 
-    monkeypatch.setattr("skillz_experiments.run._plan.ceilings", one_more_metric_call)
-    assert size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions()).metric_calls > plan.metric_calls
+    monkeypatch.setattr("skillz_experiments.run._plan.ceilings", one_metric_call_less)
+    assert size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions()).metric_calls < plan.metric_calls
 
 
 PROPOSALS = 8
@@ -528,7 +529,7 @@ def test_the_split_and_the_plan_do_not_depend_on_the_order_of_the_draft_cases(tm
     assert {case.identifier: case.split for case in cases} == base
     freeze(tmp_path / "cases.json", cases, SEED, case_hash(cases, SEED))
     plan = size_plan(rules, load_cases(tmp_path / "cases.json", rules.grader_types()), 2, ClaudeOptions())
-    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (994, 73, 210, 48, 16020)
+    assert (plan.sized.calls, plan.metric_calls, plan.holdout_calls, plan.replay_calls, plan.sized.seconds) == (894, 96, 114, 48, 14390)
 
 
 def ask_harness_cases(tmp_path: Path) -> list[dict[str, object]]:
