@@ -13,7 +13,7 @@ import pytest
 from skillz_experiments._budget import APPROVED_CALLS, JOURNEY_SECONDS
 from skillz_experiments._records import read
 from skillz_experiments.run import run
-from test_budget_cap import Drafter, Maker, _refused, _start  # pyright: ignore[reportPrivateUsage]
+from _budget_cap_runs import Drafter, Maker, refused, start
 from test_run_search import MODEL, Search
 
 pytestmark = pytest.mark.usefixtures("host_login", "cheap_record_writes")
@@ -23,8 +23,8 @@ pytestmark = pytest.mark.usefixtures("host_login", "cheap_record_writes")
 def test_approve_budget_above_the_standard_cap_sizes_the_run_against_it(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, headroom_off: None) -> None:
     del headroom_off
-    target, out, case_hash = _start(tmp_path, make_target, write_draft, large=True)
-    smallest = cast(int, _refused(target, out, case_hash, repeats=3).data["smallest_approval"])
+    target, out, case_hash = start(tmp_path, make_target, write_draft, large=True)
+    smallest = cast(int, refused(target, out, case_hash, repeats=3).data["smallest_approval"])
     state = Search(target)
     result = run(target, out, MODEL, live=True, search=True, approve_budget=smallest, factory=state.factory)
     assert result["phase"] == "complete"

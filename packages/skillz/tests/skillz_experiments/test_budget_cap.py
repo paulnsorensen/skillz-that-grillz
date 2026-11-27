@@ -1,7 +1,9 @@
-"""`--approve-budget` raises a task run's call cap, the stop shows a repeats table, and a run records its unspent reserve (gh-588)."""
+"""`--approve-budget` raises a task run's call cap, and a run records its unspent reserve (gh-588).
+
+The repeats-table tests are in `test_budget_cap_repeats.py`.
+"""
 from __future__ import annotations
 
-import json
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,6 +11,7 @@ from typing import cast
 
 import pytest
 
+from _budget_cap_runs import Drafter, Maker, refused, start
 from skillz_experiments._budget import (
     APPROVED_CALLS,
     APPROVED_SECONDS,
@@ -19,7 +22,6 @@ from skillz_experiments._budget import (
     ceilings,
 )
 from skillz_experiments._cases import Case, CodedError
-from skillz_experiments._intake import load_draft, split_cases
 from skillz_experiments._records import read
 from skillz_experiments.run import Stop, export, run, summary
 from skillz_experiments.run._edit_plan import reflection_time
@@ -30,58 +32,19 @@ from test_run_search import MODEL, Search, run_search
 
 pytestmark = pytest.mark.usefixtures("host_login", "cheap_record_writes")
 
-Maker = Callable[..., Path]
-Drafter = Callable[..., list[str]]
-def _receipt(target: Path, out: Path) -> Stop:
-    with pytest.raises(Stop) as cases:
-        _ = run(target, out, MODEL)
-    assert cases.value.code == "cases-unapproved"
-    return cases.value
-
-
-def _start(tmp_path: Path, make_target: Maker, write_draft: Drafter, *, large: bool = False) -> tuple[Path, Path, str]:
-    target, out = make_target(tmp_path), tmp_path / "run"
-    _ = write_draft(out)
-    receipt = _receipt(target, out)
-    if large:
-        draft = out / "cases.draft.json"
-        split = split_cases(load_draft(draft), cast(int, receipt.data["seed"]))
-        family = next(case.family for case in split if case.split == "holdout")
-        rows = cast(list[dict[str, object]], json.loads(draft.read_text()))
-        example = next(row for row in rows if row["family"] == family)
-        rows.extend(example | {"id": f"large-{i}", "request": f"request-large-{i}-end"} for i in range(40))
-        _ = draft.write_text(json.dumps(rows))
-        receipt = _receipt(target, out)
-    return target, out, cast(str, receipt.data["case_hash"])
-
-
-def _refused(target: Path, out: Path, case_hash: str, repeats: int | None = None, approve_budget: int | None = None) -> Stop:
-    if not (out / "run.json").exists():
-        with pytest.raises(Stop) as baseline_budget:
-            _ = run(target, out, MODEL, approve_cases=case_hash, repeats=repeats)
-        assert baseline_budget.value.code == "budget-unapproved"
-        calls = cast(dict[str, int], baseline_budget.value.data["estimate"])["calls"]
-        baseline = run(target, out, MODEL, live=True, approve_cases=case_hash, repeats=repeats,
-                       approve_budget=calls, factory=Search(target).factory)
-        assert baseline["search"] == "not-run"
-    with pytest.raises(Stop) as refused:
-        _ = run(target, out, MODEL, search=True, approve_budget=approve_budget)
-    assert refused.value.code == "budget-unapproved"
-    return refused.value
-
 
 @pytest.mark.ac("gh-588:AC-4")
 def test_a_plan_over_the_standard_cap_names_the_smallest_approval_that_fits(
         tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
-    target, out, case_hash = _start(tmp_path, make_target, write_draft, large=True)
-    stop = _refused(target, out, case_hash, repeats=3)
+    target, out, case_hash = start(tmp_path, make_target, write_draft, large=True)
+    stop = refused(target, out, case_hash, repeats=3)
     smallest = cast(int, stop.data["smallest_approval"])
     assert APPROVED_CALLS < smallest <= JOURNEY_CALLS
     assert f"--approve-budget {smallest} is the smallest approved number that fits" in str(stop)
     estimate = cast(dict[str, object], stop.data["estimate"])
     assert APPROVED_CALLS < cast(int, estimate["calls"]) <= smallest and estimate["repeats"] == 3
     assert set(estimate) >= {"seconds", "search_calls", "holdout_cases", "reflection"}
-    below = _refused(target, out, case_hash, repeats=3, approve_budget=smallest - 1)
+    below = refused(target, out, case_hash, repeats=3, approve_budget=smallest - 1)
     assert below.data["smallest_approval"] == smallest
     assert "statistics" in stop.data and "statistics" in below.data
 
@@ -89,10 +52,10 @@ def test_a_plan_over_the_standard_cap_names_the_smallest_approval_that_fits(
 @pytest.mark.ac("gh-588:AC-1")
 def test_approve_budget_above_the_ceiling_on_a_task_run_is_refused(
         tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
-    target, out, case_hash = _start(tmp_path, make_target, write_draft)
-    with pytest.raises(CodedError) as refused:
+    target, out, case_hash = start(tmp_path, make_target, write_draft)
+    with pytest.raises(CodedError) as refused_cap:
         _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=JOURNEY_CALLS + 1)
-    assert refused.value.code == "budget-cap-exceeded"
+    assert refused_cap.value.code == "budget-cap-exceeded"
 
 
 @pytest.mark.ac("gh-588:AC-1")
@@ -106,52 +69,6 @@ def test_the_raised_cap_scales_the_seconds_and_a_journey_run_keeps_its_ceiling()
     task, journey = (cast(Case, cast(object, SimpleNamespace(journey=value))) for value in (None, object()))
     assert raised_cap(300, [task]) == 300 and raised_cap(APPROVED_CALLS, [task]) == 0 and raised_cap(None, [task]) == 0
     assert raised_cap(JOURNEY_CALLS + 1, [journey]) == 0 and raised_cap(300, [journey]) == 0
-
-
-@pytest.mark.ac("gh-588:AC-2")
-def test_the_unapproved_stop_shows_the_repeats_table_unless_repeats_is_given(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
-    target, out, case_hash = _start(tmp_path, make_target, write_draft, large=True)
-    stop = _refused(target, out, case_hash)
-    table = cast(list[dict[str, object]], stop.data["repeats_table"])
-    assert [row["repeats"] for row in table] == [1, 2, 3]
-    assert [row["fits"] for row in table] == [True, True, False]
-    first, second, third = table
-    assert cast(int, first["calls"]) <= APPROVED_CALLS and cast(int, second["calls"]) <= APPROVED_CALLS
-    assert set(first) >= {"holdout_calls", "search_calls", "calls", "seconds"}
-    assert "does not fit" in str(stop) and cast(str, third["stop"]) in str(stop)
-    assert "repeats table: repeats 1:" in str(stop)
-    explicit = _start(tmp_path / "explicit", make_target, write_draft, large=True)
-    assert "repeats_table" not in _refused(*explicit, repeats=3).data
-
-
-@pytest.mark.ac("gh-588:AC-2")
-def test_the_approval_stop_of_a_plan_that_fits_shows_the_table_with_the_real_plans(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
-    target, out, case_hash = _start(tmp_path, make_target, write_draft)
-    stop = _refused(target, out, case_hash)
-    table = cast(list[dict[str, object]], stop.data["repeats_table"])
-    assert [row["fits"] for row in table] == [True, True, True]
-    assert table[-1]["calls"] == cast(dict[str, object], stop.data["estimate"])["calls"]
-
-
-@pytest.mark.ac("gh-588:AC-2")
-def test_a_search_approval_takes_the_repeats_that_the_table_offers_and_freezes_them(
-        tmp_path: Path, make_target: Maker, write_draft: Drafter) -> None:
-    target, out, case_hash = _start(tmp_path, make_target, write_draft, large=True)
-    table = cast(list[dict[str, object]], _refused(target, out, case_hash).data["repeats_table"])
-    assert read(out / "run.json")["repeats_given"] is False and table[0]["repeats"] == 1
-    with pytest.raises(Stop) as approved:
-        _ = run(target, out, MODEL, search=True, repeats=1, approve_budget=cast(int, table[0]["calls"]))
-    assert approved.value.code == "live-required"
-    record = read(out / "run.json")
-    assert record["plan_mode"] == "search" and record["repeats"] == 1 and record["repeats_given"] is True
-    assert cast(dict[str, object], record["estimate"])["repeats"] == 1
-    assert cast(dict[str, object], cast(dict[str, object], record["compatibility"])["fields"])["repeats"] == 1
-    with pytest.raises(CodedError) as changed:
-        _ = run(target, out, MODEL, live=True, search=True, repeats=2)
-    assert changed.value.code == "run-config-differs"
-
 
 @pytest.mark.ac("gh-588:AC-3")
 def test_a_finished_run_records_its_unspent_reserve_and_the_summary_shows_it(
