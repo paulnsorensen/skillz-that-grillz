@@ -161,7 +161,7 @@ max_seconds = 20
 "tests/skillz_experiments/e2e/test_gemini_wrapper.py" = { max_seconds = 724, reason = "Slowest of CI runs 41417007579 and 41419094652: 289.2 s, before the prune PR." }
 "tests/skillz_experiments/e2e/test_generated_target.py" = { max_seconds = 607, reason = "Slowest of CI runs 41417007579 and 41419094652: 242.4 s, before the prune PR." }
 "tests/skillz_experiments/e2e/test_journeys.py" = { max_seconds = 560, reason = "Slowest of CI runs 41417007579 and 41419094652: 223.7 s, before the prune PR." }
-"tests/skillz_experiments/e2e/test_lifecycle.py" = { max_seconds = 120, reason = "Slowest of CI runs 41417007579 and 41419094652: 47.9 s, before the prune PR." }
+"tests/skillz_experiments/e2e/test_lifecycle.py" = { max_seconds = 302, reason = "CI run 46058838058 (PR #758): 120.42 s for the two killed-CLI params after gh-756 added a baseline pass. Approved by the owner on 2026-11-27." }
 "tests/skillz_experiments/e2e/test_rrsi.py" = { max_seconds = 465, reason = "Slowest of CI runs 41417007579 and 41419094652: 185.6 s, before the prune PR." }
 "tests/skillz_experiments/e2e/test_verdicts.py" = { max_seconds = 1246, reason = "Slowest of CI runs 41417007579 and 41419094652: 498.1 s, before the prune PR." }
 "tests/skillz_experiments/e2e/test_wedge.py" = { max_seconds = 491, reason = "Slowest of CI runs 41417007579 and 41419094652: 196.2 s, before the prune PR." }
