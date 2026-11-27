@@ -8,8 +8,8 @@ dependencies = ["fromargs>=0.2.0,<0.3"]
 dev = [
     "basedpyright==1.40.2",
     "coverage==7.17.3",
-    "diff-cover==11.0.1",
-    "hypothesis>=6.170.15",
+    "diff-cover==11.0.4",
+    "hypothesis>=6.170.16",
     "jsonschema>=4.26.0",
     "pytest>=9.2.0",
     "pyyaml==6.0.3",
