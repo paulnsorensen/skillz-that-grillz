@@ -36,7 +36,7 @@ from skillz_experiments.run._reflections import ReflectionLog
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import RunState
 from skillz_experiments.search import Edit
-from fake_provider import PASSED, FakeRunProvider, ProviderCrash
+from fake_provider import PASSED, FakeRunProvider, ProviderCrash, search_approval
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -117,10 +117,9 @@ class Provider(FakeRunProvider):
     @override
     def preflight(self, recorded: dict[str, object] | None = None) -> dict[str, object]:
         """Claim the live calls once. A resume reuses the recorded pass, as the real harness does."""
-        del recorded
         if self.state.preflight_error is not None:
             raise self.state.preflight_error
-        if self.budget.calls == 0:
+        if recorded is None and self.budget.calls == 0:
             for _ in range(PREFLIGHT_CALLS):
                 self.budget.claim()
         return {"isolation": "test-provider"}
@@ -241,14 +240,51 @@ def _start(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callab
     return target, out, Search(target, noise), case_hash, calls
 
 
+def _measure_for_search(target: Path, out: Path, state: Search, case_hash: str, baseline_calls: int, *,
+                        statistics: Mapping[str, float] | None = None, history: bool | None = None,
+                        val_policy: str | None = None) -> None:
+    """Measure with the same scoring rules but without the search-phase faults."""
+    baseline = Search(target, state.noise)
+    baseline.score_of = state.score_of
+    baseline.case_score_of = state.case_score_of
+    baseline.extra = state.extra
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=baseline_calls,
+                 factory=baseline.factory, statistics=statistics, history=history, val_policy=val_policy)
+    assert result["search"] == "not-run" and read(out / "run.json")["plan_mode"] == "baseline"
+
+
+def run_search(target: Path, out: Path, state: Search, case_hash: str, baseline_calls: int, *,
+               statistics: Mapping[str, float] | None = None, history: bool | None = None,
+               ports: Ports | None = None, val_policy: str | None = None,
+               factory: Callable[[str, Budget, Callable[[], None]], Provider] | None = None) -> dict[str, object]:
+    record = out / "run.json"
+    if not record.exists() or "headroom" not in read(record):
+        _measure_for_search(target, out, state, case_hash, baseline_calls, statistics=statistics, history=history,
+                            val_policy=val_policy)
+    return run(target, out, MODEL, live=True, search=True, approve_budget=search_approval(target, out, MODEL),
+               factory=factory or state.factory, ports=ports)
+
+
+def _within_approval(out: Path, baseline_calls: int) -> bool:
+    record = read(out / "run.json")
+    budget = cast(dict[str, int], record["budget"])
+    return 0 < budget["prior_calls"] <= baseline_calls and (
+        0 < cast(int, record["calls"]) - budget["prior_calls"] <= budget["maximum"])
+
+
+def _new_search_pairs(out: Path) -> Counter[tuple[str, str, str]]:
+    record = read(out / "run.json")
+    return Counter(pair for pair in _search_pairs(record) if pair[0] != record["seed_hash"])
+
+
 @pytest.mark.parametrize("noise", range(5))
 def test_a_run_at_the_planned_budget_never_ends_budget_exhausted_seed_retained(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], noise: int) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, noise)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
-    assert result["phase"] == "complete" and cast(int, read(out / "run.json")["calls"]) <= calls
+    assert result["phase"] == "complete" and _within_approval(out, calls)
     # The summary joins the fault accounting and the three claims.
     assert {"retries", "calls_by_role", "seconds_by_role", "claims", "replay"} <= set(result)
     assert {"scored", "failed", "failed_by_reason"} <= set(cast(dict[str, object], result["search"]))
@@ -258,8 +294,9 @@ def test_a_mid_search_exhaustion_keeps_the_best_validated_candidate(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    _measure_for_search(target, out, state, case_hash, calls)
     state.exhaust_after_improved = _validation_runs(out)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     assert _core(result) == {
         "reason": "budget-exhausted-best-validated", "retained_seed": False, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "improved" in cast(dict[str, str], read(out / "run.json")["winner"])["SKILL.md"]
@@ -307,7 +344,7 @@ def test_each_reflection_prompt_states_a_shrinking_budget_and_its_progress_and_a
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     heads = [prompt.split("\n", 1)[0] for prompt in state.prompts]
     allowance = _allowance(out)
     assert len(heads) == state.proposals >= 3
@@ -325,7 +362,7 @@ def test_the_last_proposal_of_a_normal_run_states_the_last_proposal_sentence_and
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     # Each proposal beats the one before it, so the stall stop never ends the run before the search share does.
     state.score_of = lambda text, _split: min(0.9, 0.3 + 0.01 * int(text.split()[1])) if text.startswith("improved") else None
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     assert _budgets(state.prompts)[-1] == 1
     assert LAST_PROPOSAL in state.prompts[-1].split("\n", 1)[0]
     assert LAST_PROPOSAL not in state.prompts[0].split("\n", 1)[0]
@@ -338,7 +375,7 @@ def test_only_a_proposal_with_more_edits_than_the_budget_is_counted(
         approvals: Callable[..., tuple[str, int]], offset: int, counted: bool) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.edit_offset = offset
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     over = cast(int, cast(dict[str, object], result["search"])["proposal_over_budget"])
     assert state.improved_calls > 0 and state.proposals >= 3
     assert over == (state.proposals if counted else 0)
@@ -352,9 +389,10 @@ def test_the_over_budget_count_survives_a_resume(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.edit_offset = 1
+    _measure_for_search(target, out, state, case_hash, calls)
     state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     before = state.proposals
     outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
     assert before > 0 and sum(item.get("over_budget") is True for item in outcomes) == before
@@ -377,9 +415,9 @@ def test_one_failed_evaluation_scores_zero_and_does_not_abort_the_search(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    fault_at = _seed_pass(out) + 3
+    fault_at = 3
     state.evaluate_fault = lambda number: RuntimeError("provider fell over") if number == fault_at else None
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     assert result["phase"] == "complete"
     assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
     outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
@@ -399,11 +437,11 @@ def test_a_resumed_search_spends_at_most_the_remaining_share(
 
     monkeypatch.setattr(_session, "pareto_search", spy)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    fault_at = _seed_pass(out) + 3
+    fault_at = 3
     state.evaluate_fault = lambda number: (
         EnvironmentDiffers("runtime environment differs from the frozen record") if number == fault_at else None)
     with pytest.raises(EnvironmentDiffers):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     assert record["phase"] == "prepared"
     spent = sum(item.get("arm") == "search" and item.get("split") in ("train", "validation")
@@ -430,11 +468,11 @@ def _interrupt(tmp_path: Path, make_target: Callable[..., Path], write_draft: Ca
     Return the target, the run directory, the provider state, and the planned search evaluations: the metric calls and the headroom outcomes.
     """
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    fault_at = _seed_pass(out) + 3
+    fault_at = 3
     state.evaluate_fault = lambda number: (
         EnvironmentDiffers("runtime environment differs from the frozen record") if number == fault_at else None)
     with pytest.raises(EnvironmentDiffers):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     estimate = cast(dict[str, object], read(out / "run.json")["estimate"])
     return target, out, state, cast(int, estimate["metric_calls"]) + _headroom(out)
 
@@ -492,9 +530,10 @@ def test_a_run_without_an_interrupt_calls_the_model_once_for_each_recorded_searc
 
     monkeypatch.setattr(_session, "pareto_search", spy)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     assert grants == [_allowance(out)]
-    assert Counter(state.search_log) == Counter(_search_pairs(read(out / "run.json")))
+    assert Counter(state.search_log) == _new_search_pairs(out)
+    assert state.search_log
 
 
 @pytest.mark.ac("gh-500:AC-1")
@@ -503,10 +542,11 @@ def test_one_search_scores_each_train_pair_once_and_each_validation_pair_once_pe
         approvals: Callable[..., tuple[str, int]]) -> None:
     """GEPA scores the parent again on each minibatch. The session serves the repeat from the recorded outcome."""
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     expected = {"train": 1, "validation": VALIDATION_REPEATS}
     assert {pair: count for pair, count in Counter(state.search_log).items() if count != expected[pair[1]]} == {}
-    assert Counter(_search_pairs(read(out / "run.json"))) == Counter(state.search_log)
+    assert _new_search_pairs(out) == Counter(state.search_log)
+    assert state.search_log
     outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
     repeats: dict[tuple[str, str], list[object]] = {}
     for item in outcomes:
@@ -562,9 +602,10 @@ def test_a_resume_after_a_validated_proposal_calls_no_validation_pair_that_the_r
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    _measure_for_search(target, out, state, case_hash, calls)
     state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     recorded = _search_pairs(read(out / "run.json"))
     validated = {pair for pair in recorded if pair[1] == "validation"}
     assert len({identity for identity, _, _ in validated}) >= 2
@@ -579,9 +620,10 @@ def test_a_resume_with_recorded_outcomes_that_the_search_never_asks_for_again_ma
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    _measure_for_search(target, out, state, case_hash, calls)
     state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     planned = cast(int, cast(dict[str, object], record["estimate"])["metric_calls"]) + _headroom(out)
     # A live model proposes new candidates on resume, so the outcomes of an old candidate are never asked for again.
@@ -606,7 +648,7 @@ def test_a_resumed_identical_proposal_keeps_the_gain_of_the_candidate_that_the_i
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.abort_after_improved = 1
     with pytest.raises(CodedError, match="the process stopped"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     state.fixed_number = 1
     _ = run(target, out, MODEL, live=True, factory=state.factory)
     record = read(out / "run.json")
@@ -620,10 +662,11 @@ def test_a_resume_with_a_spent_search_share_keeps_the_candidate_validated_before
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    _measure_for_search(target, out, state, case_hash, calls)
     validation = _validation(out)
     state.abort_after_improved = VALIDATION_REPEATS * len(validation)
     with pytest.raises(CodedError, match="the process stopped"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     spent = sum(item.get("arm") == "search" and item.get("split") in ("train", "validation") for item in outcomes)
@@ -639,9 +682,10 @@ def test_a_resume_with_a_real_allowance_keeps_the_pre_abort_candidate_over_worse
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    _measure_for_search(target, out, state, case_hash, calls)
     state.abort_after_improved = _validation_runs(out)
     with pytest.raises(CodedError, match="the process stopped"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     state.score_of = lambda text, _split: 0.0 if "improved" in text and "improved 1 " not in text else None
     proposals_before = state.proposals
     result = run(target, out, MODEL, live=True, factory=state.factory)
@@ -656,7 +700,7 @@ def test_a_validated_candidate_below_the_seed_leaves_the_seed_as_the_winner(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.score_of = lambda text, split: (0.1 if split == "validation" else 0.9) if "improved" in text else 0.5
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     # The seed stays the incumbent: each comparison rejects the challenger, so no `best_validated` is written.
     comparisons = cast(list[dict[str, object]], cast(dict[str, object], record["search"])["comparisons"])
@@ -670,7 +714,7 @@ def test_a_validated_candidate_that_ties_the_seed_leaves_the_seed_as_the_winner(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.score_of = lambda text, split: (0.5 if split == "validation" else 0.9) if "improved" in text else 0.5
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     # A tie is inside the 2-SE band, so the seed stays the incumbent.
     comparisons = cast(list[dict[str, object]], cast(dict[str, object], record["search"])["comparisons"])
@@ -690,7 +734,7 @@ def test_an_earlier_validated_candidate_stays_best_over_a_later_worse_one(
         return (0.6 if split == "validation" else 1.0) if "improved" in text else None
 
     state.score_of = table
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     validated = {item["search_candidate"] for item in outcomes if item.get("split") == "validation" and "search_candidate" in item}
@@ -707,7 +751,7 @@ def test_a_coded_reflection_failure_stops_the_search_instead_of_skipping_the_pro
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda number: CodedError(code, "a guard fired") if number == 1 else None
     with pytest.raises(CodedError) as caught:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert caught.value.code == code
     record = read(out / "run.json")
     assert record["phase"] == "prepared" and record["failure"] == "a guard fired"
@@ -726,7 +770,7 @@ def test_a_lasting_reflection_fault_on_the_last_iteration_still_stops_the_run(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda _number: CodedError("isolation-failed", "a guard fired")
     with pytest.raises(CodedError) as caught:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert caught.value.code == "isolation-failed" and state.invokes >= 1
     record = read(out / "run.json")
     assert record["phase"] == "prepared" and record["failure"] == "a guard fired"
@@ -751,7 +795,7 @@ def test_a_gate_fault_with_a_slow_head_task_starts_no_further_holdout_call(
     state.holdout_head_delay = 0.5
     state.holdout_fault = lambda number: CodedError("isolation-failed", "a guard fired") if number == 2 else None
     with pytest.raises(CodedError) as caught:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert caught.value.code == "isolation-failed"
     assert read(out / "run.json")["phase"] == "searched"
     assert state.holdout_calls == 2
@@ -762,7 +806,7 @@ def test_a_transient_reflection_failure_skips_one_proposal_and_the_search_finish
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda number: RuntimeError("reflection fell over") if number == 1 else None
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     assert result["phase"] == "complete" and state.invokes > 1
 
 
@@ -771,7 +815,7 @@ def test_the_run_record_stays_small_across_many_proposals(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.padding = 20_000
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     kept = cast(dict[str, object], record["best_validated"])
     assert "candidates" not in record and set(kept) == {"identity", "mean", "files", "comparison"}
@@ -788,10 +832,10 @@ def test_a_failed_holdout_call_resumes_and_finishes_within_the_approved_budget(
     state.fail_holdout = 1
     state.drain_search = True
     with pytest.raises(ProviderCrash, match="fell over"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert read(out / "run.json")["phase"] == "searched"
     result = run(target, out, MODEL, live=True, factory=state.factory)
-    assert result["phase"] == "complete" and cast(int, read(out / "run.json")["calls"]) <= calls
+    assert result["phase"] == "complete" and _within_approval(out, calls)
     assert cast(dict[str, object], result["estimate"])["holdout_retry_calls"] == 2 * state.contract.calls("echo")
 
 
@@ -801,7 +845,7 @@ def test_a_gate_that_cannot_finish_stops_with_gate_budget_exhausted(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.fail_holdout = 10_000
     with pytest.raises(ProviderCrash):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     stop: Stop | None = None
     for _attempt in range(100):
         try:
@@ -813,17 +857,17 @@ def test_a_gate_that_cannot_finish_stops_with_gate_budget_exhausted(
             continue
     assert stop is not None
     assert stop.code == "gate-budget-exhausted" and "new run" in str(stop.data["next"])
-    assert cast(int, read(out / "run.json")["calls"]) <= calls
+    assert _within_approval(out, calls)
 
 
 def test_a_different_coded_error_aborts_the_search_instead_of_scoring_zero(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    fault_at = _seed_pass(out) + 3
+    fault_at = 3
     state.evaluate_fault = lambda number: CodedError("other-code", "a coded stop") if number == fault_at else None
     with pytest.raises(CodedError) as caught:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert caught.value.code == "other-code"
     record = read(out / "run.json")
     outcomes = cast(list[dict[str, object]], record["outcomes"])
@@ -837,7 +881,7 @@ def test_an_isolation_or_identity_failure_aborts_the_search_instead_of_scoring_z
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.evaluate_fault = lambda number: CodedError(code, "a guard fired") if number == 4 else None
     with pytest.raises(CodedError) as caught:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert caught.value.code == code
     record = read(out / "run.json")
     outcomes = cast(list[dict[str, object]], record["outcomes"])
@@ -860,7 +904,7 @@ def test_a_search_where_every_evaluation_fails_stops_with_search_faulted(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.evaluate_fault = lambda _number: RuntimeError("provider fell over")
     with pytest.raises(CodedError) as caught:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert caught.value.code == "search-faulted" and "resume the run in the same directory" in str(caught.value)
     assert "new run directory" not in str(caught.value)
     assert read(out / "run.json")["phase"] == "prepared"
@@ -898,7 +942,7 @@ def test_a_run_stopped_by_an_isolation_failure_refuses_to_resume_and_makes_no_li
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda _number: CodedError("isolation-failed", "a guard fired")
     with pytest.raises(CodedError) as first:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     recorded = read(out / "run.json")
     assert first.value.code == "isolation-failed" and recorded["failure_code"] == "isolation-failed"
     assert "preflight" not in recorded
@@ -915,7 +959,7 @@ def test_a_credential_change_found_when_the_provider_closes_a_complete_run_keeps
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.close_error = CodedError("credential-changed", "the login file changed")
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     warning = {"code": "credential-changed", "message": "the login file changed"}
     exported_warning = {"code": "credential-changed", "hint": "log in again before the next run"}
     recorded = read(out / "run.json")
@@ -936,7 +980,7 @@ def test_a_handled_login_change_on_close_keeps_the_result_and_asks_for_no_login(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.close_error = CodedError(code, "the login changed and the run handled it")
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     assert result["phase"] == "complete"
     assert result["close_warning"] == {"code": code, "hint": "no action needed"}
     assert "failure_code" not in read(out / "run.json")
@@ -950,8 +994,7 @@ def test_a_run_called_inside_an_except_block_does_not_mistake_the_caller_error_f
     try:
         raise KeyError("caller")
     except KeyError as caller:
-        result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                     factory=state.factory)
+        result = run_search(target, out, state, case_hash, calls)
         assert not getattr(caller, "__notes__", [])
     recorded = read(out / "run.json")
     assert result["phase"] == "complete" and recorded["close_warning"] == {"code": "credential-changed", "message": "the login file changed"}
@@ -966,7 +1009,7 @@ def test_a_credential_change_found_on_close_after_a_failure_keeps_the_failure_an
     state.fail_holdout = 1
     state.close_error = CodedError("credential-changed", "the login file changed")
     with pytest.raises(ProviderCrash) as first:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     recorded = read(out / "run.json")
     assert recorded["failure"] == str(first.value) and recorded["failure"] != "the login file changed"
     assert recorded["close_failure"] == {"code": "credential-changed", "message": "the login file changed"}
@@ -985,7 +1028,7 @@ def test_a_handled_login_change_on_close_after_a_failure_does_not_end_the_run(
     state.fail_holdout = 1
     state.close_error = CodedError(code, "the login changed and the run handled it")
     with pytest.raises(ProviderCrash):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     recorded = read(out / "run.json")
     assert recorded["close_failure"] == {"code": code, "message": "the login changed and the run handled it"}
     assert "failure_code" not in recorded
@@ -1004,7 +1047,8 @@ def test_a_failed_sandbox_preflight_leaves_the_run_fixable_and_a_later_run_goes_
     assert first.value.code == "sandbox-unavailable"
     assert "preflight" not in read(out / "run.json")
     state.preflight_error = None
-    assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
+    assert run(target, out, MODEL, live=True, factory=state.factory)["search"] == "not-run"
+    assert state.search_calls > 0
 
 
 def test_a_budget_stop_and_an_isolation_fault_in_one_batch_end_the_run_before_the_gate(
@@ -1056,7 +1100,7 @@ def test_a_late_transient_gate_failure_before_an_isolation_fault_still_records_t
     state.holdout_fault = lambda number: (RuntimeError("provider fell over") if number == 1 else
                                           CodedError("isolation-failed", "a guard fired") if number == 2 else None)
     with pytest.raises(CodedError) as caught:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert caught.value.code == "isolation-failed"
     assert read(out / "run.json")["failure_code"] == "isolation-failed"
     held = state.holdout_calls
@@ -1071,7 +1115,7 @@ def test_a_transient_gate_failure_records_no_terminal_code(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.fail_holdout = 1
     with pytest.raises(ProviderCrash):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert "failure_code" not in read(out / "run.json")
     assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
 
@@ -1082,7 +1126,7 @@ def test_a_run_stopped_by_another_coded_error_still_resumes(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 1 else None
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
 
 
@@ -1105,7 +1149,7 @@ def test_a_provider_fault_on_every_winner_repeat_of_one_holdout_case_drops_that_
         return RuntimeError("transport fell over") if improved and case == victim[0] else None
 
     state.holdout_case_fault = fault
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     gate = cast(dict[str, object], record["gate"])
     failed = _failed_holdout(record)
@@ -1136,8 +1180,7 @@ def test_a_dropped_holdout_case_below_min_coverage_makes_the_gate_low_coverage(
         return RuntimeError("transport fell over") if improved and case == victim[0] else None
 
     state.holdout_case_fault = fault
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                 factory=state.factory, statistics=flags)
+    result = run_search(target, out, state, case_hash, calls, statistics=flags)
     gate = cast(dict[str, object], read(out / "run.json")["gate"])
     assert result["phase"] == "complete" and victim
     assert victim[0] not in [case for ids in cast(dict[str, list[str]], gate["moves"]).values() for case in ids]
@@ -1151,7 +1194,7 @@ def test_a_resume_retries_a_failed_holdout_repeat_once_and_uses_the_new_score(
     state.holdout_fault = lambda number: (RuntimeError("transport fell over") if number == 1 else
                                           ProviderCrash("stop the gate") if number == 2 else None)
     with pytest.raises(ProviderCrash):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     (failed,) = _failed_holdout(read(out / "run.json"))
     state.holdout_fault = lambda _number: None
     result = run(target, out, MODEL, live=True, factory=state.factory)
@@ -1159,7 +1202,7 @@ def test_a_resume_retries_a_failed_holdout_repeat_once_and_uses_the_new_score(
     triple = (failed["arm"], failed["case_id"], failed["repeat"])
     retried = [item for item in cast(list[dict[str, object]], record["outcomes"])
                if (item.get("arm"), item.get("case_id"), item.get("repeat")) == triple]
-    assert result["phase"] == "complete" and cast(int, record["calls"]) <= calls
+    assert result["phase"] == "complete" and _within_approval(out, calls)
     assert [item.get("status") for item in retried][0] == "evaluation-failed" and len(retried) == 2
     assert retried[1].get("status") != "evaluation-failed"
     assert len(_failed_holdout(record)) == 1
@@ -1269,7 +1312,7 @@ def test_a_leaking_proposal_scores_zero_without_a_task_or_judge_call_and_is_coun
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     state.suffix = suffix
     seen = _spy_feedback(monkeypatch)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     rejections = cast(dict[str, int], cast(dict[str, object], result["search"])["leakage_rejections"])
     assert state.proposals > 0 and state.improved_calls == 0
     assert list(rejections) == [rule] and 0 < rejections[rule] <= state.proposals
@@ -1292,7 +1335,7 @@ def test_a_proposal_that_adds_a_runner_term_to_a_wedge_free_target_is_rejected(
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     state.suffix = " No buildable wedge.toml accompanies the supplied skill components."
     seen = _spy_feedback(monkeypatch)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     editable = cast(list[str], read(out / "run.json")["editable"])
     assert not any(name == "@new-cli" or name.startswith("@wedge/") for name in editable)
     rejections = cast(dict[str, int], cast(dict[str, object], result["search"])["leakage_rejections"])
@@ -1310,7 +1353,7 @@ def test_a_proposal_that_adds_harness_text_is_rejected_and_counted_under_harness
                                                        harness_phrases=("do not run git or gh",))
     state.suffix = suffix
     seen = _spy_feedback(monkeypatch)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     rejections = cast(dict[str, int], cast(dict[str, object], result["search"])["leakage_rejections"])
     assert state.proposals > 0 and state.improved_calls == 0
     assert list(rejections) == ["harness-token"] and 0 < rejections["harness-token"] <= state.proposals
@@ -1327,7 +1370,7 @@ def test_the_feedback_request_masks_harness_text_on_the_scored_and_the_rejected_
                                                        harness_phrases=("do not run git or gh",))
     state.suffix = " " + ANSWER
     seen = _spy_feedback(monkeypatch)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     rejected = [feedback for _, feedback in seen if feedback.get("reason") == "candidate-leakage-rejected"]
     scored = [feedback for _, feedback in seen if "rejected" not in feedback]
     assert rejected and scored
@@ -1343,11 +1386,11 @@ def test_a_recorded_gate_diagnostic_reaches_the_feedback_on_the_fresh_and_the_re
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.extra = {"gate_diagnostic": "assertion failed: total [redacted]"}
-    fault_at = _seed_pass(out) + 3
+    fault_at = 3
     state.evaluate_fault = lambda number: (
         EnvironmentDiffers("runtime environment differs from the frozen record") if number == fault_at else None)
     with pytest.raises(EnvironmentDiffers):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     seen = _spy_feedback(monkeypatch)
     state.search_log.clear()
     _ = run(target, out, MODEL, live=True, factory=state.factory)
@@ -1373,7 +1416,7 @@ def test_each_reflection_call_writes_a_private_redacted_record_without_holdout_t
     state.suffix = " api_key=sk-live-REFLECTSECRET"
     state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     first = _reflection_records(out)
     assert list(first) == [1]
     assert run(target, out, MODEL, live=True, factory=state.factory)["phase"] == "complete"
@@ -1440,8 +1483,7 @@ def test_the_reflection_record_is_prepared_while_another_thread_holds_the_sessio
     monkeypatch.setattr(SearchPhase, "__init__", capture)
     monkeypatch.setattr(ReflectionLog, "record", paused_record)
     monkeypatch.setattr(ReflectionLog, "record", paused_record)
-    assert run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-               factory=state.factory)["phase"] == "complete"
+    assert run_search(target, out, state, case_hash, calls)["phase"] == "complete"
     assert len(acquired) > 1 and all(acquired)
     assert len(set(ordinals)) == len(ordinals) and ordinals == sorted(ordinals)
     assert list(_reflection_records(out)) == ordinals
@@ -1460,7 +1502,7 @@ def test_a_reflection_record_write_error_still_ends_the_run_and_a_resume_never_r
     with monkeypatch.context() as patched:
         patched.setattr(ReflectionLog, "record", failing_record)
         with pytest.raises(CodedError) as caught:
-            _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+            _ = run_search(target, out, state, case_hash, calls)
     assert caught.value.code == "reflection-record-failed"
     # The outcome was checkpointed before the record, so the failed call still counts.
     outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
@@ -1473,7 +1515,7 @@ def test_a_run_record_and_export_hold_the_counts_but_no_denylist_text(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     state.suffix = " " + ANSWER
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     assert cast(dict[str, object], result["search"])["leakage_rejections"]
     text = (out / "run.json").read_text(encoding="utf-8")
     assert ANSWER not in text and SPAN not in text and "denylist" not in text
@@ -1490,7 +1532,7 @@ def test_leakage_counts_survive_a_fault_and_resume_and_the_record_holds_only_dig
     state.suffix = " " + ANSWER
     state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     stopped = read(out / "run.json")
     assert stopped["phase"] == "prepared" and "search" not in stopped
     before = cast(dict[str, list[str]], stopped["leakage_rejected"])
@@ -1513,7 +1555,7 @@ def test_a_provider_that_checkpoints_in_its_constructor_opens_the_session(
         checkpoint()
         return state.factory(model, budget, checkpoint)
 
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=factory)
+    result = run_search(target, out, state, case_hash, calls, factory=factory)
     assert result["phase"] == "complete" and read(out / "run.json")["leakage_rejected"] == {}
 
 
@@ -1545,7 +1587,7 @@ def test_a_search_that_stalls_for_eight_proposals_stops_converged_stalled_and_st
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.score_of = _stalls
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     assert state.proposals == 9 and _search_spent(out) < _allowance(out)
     assert cast(dict[str, object], result["search"])["reason"] == "converged-stalled"
     assert cast(dict[str, object], read(out / "run.json")["search"])["stop_trigger"] == "stall"
@@ -1558,7 +1600,7 @@ def test_each_reflection_prompt_states_the_stall_count_and_gives_advice_from_war
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.score_of = _stalls
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     heads = [prompt.split("\n", 1)[0] for prompt in state.prompts]
     assert _stall_counts(heads) == [0, 0, 1, 2, 3, 4, 5, 6, 7]
     assert [WARN in head for head in heads] == [False] * 4 + [True] * 2 + [False] * 3
@@ -1576,7 +1618,7 @@ def test_a_resumed_run_rebuilds_the_stall_count_from_the_record_and_stops_on_tim
     state.score_of = _stalls
     state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 6 else None
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert state.proposals == 5
     result = run(target, out, MODEL, live=True, factory=state.factory)
     # The sixth prompt failed before its answer; the resumed prompts continue its count.
@@ -1591,7 +1633,7 @@ def test_a_resume_after_the_stall_stop_skips_the_search(
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.score_of = _stalls
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     # A stop right before the `searched` checkpoint leaves the record in the `prepared` phase.
     record = read(out / "run.json")
     record["phase"] = "prepared"
@@ -1613,7 +1655,7 @@ def test_refused_proposals_count_as_no_gain_and_stop_the_search_after_eight(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.refuse = True
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     reflections = [item for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
                    if item.get("split") == "reflection"]
     assert state.proposals == len(reflections) == 8 and not any("proposed" in item for item in reflections)
@@ -1629,11 +1671,14 @@ def test_proposals_whose_evaluations_all_fail_never_stop_the_search(
     monkeypatch.setattr(_outcomes, "FAULT_MIN_FINISHED", 10**9)
     monkeypatch.setattr(_outcomes, "FAULT_STREAK", 10**9)
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    seed_calls = _seed_pass(out)
-    # The headroom pass scores the seed on the validation cases only. Its train cases fail, so the feedback stays unscored.
-    state.split_fault = lambda split: RuntimeError("provider fell over") if split != "validation" else None
-    state.evaluate_fault = lambda number: RuntimeError("provider fell over") if number > seed_calls else None
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _measure_for_search(target, out, state, case_hash, calls)
+    record = read(out / "run.json")
+    # Lose the reusable train slots before search, but keep the frozen validation scores.
+    outcomes = cast(list[dict[str, object]], record["outcomes"])
+    record["outcomes"] = [item for item in outcomes if (item.get("split"), item.get("arm")) != ("train", "search")]
+    write(out / "run.json", record)
+    state.evaluate_fault = lambda _number: RuntimeError("provider fell over")
+    result = run_search(target, out, state, case_hash, calls)
     # All feedback is unscored, so each reflection is skipped unpaid (gh-316:AC-1); no proposal runs and none counts toward a stall.
     skipped = [row for row in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if row.get("split") == "reflection"]
     assert state.proposals == 0 and state.prompts == []
@@ -1646,7 +1691,7 @@ def test_a_spent_search_share_keeps_its_reason_over_a_recorded_stall(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.score_of = _stalls
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     record["phase"] = "prepared"
     filler: dict[str, object] = {"arm": "search", "split": "train", "case_id": "filler", "score": 0.0}
@@ -1680,7 +1725,7 @@ def test_a_failed_proposal_build_records_its_paid_reflection_and_stops_the_run(
 
     monkeypatch.setattr(Candidate, "changed", full_disk)
     with pytest.raises(CodedError) as caught:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert caught.value.code == "proposal-build-failed"
     record = read(out / "run.json")
     reflections = [item for item in cast(list[dict[str, object]], record["outcomes"]) if item.get("split") == "reflection"]
@@ -1718,7 +1763,7 @@ def test_a_proposal_that_repeats_text_the_seed_already_holds_is_not_rejected(
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals, seed_extra=SPAN)
     state.suffix = " " + SPAN
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     assert cast(dict[str, object], result["search"])["leakage_rejections"] == {}
     assert state.improved_calls > 0
 
@@ -1756,7 +1801,7 @@ def test_a_clean_proposal_after_the_history_is_shown_leaves_leakage_rejections_u
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.hypothesis_of = lambda number: f"shorter wording {number}"
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     assert state.proposals >= 3 and state.improved_calls > 0
     assert "Attempt 1: hypothesis shorter wording 1;" in state.prompts[-1] and "No attempt yet." in state.prompts[0]
     search = cast(dict[str, object], result["search"])
@@ -1768,7 +1813,7 @@ def test_the_search_record_holds_the_reason_the_counts_the_attempts_and_the_drop
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     search = cast(dict[str, object], result["search"])
     assert set(search) == {"reason", "stop_trigger", "retained_seed", "leakage_rejections", "proposal_over_budget", "attempts",
                            "text_dropped", "scored", "failed", "failed_by_reason", "history", "comparisons"}
@@ -1787,7 +1832,7 @@ def test_a_hypothesis_that_copies_a_request_span_is_dropped_and_the_proposal_is_
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     state.hypothesis_of = lambda _number: f"try to {SPAN}"
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     search = cast(dict[str, object], result["search"])
     assert state.proposals > 0 and state.improved_calls > 0
     assert search["leakage_rejections"] == {} and search["text_dropped"] == {"request-span": state.proposals}
@@ -1811,7 +1856,7 @@ def test_a_resumed_run_keeps_earlier_attempts_continues_the_index_and_keeps_the_
     state.hypothesis_of = hypothesis
     state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 3 else None
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     before = _reflections_of(out)
     assert len(before) == 2 and before[0]["hypothesis_dropped"] == "case-id"
     result = run(target, out, MODEL, live=True, factory=state.factory)
@@ -1835,7 +1880,7 @@ def test_a_holdout_string_never_reaches_a_prompt_or_an_attempt(
     case_hash, calls = approvals(target, out)
     state = Search(target)
     state.hypothesis_of = lambda number: f"idea {number}"
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
     held = [f"{TOKEN}-{case['id']}" for case in cases if case["split"] == "holdout"]
     seen = [f"{TOKEN}-{case['id']}" for case in cases if case["split"] == "train"]
@@ -1854,7 +1899,7 @@ def test_a_shape_refusal_records_an_attempt_with_no_candidate_and_the_fixed_code
     state.refuse = True
     state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     (stopped,) = _reflections_of(out)
     assert stopped["rejected"] == "reflection-shape"
     state.invoke_fault = lambda _number: None
@@ -1875,7 +1920,7 @@ def test_an_admit_rejection_records_an_attempt_with_no_candidate_and_its_reason(
     state.suffix = " " + ANSWER
     state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     (stopped,) = _reflections_of(out)
     assert stopped["rejected"] == "candidate-leakage-rejected"
     state.invoke_fault = lambda _number: None
@@ -1903,7 +1948,7 @@ def test_a_proposal_build_failure_records_its_attempt_and_the_attempt_survives_t
 
     monkeypatch.setattr(Candidate, "changed", full_disk)
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     (stopped,) = _reflections_of(out)
     assert stopped["rejected"] == "proposal-build-failed" and stopped["status"] == "proposal-build-failed"
     monkeypatch.setattr(Candidate, "changed", real)
@@ -1918,7 +1963,7 @@ def test_a_real_run_records_fixed_and_broke_inside_the_minibatch_and_a_later_par
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     attempts, reflections = _recorded_attempts(out), _reflections_of(out)
     train = {str(case["id"]) for case in cast(list[dict[str, object]], read(out / "cases.json")["cases"]) if case["split"] == "train"}
     listed = [(item, cast(list[str], reflection["minibatch"])) for item, reflection in zip(attempts, reflections)
@@ -1956,7 +2001,7 @@ def test_the_protect_set_follows_the_seed_when_a_validated_candidate_is_worse_th
         return result
 
     monkeypatch.setattr(Provider, "evaluate", evaluate)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     marker = "Keep these train cases passing, because the current best passes them: "
     kept = [prompt.split("\n", 1)[0] for prompt in state.prompts if marker in prompt.split("\n", 1)[0]]
     assert len(kept) >= 2
@@ -1978,7 +2023,7 @@ def test_the_export_summary_redacts_the_hypothesis_and_uncoded_rejection_text_bu
         return real(self, components)
 
     monkeypatch.setattr(Candidate, "changed", failing)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     saved = (out / "run.json").read_text(encoding="utf-8")
     assert "hypothesis-sentinel" in saved and "uncoded-sentinel text" in saved
     report = (Path(cast(str, export(out, tmp_path / "export")["export"])) / "report.json").read_text(encoding="utf-8")
@@ -2007,7 +2052,7 @@ def test_the_export_keeps_a_coded_rejection_and_maps_a_one_word_uncoded_text_to_
         return real(self, components)
 
     monkeypatch.setattr(Candidate, "changed", failing)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     assert "sentinelword" in (out / "run.json").read_text(encoding="utf-8")
     report = (Path(cast(str, export(out, tmp_path / "export")["export"])) / "report.json").read_text(encoding="utf-8")
     assert "sentinelword" not in report and "sentinelword" not in json.dumps(result)
@@ -2019,7 +2064,7 @@ def test_a_spent_call_whose_answer_has_no_hypothesis_key_records_a_null_hypothes
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.omit_hypothesis = True
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     reflections, attempts = _reflections_of(out), _recorded_attempts(out)
     assert reflections and len(attempts) == len(reflections)
     assert all(item["hypothesis"] is None and item["hypothesis_dropped"] is None for item in reflections)
@@ -2036,7 +2081,7 @@ def test_a_leakage_rejected_attempt_shows_its_hypothesis_and_reason_in_the_next_
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     state.suffix = " " + ANSWER
     state.hypothesis_of = lambda number: f"idea {number}"
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     assert len(state.prompts) >= 2 and REJECTED_INTRO not in _head(state.prompts[0])
     second = _head(state.prompts[1])
     assert REJECTED_INTRO + "Attempt 1: hypothesis idea 1; reason candidate-leakage-rejected. " + DIFFERENT in second
@@ -2053,7 +2098,7 @@ def test_a_fully_scored_proposal_without_a_validation_gain_is_shown_as_no_gain(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.score_of = lambda text, split: 0.7 if "improved" in text and split == "train" else 0.2
     state.hypothesis_of = lambda number: f"idea {number}"
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     flat = [item for item in _recorded_attempts(out) if item["validation_delta"] is not None]
     assert flat and all(item["validation_delta"] == 0.0 and item["accepted"] for item in flat)
     first = cast(int, flat[0]["index"])
@@ -2067,7 +2112,7 @@ def test_proposer_notes_join_the_journal_and_the_next_prompt_newest_first_and_st
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.notes_of = lambda number: f"note-sentinel {number}"
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     saved = cast(dict[str, object], read(out / "run.json")["search"])
     assert state.proposals >= 3
     assert saved["journal"] == [{"index": number, "notes": f"note-sentinel {number}"} for number in range(1, state.proposals + 1)]
@@ -2090,7 +2135,7 @@ def test_a_resumed_run_keeps_the_journal_and_the_rejected_memory(
     state.notes_of = lambda number: f"note {number}"
     state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 3 else None
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert len(_reflections_of(out)) == 2 and len(state.prompts) == 3
     state.invoke_fault = lambda _number: None
     _ = run(target, out, MODEL, live=True, factory=state.factory)
@@ -2108,7 +2153,7 @@ def test_a_note_that_copies_a_request_span_is_dropped_and_counted_in_text_droppe
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     state.notes_of = lambda _number: f"remember to {SPAN}"
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     search = cast(dict[str, object], result["search"])
     assert state.proposals > 0 and state.improved_calls > 0
     assert search["leakage_rejections"] == {} and search["text_dropped"] == {"request-span": state.proposals}
@@ -2149,11 +2194,11 @@ def test_a_second_compatible_run_loads_the_first_run_from_the_store_and_shows_a_
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, first, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.hypothesis_of = lambda number: f"first-run idea {number}"
-    _ = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, first, state, case_hash, calls)
     first_id, tried = read(first / "run.json")["run_id"], len(_recorded_attempts(first))
     assert not any(EARLIER_INTRO in _head(prompt) for prompt in state.prompts) and tried >= 3
     second, again, case_hash, calls = _again(tmp_path, target, first, approvals)
-    result = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory)
+    result = run_search(target, second, again, case_hash, calls)
     assert _history(result) == {"enabled": True, "runs": [first_id], "excluded": [], "skipped_lines": 0, "warnings": []}
     section = _earlier(again.prompts[0])
     assert section.startswith(f"Run 1 attempt {tried}: hypothesis first-run idea {tried};")
@@ -2169,12 +2214,11 @@ def test_a_run_with_a_differing_compatibility_field_excludes_the_earlier_run_by_
         tmp_path: Path, make_target: Callable[..., Path], approvals: Callable[..., tuple[str, int]]) -> None:
     target, first, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     state.suffix = " " + ANSWER
-    first_result = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    first_result = run_search(target, first, state, case_hash, calls)
     assert cast(dict[str, object], first_result["search"])["reason"] == "converged-stalled"
     gains = {"min_gain": 0.01}
     second, again, case_hash, calls = _again(tmp_path, target, first, approvals, statistics=gains)
-    result = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory,
-                 statistics=gains)
+    result = run_search(target, second, again, case_hash, calls, statistics=gains)
     assert _history(result)["excluded"] == [{"run_id": read(first / "run.json")["run_id"], "fields": ["statistics"]}]
     assert _history(result)["runs"] == [] and not any(_earlier(prompt) for prompt in again.prompts)
     assert "Proposals since the last validation gain: 0." in _head(again.prompts[0]) and again.proposals > 1
@@ -2186,9 +2230,9 @@ def test_an_earlier_rejected_attempt_shows_in_history_and_never_becomes_the_winn
     target, first, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     state.suffix = " " + ANSWER
     state.hypothesis_of = lambda number: f"leaky idea {number}"
-    _ = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, first, state, case_hash, calls)
     second, again, case_hash, calls = _again(tmp_path, target, first, approvals)
-    result = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory)
+    result = run_search(target, second, again, case_hash, calls)
     section = _earlier(again.prompts[0])
     assert ("Run 1 attempt 1: hypothesis leaky idea 1; fixed none; broke none; validation change unknown; "
             + "result rejected, candidate-leakage-rejected.") in section
@@ -2212,9 +2256,9 @@ def test_a_holdout_secret_never_reaches_the_store_or_a_later_prompt(
     case_hash, calls = approvals(target, first)
     state = Search(target)
     state.hypothesis_of = lambda number: f"idea {number}"
-    _ = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, first, state, case_hash, calls)
     second, again, case_hash, calls = _again(tmp_path, target, first, approvals)
-    _ = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory)
+    _ = run_search(target, second, again, case_hash, calls)
     cases = cast(list[dict[str, object]], read(first / "cases.json")["cases"])
     held = [f"{TOKEN}-{case['id']}" for case in cases if case["split"] == "holdout"]
     stored = _store(first).read_text(encoding="utf-8")
@@ -2229,7 +2273,7 @@ def test_a_corrupt_or_unreadable_store_keeps_the_run_result_and_reports_it(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], broken: str) -> None:
     target, first, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    _ = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, first, state, case_hash, calls)
     store = _store(first)
     if broken == "corrupt-line":
         with store.open("a", encoding="utf-8") as handle:
@@ -2237,10 +2281,9 @@ def test_a_corrupt_or_unreadable_store_keeps_the_run_result_and_reports_it(
     else:
         store.chmod(0o644)
     control, plain, case_hash, calls = _again(tmp_path, target, first, approvals, name="control")
-    expected = run(target, control, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=plain.factory,
-                   history=False)
+    expected = run_search(target, control, plain, case_hash, calls, history=False)
     second, again, case_hash, calls = _again(tmp_path, target, first, approvals)
-    result = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory)
+    result = run_search(target, second, again, case_hash, calls)
     history = _history(result)
     if broken == "corrupt-line":
         assert history["skipped_lines"] == 1 and history["warnings"] == [] and history["runs"] == [read(first / "run.json")["run_id"]]
@@ -2256,16 +2299,14 @@ def test_no_history_neither_reads_nor_writes_the_store(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], history_state: Path) -> None:
     target, first, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
-    result = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
-                 history=False)
+    result = run_search(target, first, state, case_hash, calls, history=False)
     assert _history(result) == {"enabled": False} and read(first / "run.json")["history"] is False
     assert not any(history_state.iterdir()), "a run with --no-history creates no store"
     second, again, case_hash, calls = _again(tmp_path, target, first, approvals)
-    _ = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=again.factory)
+    _ = run_search(target, second, again, case_hash, calls)
     before = _store(first).read_bytes()
     third, quiet, case_hash, calls = _again(tmp_path, target, first, approvals, name="third")
-    _ = run(target, third, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=quiet.factory,
-            history=False)
+    _ = run_search(target, third, quiet, case_hash, calls, history=False)
     assert _store(first).read_bytes() == before and not any(_earlier(prompt) for prompt in quiet.prompts)
 
 
@@ -2276,8 +2317,7 @@ def test_a_resume_that_changes_the_history_flag_stops_with_run_config_differs(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number == 2 else None
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
-                history=False)
+        _ = run_search(target, out, state, case_hash, calls, history=False)
     state.invoke_fault = lambda _number: None
     with pytest.raises(CodedError) as caught:
         _ = run(target, out, MODEL, live=True, factory=state.factory, history=True)
@@ -2315,7 +2355,7 @@ def test_a_shift_names_the_least_tested_editable_component_with_the_lexical_tie_
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _focus_start(tmp_path, make_target, write_draft, approvals)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     assert read(out / "run.json")["editable"] == ["SKILL.md", "references/alpha.md", "references/beta.md"]
     heads = [_head(prompt) for prompt in state.prompts]
     counts = _stall_counts(heads)
@@ -2337,7 +2377,7 @@ def test_a_real_gain_resets_the_streak_and_ends_the_focus(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _focus_start(tmp_path, make_target, write_draft, approvals)
     state.score_of = lambda text, split: 0.95 if "improved 7 " in text else _stalls(text, split)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     heads = [_head(prompt) for prompt in state.prompts]
     counts = _stall_counts(heads)
     assert counts[:8] == [0, 0, 1, 2, 3, 4, 5, 0]
@@ -2351,7 +2391,7 @@ def test_a_holdout_secret_stays_out_of_the_focus_choice_and_its_reason(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _focus_start(tmp_path, make_target, write_draft, approvals, tag=TOKEN)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
     held = [f"{TOKEN}-{case['id']}" for case in cases if case["split"] == "holdout"]
     focused = [{"focus": item["focus"], "focus_reason": item["focus_reason"]} for item in _reflections_of(out) if "focus" in item]
@@ -2363,7 +2403,7 @@ def test_a_holdout_secret_stays_out_of_the_focus_choice_and_its_reason(
     other.mkdir()
     target2, out2, state2, case_hash2, calls2 = _focus_start(other, make_target, write_draft, approvals, tag="other")
     state2.score_of = lambda text, split: 0.99 if split == "holdout" else _stalls(text, split)
-    _ = run(target2, out2, MODEL, live=True, approve_cases=case_hash2, approve_budget=calls2, factory=state2.factory)
+    _ = run_search(target2, out2, state2, case_hash2, calls2)
     shape = [(item.get("focus"), item.get("focus_reason")) for item in _reflections_of(out)]
     assert shape == [(item.get("focus"), item.get("focus_reason")) for item in _reflections_of(out2)]
     assert any(focus is not None for focus, _reason in shape)
@@ -2375,11 +2415,11 @@ def test_the_focus_counts_the_attempts_of_compatible_earlier_runs(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, first, earlier, case_hash, calls = _focus_start(tmp_path, make_target, write_draft, approvals)
     earlier.only = "references/alpha.md"
-    _ = run(target, first, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=earlier.factory)
+    _ = run_search(target, first, earlier, case_hash, calls)
     assert any(item["changed"] == ["references/alpha.md"] for item in _reflections_of(first))
     second, state, case_hash, calls = _again(tmp_path, target, first, approvals)
     state.only, state.score_of = "SKILL.md", _stalls
-    result = run(target, second, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, second, state, case_hash, calls)
     assert _history(result)["runs"] == [read(first / "run.json")["run_id"]]
     focused = {item["focus"] for item in _reflections_of(second) if "focus" in item}
     assert focused == {"references/beta.md"}, "alpha has earlier-run attempts, so beta is the least tested"
@@ -2403,8 +2443,7 @@ def test_a_resume_at_the_searched_phase_without_a_history_block_writes_the_store
             raise _Killed
 
     with pytest.raises(_Killed):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
-                ports=Ports(history=KilledStore()))
+        _ = run_search(target, out, state, case_hash, calls, ports=Ports(history=KilledStore()))
     assert read(out / "run.json")["phase"] == "searched" and "history" not in cast(dict[str, object], read(out / "run.json")["search"])
     assert not _store(out).exists()
     result = run(target, out, MODEL, live=True, factory=state.factory)

@@ -62,8 +62,8 @@ def main() -> None:
     if mode == "leak-harness" and role == "reflection" and log is not None:
         earlier = log.read_text().splitlines() if log.is_file() else []
         observed = str(sum(1 for line in earlier if json.loads(line)["role"] == "reflection"))
-    if request["operation"] == "infer" and "pause_dir" in settings:
-        pause_dir = Path(settings["pause_dir"])
+    pause = settings.get("pause_dir")
+    if request["operation"] == "infer" and pause is not None and (pause_dir := Path(pause)).is_dir():
         pending = pause_dir / f"{os.getpid()}.{role}.pending"
         release = pause_dir / f"{os.getpid()}.{role}.release"
         pending.touch()

@@ -37,7 +37,7 @@ from skillz_experiments._budget import MAX_CONCURRENT_CALLS, Budget
 from skillz_experiments.search import Edit, search
 from skillz_experiments.search._engine import Cheaper, Evaluate, Propose
 from skillz_experiments.run import Stop, export, run
-from fake_provider import FakeRunProvider
+from fake_provider import FakeRunProvider, approved_search, search_approval
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -195,8 +195,8 @@ def test_draft_edited_after_prepare_never_adds_a_case_to_the_run(
     draft.append(draft[0] | {"id": "late-case", "family": "late-family"})
     _ = (prep.out / DRAFT_NAME).write_text(json.dumps(draft))
     spy = Spy()
-    assert run(prep.target, prep.out, MODEL, live=True, factory=spy.factory)["phase"] == "complete"
-    assert {name for name, _held, _files in spy.evaluated} <= frozen_ids
+    assert run(prep.target, prep.out, MODEL, live=True, factory=spy.factory)["search"] == "not-run"
+    assert {name for name, _held, _files in spy.evaluated} == frozen_ids
 
 
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
@@ -215,7 +215,8 @@ def test_draft_edited_before_the_record_needs_a_fresh_hash(
         _ = run(target, out, MODEL, live=True, approve_cases=approved_hash, approve_budget=calls, factory=spy.factory)
     assert stopped.value.code == "cases-unapproved"
     assert not (out / "run.json").exists()
-    assert all("edited" not in cast(dict[str, object], case.get("expected", {})) for case in frozen(out))
+    assert not (out / "cases.json").exists()
+    assert spy.created == 0 and not spy.evaluated
 
 
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-13")
@@ -334,7 +335,9 @@ def test_resume_inside_the_budget_completes_when_the_clocks_agree_or_the_monoton
         "reboot": {"started_monotonic": time.monotonic() + 10**7, "started": time.time() - 60.0},
     }
     tamper(prep.out, lambda record: record.update(clocks[clock]))
-    assert run(prep.target, prep.out, MODEL, live=True, factory=Spy().factory)["phase"] == "complete"
+    spy = Spy()
+    assert run(prep.target, prep.out, MODEL, live=True, factory=spy.factory)["search"] == "not-run"
+    assert len(spy.evaluated) > 0
 
 
 @pytest.mark.parametrize("repeats", [1, 2, 10, 13, 16, 17, 40, 10**6, 10**18])
@@ -347,19 +350,26 @@ def test_repeats_never_silently_exceed_the_cap(
     _ = write_draft(out)
     approved_hash, _calls = approvals(target, out)
     spy = Spy()
+    baseline = run(target, out, MODEL, live=True, repeats=repeats, approve_cases=approved_hash, approve_budget=200,
+                   factory=spy.factory)
+    assert baseline["search"] == "not-run"
+    baseline_calls = cast(int, read(out / "run.json")["calls"])
+    assert 0 < baseline_calls <= 200
+    count = len(spy.evaluated)
     try:
-        result = run(target, out, MODEL, live=True, repeats=repeats, approve_cases=approved_hash, approve_budget=200,
-                     factory=spy.factory)
+        result = run(target, out, MODEL, live=True, search=True, approve_budget=200, factory=spy.factory)
     except Stop as stopped:
-        assert stopped.code == "budget-unapproved" and spy.created == 0
+        assert stopped.code == "budget-unapproved" and spy.created == 1
+        assert len(spy.evaluated) == count and not spy.prompts
         return
     assert result["phase"] == "complete" and {"retries", "calls_by_role", "claims", "replay"} <= set(result)
     record = read(out / "run.json")
     budget = cast(dict[str, int], record["budget"])
-    assert budget["maximum"] <= 200 and budget["seconds"] <= 7200 and cast(int, record["calls"]) <= budget["maximum"]
-    held = [item for item in spy.evaluated if item[1]]
+    assert budget["prior_calls"] == baseline_calls
+    assert 0 < cast(int, record["calls"]) - baseline_calls <= budget["maximum"] <= 200
+    assert budget["seconds"] <= 7200
     holdout = {str(case["id"]) for case in frozen(out) if case["split"] == "holdout"}
-    assert len(held) in (0, (2 * repeats + 1) * len(holdout))
+    assert {name for name, held, _files in spy.evaluated if held} == holdout
 
 
 @pytest.mark.parametrize("approved", [None, 0, -1, -(10**9)])
@@ -392,22 +402,27 @@ def test_nonpositive_repeats_are_rejected(repeats: int, tmp_path: Path, make_tar
 def test_a_tight_budget_keeps_the_holdout_reserve_and_never_overspends(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
-    """PA-2: with repeats 15 the search cannot take holdout calls and the gate still completes inside the estimate."""
+    """PA-2: the search does not spend the reserve, and the gate finishes inside the separate estimate."""
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
-    approved_hash, _calls = approvals(target, out)
+    approved_hash, calls = approvals(target, out)
     spy = Spy()
-    try:
-        result = run(target, out, MODEL, live=True, repeats=15, approve_cases=approved_hash, approve_budget=200,
-                     factory=spy.factory)
-    except Stop as stopped:
-        assert stopped.code == "budget-unapproved"
-        return
+    repeats = 8
+    assert run(target, out, MODEL, live=True, repeats=repeats, approve_cases=approved_hash, approve_budget=calls,
+               factory=spy.factory)["search"] == "not-run"
+    baseline_calls = cast(int, read(out / "run.json")["calls"])
+    search_calls = search_approval(target, out, MODEL)
+    result = run(target, out, MODEL, live=True, search=True, approve_budget=search_calls, factory=spy.factory)
     record = read(out / "run.json")
-    assert result["phase"] == "complete"
+    assert result["phase"] == "complete" and spy.prompts
     estimate = cast(dict[str, int], record["estimate"])
-    assert cast(int, record["calls"]) <= estimate["calls"] <= 200
-    assert len([item for item in spy.evaluated if item[1]]) in (0, 2 * 15 * len([c for c in frozen(out) if c["split"] == "holdout"]))
+    reserve = cast(dict[str, int], record["budget"])["reserve"]
+    assert 0 < reserve < search_calls <= 200
+    assert 0 < cast(int, record["calls"]) - baseline_calls <= estimate["calls"] == search_calls
+    holdout = {str(case["id"]) for case in frozen(out) if case["split"] == "holdout"}
+    held = [name for name, gate, _files in spy.evaluated if gate]
+    assert set(held) == holdout
+    assert len(held) == (2 * repeats + 1) * len(holdout)
 
 
 # --- PA-4: holdout leakage -------------------------------------------------------------------------------
@@ -443,8 +458,11 @@ def test_holdout_ids_requests_and_expected_values_never_reach_search_or_reflecti
 
     monkeypatch.setattr(_session, "pareto_search", spy_search)
     spy = Spy()
-    result = run(target, out, MODEL, live=True, edit=cast(Edit, edit), approve_cases=approved_hash,
-                 approve_budget=calls, factory=spy.factory)
+    baseline = run(target, out, MODEL, live=True, edit=cast(Edit, edit), approve_cases=approved_hash,
+                   approve_budget=calls, factory=spy.factory)
+    assert baseline["search"] == "not-run"
+    result = run(target, out, MODEL, live=True, search=True, factory=spy.factory,
+                 approve_budget=search_approval(target, out, MODEL))
     assert result["phase"] == "complete"
     holdout = [case for case in frozen(out) if case["split"] == "holdout"]
     assert len(holdout) >= HOLDOUT_MINIMUM
@@ -623,7 +641,7 @@ def test_a_winner_with_an_out_of_range_holdout_score_is_not_promoted_by_the_scor
     spy = Spy(improved_score=score)
     result: dict[str, object] | None = None
     try:
-        result = run(target, out, MODEL, live=True, approve_cases=approved_hash, approve_budget=calls, factory=spy.factory)
+        result = approved_search(target, out, MODEL, approved_hash, calls, factory=spy.factory)
     except (ValueError, RuntimeError):
         pass
     if result is not None:
@@ -688,11 +706,11 @@ def test_removed_commands_with_any_arguments_exit_coded_and_name_run(
 
 # --- PA-9: old schema ------------------------------------------------------------------------------------
 
-@pytest.mark.parametrize("version", [1, "missing", "4", 2, 3, 5, 0, True, [4], {"v": 4}, None, -4])
+@pytest.mark.parametrize("version", [1, "missing", "5", 2, 3, 4, 0, True, [5], {"v": 5}, None, -4])
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-19")
 def test_a_run_record_with_a_foreign_schema_stops_coded_and_creates_no_provider(
         version: object, tmp_path: Path, make_target: Callable[..., Path], capsys: pytest.CaptureFixture[str]) -> None:
-    """PA-9: only schema_version 4 opens; every other value, schema 3 included, stops with run-schema-old."""
+    """PA-9: only the current numeric schema opens; every other value stops with run-schema-old."""
     target, out = make_target(tmp_path), tmp_path / "run"
     out.mkdir(mode=0o700)
     record: dict[str, object] = {"phase": "prepared", "model": MODEL}
@@ -1064,7 +1082,10 @@ def test_an_export_into_the_target_stops_as_export_into_target(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
     prep = prepare(tmp_path, make_target, write_draft, approvals)
-    assert run(prep.target, prep.out, MODEL, live=True, factory=Spy().factory)["phase"] == "complete"
+    spy = Spy()
+    assert run(prep.target, prep.out, MODEL, live=True, factory=spy.factory)["search"] == "not-run"
+    assert run(prep.target, prep.out, MODEL, live=True, search=True, factory=spy.factory,
+               approve_budget=search_approval(prep.target, prep.out, MODEL))["phase"] == "complete"
     with pytest.raises(CodedError) as stopped:
         _ = export(prep.out, prep.target / "export")
     assert stopped.value.code == "export-into-target"

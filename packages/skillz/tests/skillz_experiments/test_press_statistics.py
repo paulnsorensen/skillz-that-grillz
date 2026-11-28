@@ -21,7 +21,7 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._resume import resolve_statistics
-from fake_provider import FakeRunProvider
+from fake_provider import FakeRunProvider, approved_search, search_approval
 
 MODEL = "local-test"
 SPREAD = [1.0, 2.0, 3.0]
@@ -193,7 +193,9 @@ def test_a_frozen_floor_beats_a_later_contract_edit(
     path = target / "evals/autoimprove.json"
     document = cast(dict[str, object], json.loads(path.read_text()))
     _ = path.write_text(json.dumps(document | {"statistics": {"min_gain": 9.0}}))
-    result = run(target, out, MODEL, live=True, factory=_Provider)
+    assert run(target, out, MODEL, live=True, factory=_Provider)["search"] == "not-run"
+    result = run(target, out, MODEL, live=True, search=True, factory=_Provider,
+                 approve_budget=search_approval(target, out, MODEL))
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["reasons"]) == ("promote", [])
     assert read(out / "run.json")["statistics"] == Statistics(min_gain=0.5).data()
@@ -205,7 +207,9 @@ def test_a_tampered_frozen_floor_is_the_one_the_incumbent_rule_and_the_gate_use(
     target, out = make_target(tmp_path), tmp_path / "run"
     _prepare_only(target, out, write_draft, approvals)
     _tamper(out, Statistics(min_gain=5.0).data())
-    result = run(target, out, MODEL, live=True, factory=_Provider)
+    assert run(target, out, MODEL, live=True, factory=_Provider)["search"] == "not-run"
+    result = run(target, out, MODEL, live=True, search=True, factory=_Provider,
+                 approve_budget=search_approval(target, out, MODEL))
     # The incumbent rule applies the frozen floor too (gh-500), so the seed stays the winner and the gate sees no change.
     comparisons = cast(list[dict[str, object]], cast(dict[str, object], result["search"])["comparisons"])
     assert comparisons and all((item["verdict"], item["reasons"]) == ("inconclusive", ["min-gain"]) for item in comparisons)
@@ -284,8 +288,8 @@ def test_zero_flags_give_a_default_gate_with_empty_reasons(
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Provider,
-                 statistics={"min_gain": 0.0, "min_lower_bound": 0.0})
+    result = approved_search(target, out, MODEL, case_hash, calls, factory=_Provider,
+                             statistics={"min_gain": 0.0, "min_lower_bound": 0.0})
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["reasons"]) == ("promote", [])
 

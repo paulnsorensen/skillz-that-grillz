@@ -19,6 +19,7 @@ from skillz_experiments.search import accept as accept_proposal
 from skillz_experiments.search import request as reflection_request
 from skillz_experiments.search._history import LIMIT, SHOWN, render
 from skillz_experiments._cases import Case
+from fake_provider import approved_search
 from test_run_search import ANSWER, FIXTURE, MODEL, SPAN, Provider, _attempts, _leak_start, _recorded_attempts, _reflections_of, _start  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.usefixtures("host_login")
@@ -189,7 +190,7 @@ def test_session_hypothesis_that_leaks_any_rule_is_dropped_and_the_proposal_stil
     target, out, state, case_hash, calls = _leak_start(tmp_path, make_target, approvals)
     said = {"answer": f"because {ANSWER}", "fixture": f"read {FIXTURE} first", "request-span": f"try {SPAN}"}[leak]
     state.hypothesis_of = lambda _number: said
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = approved_search(target, out, MODEL, case_hash, calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
     reflections = _reflections_of(out)
     assert state.proposals > 0 and state.improved_calls > 0
@@ -205,7 +206,7 @@ def test_session_overlong_hypothesis_is_dropped_with_its_rule_and_the_proposal_s
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.hypothesis_of = lambda number: "w" * (200 if number == 1 else 201)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = approved_search(target, out, MODEL, case_hash, calls, factory=state.factory)
     search = cast(dict[str, object], result["search"])
     assert state.proposals >= 2
     assert search["text_dropped"] == {"hypothesis-too-long": state.proposals - 1}
@@ -221,7 +222,7 @@ def test_session_resumed_twice_continues_the_index_without_duplicates_and_keeps_
     state.hypothesis_of = lambda number: ("w" * 201) if number == 1 else f"idea {number}"
     state.invoke_fault = lambda number: CodedError("harness-changed", "a guard fired") if number in {3, 5} else None
     with pytest.raises(CodedError):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = approved_search(target, out, MODEL, case_hash, calls, factory=state.factory)
     with pytest.raises(CodedError):
         _ = run(target, out, MODEL, live=True, factory=state.factory)
     assert len(_reflections_of(out)) == 3
@@ -239,7 +240,7 @@ def test_session_holdout_case_ids_never_appear_in_prompts_or_attempts(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.hypothesis_of = lambda number: f"idea {number}"
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = approved_search(target, out, MODEL, case_hash, calls, factory=state.factory)
     held, seen = _holdout_ids(out), _train_ids(out)
     assert held and seen and state.proposals > 1
     text = "\n".join(state.prompts) + json.dumps(_attempts(result)) + json.dumps(_reflections_of(out))
@@ -261,7 +262,7 @@ def test_session_no_validation_yet_protect_set_comes_from_the_seed_full_train_sc
         return result
 
     monkeypatch.setattr(Provider, "evaluate", evaluate)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = approved_search(target, out, MODEL, case_hash, calls, factory=state.factory)
     held, seen = _holdout_ids(out), _train_ids(out)
     scored = [o for o in cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
               if o.get("split") == "train" and "score" in o]
@@ -282,7 +283,7 @@ def test_session_oversized_proposal_rejection_reason_carries_no_component_text(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.suffix = "ORIGINALMARKER"
     state.padding = 300_000
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = approved_search(target, out, MODEL, case_hash, calls, factory=state.factory)
     found = _recorded_attempts(out)
     assert found and all(item["candidate"] is None for item in found)
     assert {item["rejected"] for item in found} == {"proposal exceeds component size limit"}
@@ -303,7 +304,7 @@ def test_session_coded_build_failure_with_component_text_shows_only_the_code(
         return real(self, components)
 
     monkeypatch.setattr(Candidate, "changed", failing)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = approved_search(target, out, MODEL, case_hash, calls, factory=state.factory)
     found = _attempts(result)
     assert found and {item["rejected"] for item in found} == {"build-failed"}
     assert all("SyntaxError" not in prompt for prompt in state.prompts)

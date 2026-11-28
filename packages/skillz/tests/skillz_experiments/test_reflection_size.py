@@ -17,7 +17,8 @@ from skillz_experiments._records import read
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._edit_plan import REFLECTION_TEXT_LIMIT, reflection_excess, reflection_warning
 from test_default_edit import MODEL, _prepare
-from test_run_search import _start
+from test_reflection_time import search_receipt
+from test_run_search import _start, run_search
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -80,7 +81,7 @@ def test_timed_out_and_answered_reflection_outcomes_record_the_prompt_size(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda number: CallTimeout("the model call exceeded its per-call timeout") if number == 1 else None
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     rows = [row for row in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if row.get("split") == "reflection"]
     assert result["phase"] == "complete"
     timed_out = [row for row in rows if row.get("status") == "timeout"]
@@ -95,7 +96,7 @@ def test_a_failed_reflection_outcome_records_the_prompt_size(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda number: RuntimeError("reflection fell over") if number == 1 else None
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    _ = run_search(target, out, state, case_hash, calls)
     rows = [row for row in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if row.get("split") == "reflection"]
     failed = [row for row in rows if row.get("status") == "failed"]
     assert len(failed) == 1 and failed[0]["prompt_chars"] == len(state.prompts[0])
@@ -132,11 +133,9 @@ def test_an_omitted_edit_whose_prose_plan_fails_keeps_prose_cli_and_warns_withou
     with pytest.raises(Stop) as cases:
         _ = run(target, out, MODEL, live=True)
     _ = capsys.readouterr()
-    with pytest.raises(Stop) as budget:
-        _ = run(target, out, MODEL, live=True, approve_cases=cast(str, cases.value.data["case_hash"]))
+    budget = search_receipt(target, out, cases.value)
     err = capsys.readouterr().err
-    warning = cast(str, budget.value.data["reflection_warning"])
-    assert budget.value.code == "budget-unapproved"
+    warning = cast(str, budget.data["reflection_warning"])
     assert LIMIT_NOTE in warning and "--edit prose" not in warning
     assert "warning: " + warning in err and "this run uses --edit prose" not in err
 
@@ -167,10 +166,8 @@ def test_an_explicit_prose_cli_over_the_reflection_limit_warns_in_the_budget_que
     _ = write_draft(out)
     with pytest.raises(Stop) as cases:
         _ = run(target, out, MODEL, live=True, edit="prose+cli")
-    with pytest.raises(Stop) as budget:
-        _ = run(target, out, MODEL, live=True, edit="prose+cli", approve_cases=cast(str, cases.value.data["case_hash"]))
-    warning = cast(str, budget.value.data["reflection_warning"])
-    assert budget.value.code == "budget-unapproved"
+    budget = search_receipt(target, out, cases.value, edit="prose+cli")
+    warning = cast(str, budget.data["reflection_warning"])
     assert LIMIT_NOTE in warning and str(REFLECTION_TEXT_LIMIT) in warning and "--edit prose" in warning
     assert "warning: " + warning in capsys.readouterr().err
 

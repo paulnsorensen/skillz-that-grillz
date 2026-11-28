@@ -21,7 +21,7 @@ TASK, JUDGE = "task-model", "judge-model"
 
 def test_export_accepts_an_honest_split_run_and_refuses_one_whose_judge_model_changed(
         tmp_path: Path, judged: JudgedRun) -> None:
-    _ = judged.start(judge_model=JUDGE)
+    _ = judged.start(judge_model=JUDGE, search=True)
     record = read(judged.out / "run.json")
     assert record["judge_model"] == JUDGE
     assert export(judged.out, tmp_path / "honest")["installed"] is False

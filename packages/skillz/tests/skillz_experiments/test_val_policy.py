@@ -18,7 +18,7 @@ from skillz_experiments._records import read
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._plan import VALIDATION_REPEATS
 from skillz_experiments.search._policy import FixedSubset
-from test_run_search import MODEL, _allowance, _start, _validation  # pyright: ignore[reportPrivateUsage]
+from test_run_search import MODEL, _allowance, _start, _validation, run_search  # pyright: ignore[reportPrivateUsage]
 
 # The seed skill identity. In the controlled study, both policies keep the seed for every seed.
 STUDY_WINNER = "9b157e5f3ad5c5d75f733b73999e488fe9e3844940659e4e41d0d73d606422e9"
@@ -26,21 +26,17 @@ STUDY_WINNER = "9b157e5f3ad5c5d75f733b73999e488fe9e3844940659e4e41d0d73d606422e9
 
 def measure_seed(seed: int, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
                  approvals: Callable[..., tuple[str, int]]) -> tuple[int, int]:
-    """Run one study seed under both policies. Return the full and subset metric calls.
-
-    Each policy must keep the study winner and stay in its call allowance.
-    """
+    """Return only fresh search evaluations. Both policies must keep the study winner."""
     calls: dict[str, int] = {}
     for policy in ("full", "subset"):
         target, out, state, case_hash, approved = _start(tmp_path / policy, make_target, write_draft, approvals,
                                                          noise=seed, families=12)
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=approved,
-                factory=state.factory, val_policy=policy)
+        _ = run_search(target, out, state, case_hash, approved, val_policy=policy)
         record = read(out / "run.json")
         kept = record.get("best_validated")
         winner = cast(str, kept["identity"]) if isinstance(kept, dict) else cast(str, record["seed_hash"])
         assert winner == STUDY_WINNER
-        assert state.search_calls <= _allowance(out) + (0 if policy == "subset" else 2 * len(_validation(out)))
+        assert state.search_calls <= _allowance(out)
         calls[policy] = state.search_calls
     return calls["full"], calls["subset"]
 
@@ -75,11 +71,9 @@ def test_full_and_subset_use_full_planning_but_subset_scores_only_selected_cases
                                               if not text.startswith("improved") else
                                               (0.3 if split == "validation" else 0.4))
         if policy == "full":
-            result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                         factory=state.factory)
+            result = run_search(target, out, state, case_hash, calls)
         else:
-            result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                         factory=state.factory, val_policy="subset")
+            result = run_search(target, out, state, case_hash, calls, val_policy="subset")
         assert all(f"of {_allowance(out)} (" in prompt.split("\n", 1)[0] for prompt in state.prompts)
         results[policy] = read(out / "run.json")
         assert result["phase"] == "complete"
@@ -105,8 +99,7 @@ def test_cli_passes_policy_to_completed_run_resume(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]], capsys: pytest.CaptureFixture[str]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-            factory=state.factory, val_policy="subset")
+    _ = run_search(target, out, state, case_hash, calls, val_policy="subset")
     code = main(["run", "--target", str(target), "--out", str(out), "--model", MODEL,
                  "--val-policy", "full"])
     assert code == 1
@@ -146,8 +139,7 @@ def test_finalists_screen_in_proposal_order_against_new_incumbent(
         return 0.2
 
     state.score_of = score
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-            factory=state.factory, val_policy="subset")
+    _ = run_search(target, out, state, case_hash, calls, val_policy="subset")
     record = read(out / "run.json")
     proposals = [item["proposed"] for item in cast(list[dict[str, object]], record["outcomes"])
                  if item.get("split") == "reflection" and isinstance(item.get("proposed"), str)]
@@ -166,8 +158,7 @@ def test_equal_subset_mean_still_completes_finalist(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.score_of = lambda text, split: 0.8 if split == "train" and text.startswith("improved") else 0.5
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-            factory=state.factory, val_policy="subset")
+    _ = run_search(target, out, state, case_hash, calls, val_policy="subset")
     record = read(out / "run.json")
     proposed = next(item["proposed"] for item in cast(list[dict[str, object]], record["outcomes"])
                     if item.get("split") == "reflection" and isinstance(item.get("proposed"), str))

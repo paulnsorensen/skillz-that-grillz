@@ -22,7 +22,7 @@ from skillz_experiments.run._finalists import Finalists
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._search_phase import SearchPhase
 from skillz_experiments.run._state import RunState
-from test_run_search import MODEL, Search, _start  # pyright: ignore[reportPrivateUsage]
+from test_run_search import MODEL, Search, _start, run_search  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.ac("gh-245:AC-3")
@@ -110,8 +110,7 @@ def _interrupt_finalist(target: Path, out: Path, state: Search, case_hash: str, 
 
     state.evaluate_fault = fault
     with pytest.raises(CodedError, match="finalist interrupted"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                factory=state.factory, val_policy="subset")
+        _ = run_search(target, out, state, case_hash, calls, val_policy="subset")
 
 
 @pytest.mark.ac("gh-245:AC-3")

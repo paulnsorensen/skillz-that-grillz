@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import cast
 
@@ -52,7 +53,7 @@ def run_gemini(tmp_path: Path, cli: Path, *, helper: bool) -> tuple[dict[str, ob
     private = tmp_path / "private-home"
     config, directory = configured_wrapper(scenario.out, private, cli, "normal")
     before = snapshot(scenario.target)
-    code, result, error = approve_and_run(gemini_args(scenario, config, helper=helper), private, scenario, cli=cli)
+    code, result, error = approve_and_run([*gemini_args(scenario, config, helper=helper), "--search"], private, scenario, cli=cli)
     assert code == 0 and result["phase"] == "complete", (result, error)
     assert snapshot(scenario.target) == before
     applied = export_and_apply(scenario, private, cli=cli)
@@ -109,13 +110,16 @@ def test_malformed_gemini_answer_charges_calls_without_a_trace(tmp_path: Path) -
     private = tmp_path / "private-home"
     config, _ = configured_wrapper(scenario.out, private, CLI, "malformed-json")
     code, result, error = approve_and_run(gemini_args(scenario, config, helper=False), private, scenario)
-    assert code == 1 and cli_error(error)["code"] == "search-faulted", (result, error)
+    assert code == 1 and cli_error(error)["code"] == "baseline-faulted", (result, error)
     record = read_record(scenario.out)
-    # The headroom pass makes every seed call before the fault check: 4 train runs and 2 runs of each of 2 validation cases.
-    assert record["failure_code"] == "search-faulted" and record["calls"] == 8
+    # The baseline tries both repeats of every scored case before reporting the fault.
+    assert record["failure_code"] == "baseline-faulted" and record["calls"] == 2 * len(scenario.draft)
     outcomes = cast(list[dict[str, object]], record["outcomes"])
     failed = [item for item in outcomes if item.get("case_id") is not None]
-    assert failed and all(item["status"] == "evaluation-failed" for item in failed)
+    assert len(failed) == 2 * len(scenario.draft)
+    assert {item["arm"] for item in failed} == {"search", "baseline"}
+    assert all(item["status"] == "evaluation-failed" for item in failed)
+    assert Counter(item["case_id"] for item in failed) == dict.fromkeys((case["id"] for case in scenario.draft), 2)
     path = Path(cast(str, failed[0]["failure"]).split("private stderr tail: ", 1)[1])
     assert json.loads(path.read_text())["error"] == "RuntimeError: gemini answer is not a JSON object"
     log = read_events(scenario.out)

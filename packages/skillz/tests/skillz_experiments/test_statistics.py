@@ -20,7 +20,7 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._resume import resolve_statistics
-from fake_provider import FakeRunProvider
+from fake_provider import FakeRunProvider, approved_search
 
 MODEL = "local-test"
 LEGACY_IDENTITY = "f97f7476933403cbc6180cf3dc3cb54ca9d9eb63a7cf37bae92dd6aa9612b2e8"
@@ -237,8 +237,7 @@ def test_a_flag_below_the_contract_value_wins_when_the_approval_covers_it(
     _ = write_draft(out)
     flags = {"min_gain": 0.5, "min_lower_bound": 0.0}
     approved, calls = approvals(target, out, statistics=flags)
-    result = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=_Provider,
-                 statistics=flags)
+    result = approved_search(target, out, MODEL, approved, calls, factory=_Provider, statistics=flags)
     assert read(out / "run.json")["statistics"] == Statistics(min_gain=0.5).data()
     gate = cast(dict[str, object], result["gate"])
     assert (gate["verdict"], gate["reasons"]) == ("promote", [])

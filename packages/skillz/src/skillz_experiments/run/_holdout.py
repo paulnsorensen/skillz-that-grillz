@@ -26,19 +26,33 @@ from skillz_experiments.run._stop import Stop, baseline_rejected, check_timeout
 Inspect = Callable[[str, dict[str, object]], None]
 
 
-def arm_scores(outcomes: Sequence[Mapping[str, object]], arm: str) -> dict[str, list[float]]:
-    """Return the scored holdout scores of `arm` as a list per case, in repeat order."""
-    return by_repeat_order(holdout_scores(outcomes, arm))
+def within_repeats(repeat: object, repeats: int | None) -> bool:
+    """Return whether a stored `repeat` is inside the approved `repeats`. None keeps every stored repeat."""
+    return repeats is None or not isinstance(repeat, int) or repeat < repeats
 
 
-def holdout_tokens(outcomes: Sequence[dict[str, object]]) -> dict[str, tuple[float | None, float | None]]:
+def arm_scores(outcomes: Sequence[Mapping[str, object]], arm: str,
+               repeats: int | None = None) -> dict[str, list[float]]:
+    """Return the scored holdout scores of `arm` as a list per case, in repeat order.
+
+    With `repeats`, only the outcomes of a repeat below it count. A stored repeat above it stays in the record.
+    """
+    found = holdout_scores(outcomes, arm)
+    kept = {case_id: {repeat: score for repeat, score in by_repeat.items() if within_repeats(repeat, repeats)}
+            for case_id, by_repeat in found.items()}
+    return by_repeat_order({case_id: by_repeat for case_id, by_repeat in kept.items() if by_repeat})
+
+
+def holdout_tokens(outcomes: Sequence[dict[str, object]],
+                   repeats: int | None = None) -> dict[str, tuple[float | None, float | None]]:
     """Return each holdout case's mean task tokens per arm over its repeats. A missing count makes the mean None.
 
-    The newest outcome of an (arm, case, repeat) counts.
+    The newest outcome of an (arm, case, repeat) counts. With `repeats`, only a repeat below it counts.
     """
     newest: dict[tuple[object, object, object], dict[str, object]] = {}
     for item in scored_holdout(outcomes, ("baseline", "winner")):
-        newest[(item["arm"], item["case_id"], item.get("repeat"))] = item
+        if within_repeats(item.get("repeat"), repeats):
+            newest[(item["arm"], item["case_id"], item.get("repeat"))] = item
     counts: dict[str, dict[str, list[int | None]]] = {}
     for item in newest.values():
         counts.setdefault(cast(str, item["case_id"]), {"baseline": [], "winner": []})[
@@ -131,7 +145,7 @@ def _score_retained_baseline(state: RunState, holdout: Sequence[Case], repeats: 
             score_holdout(state, [(state.seed, case, arm, repeat) for arm, case, repeat in todo])
     except BudgetExhausted:
         short = True
-    scores = arm_scores(state.outcomes, "baseline")
+    scores = arm_scores(state.outcomes, "baseline", repeats)
     found: dict[str, object] = ({"baseline_scores": {case_id: math.fsum(each) / len(each) for case_id, each in scores.items()}}
                                 if scores else {})
     if short:
@@ -157,7 +171,7 @@ def run_gate(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
         record["gate"] = {**outcome.data(), "repeats": repeats, **_score_retained_baseline(state, holdout, repeats)}
     else:
         _ = state.budget.remaining()
-        rejected = next((item for item in outcomes if item.get("arm") == "baseline"
+        rejected = next((item for item in outcomes if item.get("arm") == "baseline" and item.get("split") == "holdout"
                          and item.get("status") == "candidate-contract-rejected" and not timed_out(item)), None)
         if rejected is not None:
             raise baseline_rejected(rejection_detail(rejected))
@@ -176,12 +190,12 @@ def run_gate(state: RunState, built: Callable[[Candidate], Candidate]) -> None:
                        + f"{left} remain in the approved budget after the replay reserve",
                        {"next": "start a new run in a new directory"})
         score_holdout(state, [(arms[arm], case, arm, repeat) for arm, case, repeat in todo], inspect=inspect)
-        paired = holdout_deltas(arm_scores(outcomes, "baseline"), arm_scores(outcomes, "winner"), repeats)
+        paired = holdout_deltas(arm_scores(outcomes, "baseline", repeats), arm_scores(outcomes, "winner", repeats), repeats)
         lost = [item for item in outcomes if item.get("split") == "holdout" and item.get("arm") in arms and is_failed(item)]
         if lost and not paired.deltas:
             raise CodedError("holdout-faulted", f"no holdout case has a scored baseline and winner pair; {len(lost)} holdout "
                              + f"evaluations failed ({reason_counts(lost)}); wait for the provider, then resume the run")
-        tokens = ({case_id: arms_tokens for case_id, arms_tokens in holdout_tokens(outcomes).items()
+        tokens = ({case_id: arms_tokens for case_id, arms_tokens in holdout_tokens(outcomes, repeats).items()
                    if case_id in paired.deltas} if statistics.token_rule else None)
         outcome = replace(gate_verdict(paired.deltas, thresholds=statistics, families=families,
                                        tokens=tokens, se_floor=paired.se_floor,

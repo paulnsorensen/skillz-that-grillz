@@ -14,6 +14,7 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.harness._claude import (NOTICE_CODES, TERMINAL_CODES, ClaudeLogin, ClaudeOptions,
                                               resolve_read_roots)
+from skillz_experiments.harness._claude._preflight import PREFLIGHT_CALLS
 from skillz_experiments.harness._roles import (BUILTIN_ADAPTERS, ROLES, Role, adapter_class, command_paths, has_claude_sandbox,
                                                parse_role, parse_role_offline, unsupported_surface)
 from skillz_experiments.harness._steps import journey_steps
@@ -68,6 +69,15 @@ class Configuration:
             raise CodedError("contract-capture-unsupported", "the selected kind declares capture, and only "
                              + "the claude harness can show capture files to the judge; run with --harness claude")
         return roles["task"].options
+
+    @classmethod
+    def identity_from_file(cls, path: Path) -> dict[str, object]:
+        """Return the adapter of each role in the role file, as the frozen identity shows it, without a model or executable check.
+
+        `claude_preflight_calls` reads it, so an offline preview sizes the preflight like a live run.
+        """
+        values, root = cls._role_values(path)
+        return {name: {"adapter": parse_role_offline(value, root).adapter} for name, value in values.items()}
 
     @classmethod
     def single(cls, adapter: str, model: str, options: ClaudeOptions | None = None) -> Configuration:
@@ -139,6 +149,18 @@ class Configuration:
     def supports_conversation(adapter: str) -> bool:
         """Return whether an adapter can run a journey in one live conversation."""
         return hasattr(adapter_class(adapter), "converse")
+
+    @staticmethod
+    def claude_preflight_calls(identity: object) -> int:
+        """Return the budgeted calls that a first preflight claims for the Claude roles of a frozen role identity.
+
+        Each Claude role runs a Bash sandbox check and a Read file-access check (gh-176), `PREFLIGHT_CALLS` in all.
+        A Codex or Command role claims none.
+        """
+        roles = cast(Mapping[str, object], identity).values() if isinstance(identity, Mapping) else ()
+        adapters = [cast(Mapping[str, object], role).get("adapter") for role in roles if isinstance(role, Mapping)]
+        claude = sum(1 for adapter in adapters if adapter in BUILTIN_ADAPTERS and has_claude_sandbox(cast(str, adapter)))
+        return PREFLIGHT_CALLS * claude
 
     def judge_captures(self) -> bool:
         """Return whether the judge role can show capture files to the judge."""

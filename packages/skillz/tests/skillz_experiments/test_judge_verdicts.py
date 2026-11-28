@@ -225,7 +225,7 @@ def test_ac17_a_run_frozen_by_an_older_evaluator_refuses_to_resume(judged: Judge
 
 @pytest.mark.ac("judge-criteria-verdicts:AC-17")
 def test_ac17_a_run_frozen_by_an_older_evaluator_refuses_to_export(judged: JudgedRun, tmp_path: Path) -> None:
-    assert judged.start()["phase"] == "complete"
+    assert judged.start(search=True)["phase"] == "complete"
     _ = export(judged.out, tmp_path / "fresh")
     write(judged.out / "run.json", read(judged.out / "run.json") | {"engine_hash": STALE})
     with pytest.raises(ValueError, match="^evaluator differs from the frozen record; create a new run$"):

@@ -1,4 +1,4 @@
-"""Real CLI approval and interruption lifecycle evidence."""
+"""Real CLI interruption and resume lifecycle evidence."""
 from __future__ import annotations
 
 import json
@@ -7,40 +7,15 @@ import signal
 import subprocess
 import sys
 import time
+from collections import Counter
+from hashlib import sha256
 from pathlib import Path
 from typing import cast
 
 import pytest
 
 from skillz_experiments._intake import DRAFT_NAME
-from support import CLI, call_cli, cli_error, command_adapter, export_and_apply, make_scenario, read_events
-
-
-@pytest.mark.ac("skillz-experiments-end-to-end:AC-8")
-def test_approval_refusals_start_no_inference(tmp_path: Path) -> None:
-    scenario = make_scenario(tmp_path)
-    command = command_adapter(scenario)
-    args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
-            "--model", "offline-test", "--harness", "command", "--live", "--edit", "prose", *command]
-
-    code, _, error = call_cli(args, tmp_path)
-    assert code == 1 and cli_error(error)["code"] == "cases-missing"
-    assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
-
-    _ = (scenario.out / DRAFT_NAME).write_text(json.dumps(scenario.draft))
-    code, cases, error = call_cli(args, tmp_path)
-    assert code == 1 and cli_error(error)["code"] == "cases-unapproved"
-    assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
-
-    code, _, error = call_cli([*args, "--approve-cases", "0" * 64], tmp_path)
-    assert code == 1 and cli_error(error)["code"] == "cases-unapproved"
-    assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
-
-    case_hash = cast(str, cases["case_hash"])
-    code, budget, error = call_cli([*args, "--approve-cases", case_hash], tmp_path)
-    assert code == 1 and cli_error(error)["code"] == "budget-unapproved"
-    assert cast(dict[str, int], budget["estimate"])["calls"] > 0
-    assert not any(event["role"] in ("task", "judge", "reflection") for event in read_events(scenario.out))
+from support import CLI, assert_replayed, call_cli, cli_error, command_adapter, export_and_apply, make_scenario, read_events
 
 
 def _record(path: Path) -> dict[str, object] | None:
@@ -63,8 +38,8 @@ def _advance(process: subprocess.Popen[str], pause_dir: Path, checkpoint: Path,
     while time.monotonic() < deadline:
         record = _record(checkpoint)
         pending = list(pause_dir.glob("*.pending"))
-        if (stop_at_holdout and record is not None
-                and any(item.get("split") == "holdout"
+        if (stop_at_holdout and record is not None and record["phase"] == "searched"
+                and any(item.get("split") == "holdout" and item.get("arm") == "winner"
                         for item in cast(list[dict[str, object]], record.get("outcomes", [])))
                 and _held_tasks(pause_dir)):
             return record, "", ""
@@ -95,6 +70,13 @@ def _await_event(out: Path, pid: int) -> None:
 
 
 @pytest.mark.ac("skillz-experiments-end-to-end:AC-8")
+@pytest.mark.ac("gh-756:AC-2")
+@pytest.mark.ac("gh-756:AC-3")
+@pytest.mark.ac("gh-756:AC-12")
+@pytest.mark.ac("gh-756:AC-13")
+@pytest.mark.ac("gh-756:AC-14")
+@pytest.mark.ac("gh-756:AC-17")
+@pytest.mark.ac("gh-756:AC-18")
 @pytest.mark.parametrize("pipesize", [
     pytest.param(-1, id="default-pipes"),
     pytest.param(4096, id="small-pipes", marks=pytest.mark.skipif(
@@ -105,21 +87,30 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(
 ) -> None:
     scenario = make_scenario(tmp_path)
     pause_dir = tmp_path / "pause"
-    pause_dir.mkdir()
     command = command_adapter(scenario, pause_dir=str(pause_dir))
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
             "--model", "offline-test", "--harness", "command", "--live", "--edit", "prose", *command]
     _ = (scenario.out / DRAFT_NAME).write_text(json.dumps(scenario.draft))
     code, cases, error = call_cli(args, tmp_path)
     assert code == 1 and cli_error(error)["code"] == "cases-unapproved"
-    case_hash = cast(str, cases["case_hash"])
-    code, budget, error = call_cli([*args, "--approve-cases", case_hash], tmp_path)
+    baseline_calls = cast(dict[str, int], cases["estimate"])["calls"]
+    flags = ["--approve-cases", str(cases["case_hash"]), "--approve-budget", str(baseline_calls)]
+    code, baseline, error = call_cli([*args, *flags], tmp_path)
+    assert code == 0 and baseline["search"] == "not-run", (baseline, error)
+    checkpoint = scenario.out / "run.json"
+    original = _record(checkpoint)
+    assert original is not None
+    aged = {key: cast(float, original[key]) - 24 * 60 * 60 for key in ("started", "started_monotonic")}
+    _ = checkpoint.write_text(json.dumps(original | aged))
+    measured = read_events(scenario.out)
+    code, budget, error = call_cli([*args, "--search"], tmp_path)
     assert code == 1 and cli_error(error)["code"] == "budget-unapproved"
+    assert read_events(scenario.out) == measured
     calls = cast(dict[str, int], budget["estimate"])["calls"]
-    approved = [*args, "--approve-cases", case_hash, "--approve-budget", str(calls)]
+    approved = [*args, "--search", "--approve-budget", str(calls)]
+    pause_dir.mkdir()
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
-    checkpoint = scenario.out / "run.json"
 
     process = subprocess.Popen([str(CLI), *approved], cwd=tmp_path, env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -144,7 +135,7 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(
             os.killpg(process.pid, signal.SIGKILL)
             _ = process.communicate(timeout=5)
 
-    resumed = subprocess.Popen([str(CLI), *approved], cwd=tmp_path, env=env,
+    resumed = subprocess.Popen([str(CLI), *args], cwd=tmp_path, env=env,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                text=True, start_new_session=True, pipesize=pipesize)
     try:
@@ -161,11 +152,14 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(
     assert result["phase"] == after["phase"] == "complete"
     for key in ("cases_hash", "seed_hash", "best_validated", "started", "started_monotonic"):
         assert after[key] == before[key], key
-    final = cast(dict[str, object], after["budget"])
+    assert all(cast(float, after[key]) > cast(float, original[key]) for key in aged)
+    assert after["plan_mode"] == "search" and after["estimate"] == budget["estimate"]
+    final = cast(dict[str, int], after["budget"])
     assert "unspent" in final and "unspent" not in cast(dict[str, object], before["budget"])
     assert {key: value for key, value in final.items() if key != "unspent"} == before["budget"]
-    assert after["winner_hash"] == cast(dict[str, object], before["best_validated"])["identity"]
-    assert first_calls <= cast(int, after["calls"]) <= calls
+    assert final["prior_calls"] == original["calls"] and final["maximum"] == calls
+    assert after["winner_hash"] == cast(dict[str, object], before["best_validated"])["identity"] != original["seed_hash"]
+    assert first_calls <= cast(int, after["calls"]) <= final["prior_calls"] + calls
     held = [item for item in cast(list[dict[str, object]], after["outcomes"])
             if item.get("split") == "holdout" and item["arm"] != "replay"]
     triples = [(item["arm"], item["case_id"], item["repeat"]) for item in held]
@@ -182,9 +176,72 @@ def test_killed_cli_resumes_durable_holdout_without_repeating_completed_work(
                             and event.get("parent") == resumed.pid for event in read_events(scenario.out))
         assert resumed_tasks == 7 - prior_done
     previous = read_events(scenario.out)
+    seed_tasks = Counter(event["visible_input"] for event in previous[len(measured):]
+                         if event["role"] == "task" and event["candidate"] == original["seed_hash"])
+    held_inputs = {cast(dict[str, str], case["files"])["fixture.md"] for case in scenario.draft if case["id"] in held_ids}
+    assert seed_tasks == dict.fromkeys(held_inputs, 1)
+    prompts = [cast(dict[str, str], event["request"])["prompt"] for event in previous if event["role"] == "reflection"]
+    assert prompts and all(value.strip() not in prompt for prompt in prompts for value in held_inputs)
+    exposed = set(cast(list[str], baseline["exposed"]))
+    selected = {str(item["case_id"]) for item in cast(list[dict[str, object]], after["outcomes"])
+                if item.get("split") in {"train", "validation"}}
+    assert selected == exposed - held_ids
+    search = cast(dict[str, object], result["search"])
+    attempts = cast(list[dict[str, list[str]]], search["attempts"])
+    assert attempts and {case for attempt in attempts for key in ("fixed", "broke") for case in attempt[key]} <= selected
+    gate = cast(dict[str, object], result["gate"])
+    moves = cast(dict[str, list[str]], gate["moves"])
+    assert set(moves["fixed"]) == held_ids <= exposed
+    assert not moves["broke"] and not moves["unresolved"]
+    runner = cast(dict[str, object], cast(dict[str, object], result["claims"])["runner"])
+    checks = cast(dict[str, str], runner["checks"])
+    assert checks["holdout-isolated"] == checks["holdout-coverage"] == checks["calls-within-approval"] == "pass"
+    # Killing an in-flight call can leave a charge without a scored row.
+    assert {name for name, status in checks.items() if status != "pass"} == (
+        {"calls-within-bound"} if result.get("usage_gap") else set())
+    assert after["exposed"] == original["exposed"] == baseline["exposed"]
+    assert_replayed(scenario.out)
+    for field, invalid, diagnostic in (
+        ("schema_version", 1, "run-schema-old"),
+        ("engine_hash", "0" * 64, "evaluator differs from the frozen record"),
+    ):
+        _ = checkpoint.write_text(json.dumps(before | {field: invalid}))
+        code, _, error = call_cli(args, tmp_path)
+        assert code == 1 and diagnostic in error
+        assert read_events(scenario.out) == previous
+    _ = pause_dir.rename(tmp_path / "interrupted")
+    outcomes = cast(list[dict[str, object]], after["outcomes"])
+    missing = next(item for item in outcomes if item["arm"] == "replay")
+    missing_case = next(case for case in scenario.draft if case["id"] == missing["case_id"])
+    missing_input = cast(dict[str, str], missing_case["files"])["fixture.md"]
+    roles = cast(dict[str, int], after["calls_by_role"])
+    gated = {key: value for key, value in after.items() if key != "replay"} | {
+        "phase": "gated", "outcomes": [item for item in outcomes if item is not missing],
+        "calls": cast(int, after["calls"]) - 1, "calls_by_role": roles | {"task": roles["task"] - 1},
+    }
+    for flags in (args, [*args, "--search"]):
+        _ = checkpoint.write_text(json.dumps(gated))
+        code, replayed, error = call_cli(flags, tmp_path)
+        assert (code, error, replayed["phase"]) == (0, "", "complete")
+        assert {key: replayed[key] for key in ("gate", "replay", "calls", "claims")} == {
+            key: result[key] for key in ("gate", "replay", "calls", "claims")}
+        events = read_events(scenario.out)
+        assert events[:len(previous)] == previous
+        added = [(event["role"], event.get("candidate"), event.get("visible_input"))
+                 for event in events[len(previous):] if event["role"] not in {"sandbox", "discover"}]
+        assert added == [("task", after["winner_hash"], missing_input)]
+        previous = events
+        assert_replayed(scenario.out)
     code, repeated, error = call_cli(approved, tmp_path)
     assert (code, error, repeated["gate"]) == (0, "", result["gate"])
     assert read_events(scenario.out) == previous
     applied = export_and_apply(scenario, tmp_path)
+    exported = _record(scenario.export / "report.json")
+    assert exported is not None and exported["search"] == search and exported["gate"] == gate
+    exported_rows = cast(list[dict[str, str]], exported["outcomes"])
+    assert {row["case_id"] for row in exported_rows if "case_id" in row} == exposed
+    replay = cast(dict[str, object], after["replay"])
+    patch = {"candidate.patch": (scenario.export / "candidate.patch").read_text()}
+    assert sha256(json.dumps(patch, sort_keys=True).encode()).hexdigest() == replay["patch_digest"]
     assert "Uppercase fixture.md." in (applied / "SKILL.md").read_text()
     assert (scenario.target / "SKILL.md").read_text() == scenario.original

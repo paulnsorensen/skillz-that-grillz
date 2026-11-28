@@ -10,11 +10,12 @@ import pytest
 
 from skillz_experiments._cases import Case, CodedError
 from skillz_experiments._records import read, write
+from skillz_experiments.run import run
 from skillz_experiments.run._export import export
 from skillz_experiments.run._signals import seed_signals
 
 from test_headroom import _cases, _go, _grants, _headroom, _saturate_train  # pyright: ignore[reportPrivateUsage]
-from test_run_search import Search, _start  # pyright: ignore[reportPrivateUsage]
+from test_run_search import MODEL, Search, _start  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -215,6 +216,9 @@ def test_the_saturated_counts_per_family_and_split_reach_the_export_with_the_war
     _ = write_draft(out)
     case_hash, calls = approvals(target, out, statistics=statistics)
     state = Search(target)
+    with pytest.raises(CodedError) as prepared:
+        _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls, statistics=statistics)
+    assert prepared.value.code == "live-required"
     saturated_train = [str(case["id"]) for case in _cases(out, "train")][:1]
 
     def seed_score(text: str, split: str, case: str) -> float | None:

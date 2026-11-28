@@ -21,7 +21,7 @@ from skillz_experiments._records import read
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, export, run
 from skillz_experiments.run._resume import resolve_statistics
-from fake_provider import FakeRunProvider
+from fake_provider import FakeRunProvider, approved_search, search_approval
 
 MODEL = "local-test"
 
@@ -263,8 +263,7 @@ def test_a_tie_run_lists_every_one_case_family_as_skipped(
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out, families=12, per_family=1)
     case_hash, calls = approvals(target, out, statistics={"family_budget": 0.0})
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Tie,
-                 statistics={"family_budget": 0.0})
+    result = approved_search(target, out, MODEL, case_hash, calls, factory=_Tie, statistics={"family_budget": 0.0})
     gate = cast(dict[str, object], result["gate"])
     skipped = cast(list[str], gate["skipped_families"])
     assert gate["reasons"] == ["winner-equals-baseline"] and "reason" not in gate
@@ -283,8 +282,7 @@ def _finish(target: Path, out: Path, write_draft: Callable[..., list[str]], appr
             statistics: dict[str, float] | None) -> dict[str, object]:
     _ = write_draft(out)
     case_hash, calls = approvals(target, out, statistics=statistics)
-    return run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Provider,
-               statistics=statistics)
+    return approved_search(target, out, MODEL, case_hash, calls, factory=_Provider, statistics=statistics)
 
 
 def test_a_default_run_writes_a_stable_gate_shape_and_the_frozen_map_holds_both_keys(
@@ -320,8 +318,8 @@ def test_skipped_families_reach_summary_and_export(
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out, families=12, per_family=1)
     case_hash, calls = approvals(target, out, statistics={"family_budget": 0.0})
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Provider,
-                 statistics={"family_budget": 0.0})
+    result = approved_search(target, out, MODEL, case_hash, calls, factory=_Provider,
+                             statistics={"family_budget": 0.0})
     gate = cast(dict[str, object], result["gate"])
     skipped = cast(list[str], gate["skipped_families"])
     assert skipped and skipped == sorted(skipped) and len(skipped) == gate["cases"]
@@ -354,7 +352,9 @@ def test_a_frozen_budget_beats_a_later_contract_edit(
     _ = path.write_text(json.dumps(document | {"statistics": {"family_budgets": {"f0": 0.0, "f1": 0.0}}}))
     _prepare_only(target, out, write_draft, approvals)
     _ = path.write_text(json.dumps(document | {"statistics": {"family_budgets": {"f0": 99.0, "f1": 99.0}}}))
-    result = run(target, out, MODEL, live=True, factory=_Provider)
+    assert run(target, out, MODEL, live=True, factory=_Provider)["search"] == "not-run"
+    result = run(target, out, MODEL, live=True, search=True, factory=_Provider,
+                 approve_budget=search_approval(target, out, MODEL))
     assert cast(dict[str, object], result["gate"])["verdict"] == "reject"
     assert read(out / "run.json")["statistics"]["family_budgets"] == {"f0": 0.0, "f1": 0.0}  # pyright: ignore[reportIndexIssue]
 

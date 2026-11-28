@@ -19,10 +19,10 @@ from skillz_experiments._budget import Budget
 from skillz_experiments._records import read
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._codex import Codex, failure_details, retry_after
-from skillz_experiments.run import _outcomes, run
+from skillz_experiments.run import _outcomes
 from skillz_experiments.run._export import summary
 from skillz_experiments.search import add_validation_scores
-from test_run_search import MODEL, _start  # pyright: ignore[reportPrivateUsage]
+from test_run_search import _start, run_search  # pyright: ignore[reportPrivateUsage]
 
 RATE_LIMIT = '{"type":"error","message":"429 rate limit exceeded"}'
 
@@ -344,7 +344,7 @@ def test_a_usage_limited_fault_is_unscored(tmp_path: Path, make_target: Callable
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     state.evaluate_fault = lambda number: (RuntimeError("Codex fails: usage-limited (exit 1); the invocation counts against the budget")
                                            if number == 3 else None)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     rows = [row for row in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if row.get("status") == "evaluation-failed"]
     assert len(rows) == 1 and rows[0]["reason"] == "usage-limited"
     assert add_validation_scores({}, rows) == {}

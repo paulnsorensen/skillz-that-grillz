@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Literal, cast
 
@@ -57,19 +57,17 @@ def _coded() -> Generator[None]:
 app = fromargs.App("skillz-experiment", help="Local, bounded skill experiments. No automatic installation.")
 
 
-def _completed(out: Path) -> bool:
-    try:
-        return read(out / "run.json").get("phase") == "complete"
-    except (OSError, ValueError):
-        return False
+def _completed(out: Path, search: bool) -> bool:
+    from skillz_experiments.run import summary
+    with suppress(OSError, ValueError):
+        report = summary(read(out / "run.json"))
+        return report["phase"] == "complete" or (not search and report["baseline_finished"] is True)
+    return False
 
 
 def _run_harness(model: str, target: Path, harness: RunHarness | None, harness_config: Path | None,
-                 command: list[str] | None, out: Path) -> tuple[str, Configuration | None]:
-    """Resolve the harness options of `run` before any work. Return the adapter name and the configuration, if any.
-    `harness` is None when the user gives no `--harness`, so a conflict with `--harness-config` shows.
-    A completed run in `out` needs no harness, so a configuration that no longer loads does not stop its summary.
-    """
+                 command: list[str] | None, out: Path, search: bool) -> tuple[str, Configuration | None]:
+    """Resolve the harness options. A summary does not need the harness."""
     if harness_config is not None and (harness is not None or command is not None):
         raise CodedError("usage", "--harness-config cannot combine with --harness or --command")
     if command is not None and harness != "command":
@@ -83,7 +81,7 @@ def _run_harness(model: str, target: Path, harness: RunHarness | None, harness_c
                          else Configuration.command(cast(list[str], command), model))
         configuration.check_boundary(target)
     except (CodedError, ValueError, OSError):
-        if not _completed(out):
+        if not _completed(out, search):
             raise
         return "claude", None
     return configured_selection(harness), configuration
@@ -101,8 +99,9 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
                 max_token_increase_per_gain: float | None = None,
                 min_token_saving: float | None = None, min_coverage: float | None = None,
                 max_quality_loss: float | None = None, history: bool | None = None,
-                kind: list[str] | None = None, val_policy: Literal["full", "subset"] | None = None) -> dict[str, object]:
-    """Run or resume one autoimprove run: cases, one search, one holdout gate. Stops return a question.
+                kind: list[str] | None = None, val_policy: Literal["full", "subset"] | None = None,
+                search: bool = False) -> dict[str, object]:
+    """Measure the baseline, or continue into search with separate approval.
 
     Parameters
     ----------
@@ -136,8 +135,8 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
         Minimum scored holdout share, from 0 to 1. Zero disables the rule.
     max_quality_loss
         Maximum plausible quality loss per case. `--min-token-saving` needs it.
-    history
-        Keep private attempt history by default. A resume must keep the first choice.
+    search
+        Continue from the baseline into search, gate, and replay.
     kind
         Contract kind to score. Repeat for more. Default: task drives the split and journey kinds are still evaluated, else all journey kinds.
         With --kind, a drafted case of another kind stays out of the run. The first run freezes the choice.
@@ -148,13 +147,13 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
     statistics = {name: value for name, value in flags.items() if value is not None}
     with _coded():
         from skillz_experiments.run import run
-        adapter, configuration = _run_harness(model, target, harness, harness_config, command, out)
+        adapter, configuration = _run_harness(model, target, harness, harness_config, command, out, search)
         return run(target, out, model, adapter=cast(RunHarness, adapter), configuration=configuration, live=live, edit=edit,
                             repeats=repeats, seed=seed,
                             approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
                             sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read],
                             sandbox_seconds=sandbox_seconds, statistics=statistics or None,
-                            judge_model=judge_model, history=history, kinds=kind or (), val_policy=val_policy)
+                            judge_model=judge_model, history=history, kinds=kind or (), val_policy=val_policy, search=search)
 
 
 @app.command(name="doctor")

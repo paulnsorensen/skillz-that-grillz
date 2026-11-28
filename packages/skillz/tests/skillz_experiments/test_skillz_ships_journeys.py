@@ -45,6 +45,7 @@ def test_the_shipped_contract_has_a_journey_kind_that_runs_the_one_gate_copy() -
 
 
 @pytest.mark.ac("gh-369:AC-6")
+@pytest.mark.ac("gh-756:AC-20")
 def test_the_checked_in_journeys_equal_the_generator_output() -> None:
     generated = cast(list[dict[str, object]], getattr(_kit(), "cases")())
     expected = json.dumps(generated, indent=2) + "\n"
@@ -154,7 +155,7 @@ def test_the_shipped_journey_run_shows_the_plan_rate_and_no_reflection_time_warn
     estimate = cast(dict[str, object], stop["estimate"])
     assert _coded(captured.err)["code"] == "budget-unapproved"
     assert estimate["seconds_per_call"] == ESTIMATE_SECONDS_PER_CALL
-    assert cast(dict[str, int], estimate["reflection"])["calls"] > 0
+    assert estimate["reflection_calls"] == 0
     assert "reflection_time_warning" not in stop and "reflection_time_warning" not in captured.err
 
 @pytest.mark.ac("gh-384:AC-1")

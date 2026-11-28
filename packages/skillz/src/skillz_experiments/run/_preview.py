@@ -10,6 +10,7 @@ from skillz_experiments._contract import LOCATION, Contract
 from skillz_experiments._intake import IntakeCase
 from skillz_experiments.harness import ClaudeOptions
 from skillz_experiments.run._edit_plan import ReflectionNotes, plan_edit
+from skillz_experiments.run._plan import preflight_calls
 from skillz_experiments.run._run import DEFAULT_REPEATS
 from skillz_experiments.run._sizing import Sizer, raised_cap
 from skillz_experiments.run._stop import Stop
@@ -38,10 +39,12 @@ def _journey(contract: Contract, kinds: Sequence[str]) -> bool | None:
 
 def plan(target: Path, contract: Contract, cases: Sequence[IntakeCase] | None, *, edit: Edit | None = None,
          repeats: int | None = None, planning_call_cap: int | None = None,
-         options: ClaudeOptions | None = None, kinds: Sequence[str] = ()) -> dict[str, object]:
+         options: ClaudeOptions | None = None, kinds: Sequence[str] = (),
+         harness: object = None) -> dict[str, object]:
     """Return free planning facts. The app owns diagnostics and draft validation.
 
     Without `cases`, the scored `kinds` decide the ceiling. A mixed or unknown selection leaves it unresolved.
+    `harness` is the role identity of the configured roles. It sizes the preflight like a live run; None keeps the default.
     """
     warnings: list[str] = []
     options = ClaudeOptions() if options is None else options
@@ -91,7 +94,7 @@ def plan(target: Path, contract: Contract, cases: Sequence[IntakeCase] | None, *
         preview["unavailable"] = {"estimate": "valid-draft-required"}
         return preview
     count = sum(case.split == "holdout" for case in scored)
-    sizer = Sizer(contract, scored, options, cap, repeats is not None, count, notes, {})
+    sizer = Sizer(contract, scored, options, cap, repeats is not None, count, notes, {}, preflight_calls(harness))
     try:
         sized = sizer.plan(DEFAULT_REPEATS if repeats is None else repeats)
     except Stop as error:

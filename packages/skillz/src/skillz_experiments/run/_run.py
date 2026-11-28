@@ -1,6 +1,5 @@
-"""One resumable autoimprove run: intake, one search, one holdout gate, one replay of the exported patch.
-
-Phases: prepared, searched, gated, replayed, complete. `run.json` (schema 4) holds the checkpoint of each phase.
+"""Measure the seed and optionally run a search, holdout gate, and patch replay.
+A baseline report does not advance the search phase.
 """
 from __future__ import annotations
 
@@ -15,7 +14,7 @@ from typing import cast, get_args
 
 from skillz_experiments._budget import BudgetUnapproved, approve
 from skillz_experiments._candidate import store_frozen
-from skillz_experiments._cases import CodedError, Split, digest, load_cases
+from skillz_experiments._cases import CodedError, digest
 from skillz_experiments._intake import (
     DRAFT_NAME,
     approval_question,
@@ -40,13 +39,15 @@ from skillz_experiments.harness import (
     has_claude_sandbox,
     host_report,
     refuses_claude_options,
-    stop_kind,
 )
+from skillz_experiments.run._baseline import REPORT_NAME, baseline_finished
+from skillz_experiments.run._baseline_pass import measure_baseline
+from skillz_experiments.run._continuation import approve_search, close_provider
 from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
-from skillz_experiments.run._edit_plan import ReflectionNotes, plan_edit, seed_or_prose
-from skillz_experiments.run._plan import scored_kinds
-from skillz_experiments.run._sizing import Sizer, raised_cap
+from skillz_experiments.run._edit_plan import plan_edit, seed_or_prose
+from skillz_experiments.run._plan import plan_estimate, preflight_calls, scored_kinds
+from skillz_experiments.run._sizing import baseline_plan, budget_data, raised_cap
 from skillz_experiments.run._resume import (
     check_resume,
     check_val_policy,
@@ -55,12 +56,11 @@ from skillz_experiments.run._resume import (
     open_lock,
     refuse_nono,
     refuse_terminated,
-    refuse_too_easy,
     require_private,
     statistics_flag,
     resolve_statistics,
 )
-from skillz_experiments.run._open import engine_hash, validation_policy
+from skillz_experiments.run._open import check_engine, engine_hash, validation_policy
 from skillz_experiments.run._ports import HistoryStore, Ports
 from skillz_experiments.run._record_fields import text_field
 from skillz_experiments.run._session import Session
@@ -138,28 +138,24 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     if resolve_harness or configuration is not None:
         chosen = configuration if configuration is not None else Configuration.split(adapter, model, judge_model, options)
         chosen.check_read_roots(out)
+    scored = [case for case in cases if case.scored]
+    sizing = options if configuration is None else configuration.sizing_options()
+    cap = raised_cap(approve_budget if approve_cases == expected else None, scored)
+    plan = baseline_plan(contract, scored, sizing, cap, preflight_calls(configuration.identity() if configuration else None))
+    shown = plan_estimate(plan, 2, sum(case.split == "holdout" for case in scored))
+    details: dict[str, object] = {"estimate": shown, "statistics": resolved.data(),
+                                  **({} if configuration is not None else {"claude_options": options.data()})}
     if approve_cases != expected:
-        raise Stop("cases-unapproved", "ask the user to approve the cases, then call run with --approve-cases HASH",
-                   {"question": approval_question(cases, split_seed, contract, resolved.data()), "case_hash": expected,
-                    "seed": split_seed, "statistics": resolved.data(),
-                    **({} if configuration is not None else {"claude_options": options.data()})})
-    freeze(out / "cases.json", cases, split_seed, expected, resolved.data())
-    scored = [case for case in load_cases(out / "cases.json", contract.grader_types()) if case.eligible]
-    count = {split: sum(case.split == split for case in scored) for split in cast(tuple[str, ...], get_args(Split))}
+        raise Stop("cases-unapproved", "ask the user to approve the cases and the baseline budget",
+                   details | {"question": approval_question(cases, split_seed, contract, resolved.data()),
+                              "case_hash": expected, "seed": split_seed})
     free = plan_edit(target, contract, edit)
-    mode, wedge, skeleton, seed_candidate = free.mode, free.wedge, free.skeleton, free.seed
-    # An omitted --edit that still plans prose+cli here failed its prose fallback, so the warnings do not offer prose.
-    notes = ReflectionNotes.size(seed_candidate, mode, offer_prose=edit is not None)
-    sizer = Sizer(contract, scored, options if configuration is None else configuration.sizing_options(),
-                  raised_cap(approve_budget, scored), repeats_given, count["holdout"], notes,
-                  {"statistics": resolved.data(), **({} if configuration is not None else {"claude_options": options.data()})})
-    plan = sizer.plan(repeats)
-    shown = sizer.estimate(plan, repeats)
     try:
-        budget = approve(plan.sized, approve_budget, reserve=plan.reserve, reserve_time=plan.reserve_seconds)
+        budget = approve(plan.sized, approve_budget, reserve=0)
     except BudgetUnapproved as error:
-        raise sizer.stop(str(error), {"estimate": shown, "approve": "call run with --approve-budget CALLS",
-                                      **notes.warnings}, repeats) from None
+        raise Stop(error.code, str(error), details | {"approve": "call run with --approve-budget CALLS"}) from None
+    freeze(out / "cases.json", cases, split_seed, expected, resolved.data())
+    mode, wedge, skeleton, seed_candidate = free.mode, free.wedge, free.skeleton, free.seed
     offered = wedge.capable is not None
     wedge, layers = settle(wedge, out / "site")
     if offered and wedge.capable is None:
@@ -172,7 +168,7 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
     seed_frozen = store_frozen(seed_candidate, out / "frozen")
     write(out / "run.json", {
         "schema_version": SCHEMA_VERSION, "run_id": str(uuid.uuid4()), "history": history,
-        "phase": "prepared", "calls": 0, "retries": 0, "calls_by_role": {},
+        "phase": "prepared", "plan_mode": "baseline", "calls": 0, "retries": 0, "calls_by_role": {},
         "seconds_by_role": {}, "model": model, "adapter": adapter,
         "judge_model_flag": judge_model,
         **({"claude_options": options.data()} if resolve_harness else {}),
@@ -184,37 +180,9 @@ def _prepare(target: Path, out: Path, model: str, adapter: HarnessName, edit: Ed
         "contract": contract.data(), "contract_hash": contract.identity, "contract_source": contract.source,
         "estimate": shown, "engine_hash": engine_hash(), "statistics": resolved.data(),
         "validation_policy": validation_policy(), "val_policy": val_policy,
-        "budget": {"maximum": budget.maximum, "seconds": budget.seconds, "reserve": budget.reserve,
-                   "reserve_seconds": budget.reserve_seconds, "approved": budget.approved,
-                   **({"journey": True} if budget.journey else {}), **({"cap": budget.cap} if budget.cap else {})},
+        "budget": budget_data(budget), "repeats_given": repeats_given, "offer_prose": edit is not None, "exposed": [],
         "outcomes": [], "started": time.time(), "started_monotonic": time.monotonic()})
     return resolved
-
-
-def _close(session: Session, pending: BaseException | None) -> None:
-    """Close the provider and checkpoint any close fault.
-
-    With no pending exception, the run keeps its result and records the fault as `close_warning`. When the run
-    itself raises another exception, that exception stays, the close fault goes to `close_failure` and a note, and a
-    terminal close code also becomes the run's `failure_code`.
-    """
-    try:
-        session.provider.close()
-    except CodedError as error:
-        detail = {"code": error.code, "message": str(error)}
-        with session.lock:
-            terminal = stop_kind(error.code) == "terminal" and stop_kind(session.record.get("failure_code")) != "terminal"
-            if pending is not None:
-                session.record["close_failure"] = detail
-                if terminal:
-                    session.record["failure_code"] = error.code
-                    _ = session.record.pop("preflight", None)
-                session.checkpoint()
-            else:
-                session.record["close_warning"] = detail
-                session.checkpoint()
-        if pending is not None:
-            pending.add_note(f"closing the provider also failed with {error.code}: {error}")
 
 
 def _check_arguments(adapter: HarnessName, configuration: Configuration | None, factory: Factory | None,
@@ -301,6 +269,9 @@ def _drive(session: Session, ports: Ports) -> dict[str, object]:
             session.preflight()
             if session.phase == "prepared":
                 session.check_seed()
+                if session.record.get("plan_mode") == "baseline":
+                    session.telemetry.phase("cases")
+                    return measure_baseline(session)
                 _search(session, ports.history)
             elif session.phase == "searched":
                 _repair_history(session, ports.history)
@@ -322,7 +293,7 @@ def _drive(session: Session, ports: Ports) -> dict[str, object]:
         pending = error
         raise
     finally:
-        _close(session, pending)
+        close_provider(session, pending)
     return summary(session.record, session.out)
 
 
@@ -333,8 +304,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         factory: Factory | None = None, configuration: Configuration | None = None,
         statistics: Mapping[str, float] | None = None,
         judge_model: str | None = None, history: bool | None = None, kinds: Sequence[str] = (),
-        val_policy: str | None = None,
-        ports: Ports | None = None) -> dict[str, object]:
+        val_policy: str | None = None, search: bool = False, ports: Ports | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
     An explicit resume option must match its frozen value. `ports` replaces replay and history adapters.
@@ -356,27 +326,30 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                          + "use a private directory outside the skill from `mktemp -d`")
     out.mkdir(mode=0o700, parents=True, exist_ok=True)
     require_private(out)
-    path = out / "run.json"
     with open_lock(out) as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Stop("run-in-progress", "another run holds this run directory",
                        {"next": "wait for the other run to finish, then call run again"}) from None
-        if path.exists():
+        if (path := out / "run.json").exists():
             record = open_record(path)
+            complete, finished = record.get("phase") == "complete", baseline_finished(record)
+            if not complete:
+                refuse_nono(record)
+            check_engine(record)
             refuse_terminated(record)
-            refuse_too_easy(record, out)
-            if record.get("phase") == "complete":
+            if complete or (finished and not search):
                 check_val_policy(record, val_policy)
                 if statistics_given:
                     check_statistics(statistics_given, frozen_statistics(record))
-                return summary(record, out)
-            refuse_nono(record)
+                return read(out / REPORT_NAME) if finished else summary(record, out)
             frozen = frozen_statistics(record)
             check_statistics(statistics_given, frozen)
             check_resume(record, target, edit, repeats, seed, model, adapter, given, configuration is not None,
                          judge_model, history, val_policy)
+            if finished:
+                approve_search(record, out, approve_budget, configuration, repeats)
         else:
             frozen = _prepare(target, out, model, adapter, edit, repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
@@ -387,4 +360,8 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)
-        return _drive(session, ports or Ports())
+        measuring = session.record.get("plan_mode") == "baseline"
+        result = _drive(session, ports or Ports())
+        if measuring and search:
+            approve_search(session.record, out, None, configuration)
+        return result

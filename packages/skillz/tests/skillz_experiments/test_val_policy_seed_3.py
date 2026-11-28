@@ -13,4 +13,4 @@ from test_val_policy import measure_seed
 def test_five_seed_policy_measurement_seed_3(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
-    assert measure_seed(3, tmp_path, make_target, write_draft, approvals) == (95, 68)
+    assert measure_seed(3, tmp_path, make_target, write_draft, approvals) == (69, 42)

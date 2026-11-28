@@ -130,7 +130,7 @@ def test_runtime_configuration_still_requires_model_and_executable(tmp_path: Pat
 
 
 @pytest.mark.ac("gh-297:AC-6")
-def test_plan_estimate_matches_the_free_runtime_budget_stop(
+def test_plan_and_free_runtime_budget_stops_show_their_separate_phases(
         tmp_path: Path, make_target: Maker, write_draft: Callable[[Path], list[str]],
         capsys: pytest.CaptureFixture[str]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
@@ -145,7 +145,11 @@ def test_plan_estimate_matches_the_free_runtime_budget_stop(
     with pytest.raises(Stop) as second:
         _ = run(target, out, "local-test", live=True, edit="prose", approve_cases=approved)
     assert second.value.code == "budget-unapproved"
-    assert preview["estimate"] == second.value.data["estimate"]
+    baseline = cast(dict[str, int], second.value.data["estimate"])
+    search = cast(dict[str, int], preview["estimate"])
+    assert first.value.data["estimate"] == baseline
+    assert baseline["repeats"] == 2 and baseline["search_calls"] == baseline["replay_calls"] == 0
+    assert search["calls"] > baseline["calls"] and search["search_calls"] > 0 and search["replay_calls"] > 0
 
 
 @pytest.mark.ac("gh-297:AC-8")
@@ -334,8 +338,12 @@ def test_journey_cap_and_eligibility_match_freeze_and_runtime_stop(
         _ = run(target, out, "local-test", live=True, edit="prose", kinds=("journey",),
                 approve_cases=cast(str, first.value.data["case_hash"]))
     assert second.value.code == "budget-unapproved"
-    assert preview["estimate"] is None
-    assert cast(dict[str, object], preview["unavailable"])["estimate"] == second.value.code
+    baseline = cast(dict[str, object], second.value.data["estimate"])
+    search = cast(dict[str, object], preview["estimate"])
+    assert first.value.data["estimate"] == baseline
+    assert cast(dict[str, int], baseline["journey"])["ceiling_calls"] == inputs["effective_ceiling_calls"]
+    assert cast(dict[str, int], search["journey"])["ceiling_calls"] == inputs["effective_ceiling_calls"]
+    assert baseline["search_calls"] == 0 < cast(int, search["search_calls"])
 
 
 def _journey_target(tmp_path: Path) -> Path:

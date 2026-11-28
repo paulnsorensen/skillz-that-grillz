@@ -28,7 +28,7 @@ from skillz_experiments.run._resume import resolve_statistics
 from skillz_experiments.run._session import Session
 from skillz_experiments.search import Progress
 from skillz_experiments.search import request as reflection_request
-from fake_provider import FakeRunProvider
+from fake_provider import FakeRunProvider, approved_search
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -510,8 +510,7 @@ def _finish(tmp_path: Path, make_target: Callable[..., Path], write_draft: Calla
     target, out = make_target(tmp_path) if not (tmp_path / "echo-skill").exists() else tmp_path / "echo-skill", tmp_path / name
     _ = write_draft(out)
     case_hash, calls = approvals(target, out, statistics=statistics)
-    return run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=provider,
-               statistics=statistics)
+    return approved_search(target, out, MODEL, case_hash, calls, factory=provider, statistics=statistics)
 
 
 def _gate(result: dict[str, object]) -> dict[str, object]:
