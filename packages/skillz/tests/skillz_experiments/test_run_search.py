@@ -214,12 +214,12 @@ class Provider(FakeRunProvider):
             return {"answer": {"not-a-component": "x"}}
         if self.state.edit_offset is not None:
             # The stated budget plus the offset: a new line after that many parent lines is one edit each.
-            parent = cast(dict[str, dict[str, str]], json.loads(prompt.split("\n", 1)[1]))["candidate"]
+            parent = cast(dict[str, dict[str, str]], json.loads(prompt.rsplit("\n", 1)[1]))["candidate"]
             edits = _budgets([prompt])[0] + self.state.edit_offset
             return {"answer": {name: "".join(f"{line}\nimproved {number}\n" if index < edits else f"{line}\n"
                                              for index, line in enumerate(text.splitlines()))
                                for name, text in parent.items()} | self._free_text(number)}
-        parent_texts = cast(dict[str, dict[str, str]], json.loads(prompt.split("\n", 1)[1]))["candidate"]
+        parent_texts = cast(dict[str, dict[str, str]], json.loads(prompt.rsplit("\n", 1)[1]))["candidate"]
         texts = {name: f"improved {self.state.fixed_number or number} " + "x" * self.state.padding + self.state.suffix
                  if self.state.only in (None, name) else parent_texts[name]
                  for name in cast(list[str], schema["required"]) if name not in ("@hypothesis", "@notes")}

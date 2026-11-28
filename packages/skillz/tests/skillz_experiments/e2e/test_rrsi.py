@@ -48,7 +48,7 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
                    if item["role"] == "reflection"]
     assert reflections
     first_prompt = cast(str, reflections[0]["prompt"])
-    feedback = cast(dict[str, object], json.loads(first_prompt.split("\n", 1)[1]))
+    feedback = cast(dict[str, object], json.loads(first_prompt.rsplit("\n", 1)[1]))
     assert feedback["candidate"] == {"SKILL.md": scenario.original}
     shown = cast(list[dict[str, object]], cast(dict[str, object], feedback["feedback"])["SKILL.md"])
     assert set(cast(dict[str, object], feedback["feedback"])) == {"SKILL.md"}
