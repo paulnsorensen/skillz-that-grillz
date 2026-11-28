@@ -12,6 +12,7 @@ from skillz_experiments._candidate import NEW_CLI, Candidate
 from skillz_experiments._cases import Case, CodedError, digest, mapping
 from skillz_experiments.evaluation import task_tokens
 from skillz_experiments.run._leaderboard import Leaderboard
+from skillz_experiments.run._match import matches
 from skillz_experiments.run._plan import VALIDATION_REPEATS, repeat_indices
 from skillz_experiments.run._outcomes import (
     case_ids, fault_reason, failed_outcome, is_failed, is_unscored, mean_tokens, reflection_fault, repeat_feedback,
@@ -145,7 +146,7 @@ class SearchPhase:
             self._live = 0
             self.fault_base = len(self.search_outcomes())
             for item in self.search_outcomes():
-                if "search_candidate" in item and item.get("status") != "evaluation-failed":
+                if "search_candidate" in item and not is_failed(item):
                     key = (cast(str, item["search_candidate"]), cast(str, item["split"]), cast(str, item["case_id"]),
                            item.get("repeat"))
                     self._reusable.setdefault(key, []).append(item)
@@ -191,10 +192,9 @@ class SearchPhase:
             queue = self._reusable.get((candidate.identity, case.split, case.identifier, repeat))
             if queue:
                 return queue.pop(0)
-            return next((item for item in reversed(self.search_outcomes())
-                         if item.get("search_candidate") == candidate.identity and item.get("split") == case.split
-                         and item.get("case_id") == case.identifier and item.get("repeat") == repeat
-                         and item.get("status") != "evaluation-failed"), None)
+            return next((item for item in reversed(self.search_outcomes()) if not is_failed(item)
+                         and matches(item, candidate=candidate.identity, case_id=case.identifier, split=case.split,
+                                     repeat=repeat)), None)
 
     def evaluate_example(self, components: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
         """Score one GEPA example. A validation case runs once per repeat index, and GEPA gets the mean of the scored repeats."""
@@ -225,8 +225,7 @@ class SearchPhase:
             return {}
         with state.lock:
             incumbent = Leaderboard(state).best_identity()
-            theirs = [item for item in self.search_outcomes()
-                      if item.get("search_candidate") == incumbent and item.get("case_id") == case.identifier]
+            theirs = [item for item in self.search_outcomes() if matches(item, candidate=incumbent, case_id=case.identifier)]
         means = {"task_tokens": results, "incumbent_task_tokens": theirs}
         found = {name: mean_tokens([task_tokens(item) for item in items if not is_failed(item)])
                  for name, items in means.items()}
@@ -269,9 +268,8 @@ class SearchPhase:
         outcomes = list(reversed(self.search_outcomes()))
         counts: list[int | None] = []
         for example in examples:
-            item = next((item for item in outcomes
-                         if item.get("search_candidate") == identity and item.get("split") == "train"
-                         and item.get("case_id") == example and item.get("status") != "evaluation-failed"), None)
+            item = next((item for item in outcomes if not is_failed(item)
+                         and matches(item, candidate=identity, case_id=example, split="train")), None)
             counts.append(None if item is None else task_tokens(item))
         return mean_tokens(counts)
 
