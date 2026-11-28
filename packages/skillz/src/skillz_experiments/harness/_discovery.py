@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import select
-import signal
 import subprocess
 import tempfile
 import time
@@ -12,6 +10,7 @@ from pathlib import Path
 from typing import IO, cast
 
 from skillz_experiments._cases import loads_untrusted, mapping
+from skillz_experiments._runtime import kill_group
 
 
 def valid_listing(value: object, workspace: Path, skill: str) -> bool:
@@ -88,6 +87,5 @@ def discover(command: list[str], workspace: Path, environment: dict[str, str], t
                 raise RuntimeError("native Codex skill discovery gave no result: " + detail)
             return verdict
         finally:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(child.pid, signal.SIGKILL)
+            kill_group(child)
             _ = child.wait()

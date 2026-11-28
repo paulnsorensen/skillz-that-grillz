@@ -4,7 +4,6 @@ import json
 import os
 import select
 import shlex
-import signal
 import subprocess
 import tempfile
 import time
@@ -15,6 +14,7 @@ from skillz_experiments._budget import Budget, CallTimeout
 from skillz_experiments._candidate import Candidate, make_workspace, snapshot_outputs, stage_task
 from skillz_experiments._cases import Case, loads_untrusted, mapping, string
 from skillz_experiments._redact import redact
+from skillz_experiments._runtime import kill_group
 from skillz_experiments.evaluation import Reply, Transcript, usage
 
 @final
@@ -249,12 +249,5 @@ def converse(request: str, candidate: Candidate, case: Case, holdout: bool,
                     raise
                 raise RuntimeError(f"{error}; Codex stderr: {detail}") from error
             finally:
-                try:
-                    os.killpg(child.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                except PermissionError:
-                    # macOS refuses `killpg` for the group of an exited leader. That group is gone (gh-568).
-                    if child.poll() is None:
-                        raise
+                kill_group(child)
                 _ = child.wait()

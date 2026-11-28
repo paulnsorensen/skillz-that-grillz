@@ -5,7 +5,6 @@ import math
 import os
 import resource
 import selectors
-import signal
 import subprocess
 import time
 from functools import partial
@@ -13,6 +12,7 @@ from pathlib import Path
 from typing import cast
 
 from skillz_experiments._cases import loads_untrusted
+from skillz_experiments._runtime import kill_group
 
 STDOUT_LIMIT = 64 * 1024
 FILE_LIMIT = 4 * 1024 * 1024
@@ -89,10 +89,7 @@ def score(workspace: Path, argv: tuple[str, ...], path: str) -> float:
     except OSError:
         raise ProofExecutionError("grader process IO failed") from None
     finally:
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        kill_group(process)
         _ = process.wait()
         if process.stdout is not None:
             process.stdout.close()
