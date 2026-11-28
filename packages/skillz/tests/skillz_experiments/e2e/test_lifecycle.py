@@ -32,6 +32,19 @@ def _held_tasks(pause_dir: Path) -> list[Path]:
     return [path for path in pause_dir.glob("*.task.pending") if not path.with_suffix(".release").exists()]
 
 
+def _baseline_durable(record: dict[str, object]) -> bool:
+    """Return whether each baseline holdout slot has a durable outcome.
+
+    The gate queues each baseline slot before the winner slots. After this point, no baseline call is in flight.
+    A baseline call that runs at the kill has no outcome, so the resume evaluates its slot again.
+    """
+    done = [item for item in cast(list[dict[str, object]], record.get("outcomes", []))
+            if item.get("split") == "holdout" and item.get("arm") == "baseline"
+            and item.get("status") != "evaluation-failed"]
+    slots = {(item["case_id"], item.get("repeat")) for item in done}
+    return len(slots) == len({item["case_id"] for item in done}) * cast(int, record["repeats"])
+
+
 def _advance(process: subprocess.Popen[str], pause_dir: Path, checkpoint: Path,
              *, stop_at_holdout: bool) -> tuple[dict[str, object], str, str]:
     deadline = time.monotonic() + 120
@@ -41,7 +54,7 @@ def _advance(process: subprocess.Popen[str], pause_dir: Path, checkpoint: Path,
         if (stop_at_holdout and record is not None and record["phase"] == "searched"
                 and any(item.get("split") == "holdout" and item.get("arm") == "winner"
                         for item in cast(list[dict[str, object]], record.get("outcomes", [])))
-                and _held_tasks(pause_dir)):
+                and _baseline_durable(record) and _held_tasks(pause_dir)):
             return record, "", ""
         for path in pending:
             _ = path.with_suffix(".release").touch()
