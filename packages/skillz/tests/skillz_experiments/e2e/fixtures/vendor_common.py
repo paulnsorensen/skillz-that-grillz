@@ -87,7 +87,7 @@ def execute(argv: list[str], workspace: Path) -> tuple[int, str, str]:
 
 
 def propose(prompt: str, fields: list[str], mode: str = "normal", observed: str = "") -> dict[str, str | None]:
-    data = cast(dict[str, object], json.loads(prompt.split("\n", 1)[1]))
+    data = cast(dict[str, object], json.loads(prompt.rsplit("\n", 1)[1]))
     candidate = cast(dict[str, str], data["candidate"])
     answer = dict(candidate)
     for name in fields:

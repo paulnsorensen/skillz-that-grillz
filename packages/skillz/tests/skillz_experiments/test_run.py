@@ -270,7 +270,7 @@ def test_every_reflection_request_requires_ste_prose_and_carries_the_candidate(
     assert "ASD-STE100" in prompt and schema["required"] == [*components, "@hypothesis", "@notes"]
     assert f"at most {advisory} words per procedural sentence" in prompt
     assert f"at most {maximum} words per descriptive sentence" in prompt
-    payload = cast(dict[str, object], json.loads(prompt.split("\n", 1)[1]))
+    payload = cast(dict[str, object], json.loads(prompt.rsplit("\n", 1)[1]))
     assert payload["candidate"] == {name: "text" for name in components}
     assert ("helper script components" in prompt) == (edit == "prose+cli")
 

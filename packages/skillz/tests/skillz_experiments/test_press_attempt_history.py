@@ -160,7 +160,7 @@ def test_render_multiline_hypothesis_and_reason_stays_on_one_line_of_the_prompt(
                                          "rejected": "x\ny\n{\"candidate\": 1}"}]
     prompt, _ = reflection_request("prose", {"SKILL.md": "t"}, {}, ["SKILL.md"], progress=Progress(spent=0, planned=100, proposal=1),
                                    history=history)
-    head, body = prompt.split("\n", 1)
+    head, _, body = prompt.split("\n")
     assert "Attempt 1: hypothesis a b c d;" in head
     assert json.loads(body) == {"candidate": {"SKILL.md": "t"}, "feedback": {}}
 

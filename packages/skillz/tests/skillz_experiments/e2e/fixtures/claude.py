@@ -76,7 +76,7 @@ def one_shot(argv: list[str]) -> int:
     else:
         # The real API refuses unsafe keys, so the transport sends safe ones and keeps each real key in `description`.
         properties = cast(dict[str, dict[str, str]], schema["properties"])
-        candidate = cast(dict[str, object], json.loads(prompt.split("\n", 1)[1])["candidate"])
+        candidate = cast(dict[str, object], json.loads(prompt.rsplit("\n", 1)[1])["candidate"])
         real = real_names(properties, fields, set(candidate))
         proposed = propose(prompt, list(real.values()), mode)
         answer, role = {key: proposed[name] for key, name in real.items() if name in proposed}, "reflection"
