@@ -16,7 +16,7 @@ from skillz_experiments._candidate import Candidate, make_workspace, snapshot_ou
 from skillz_experiments._cases import Case, CodedError, digest, relative, string
 from skillz_experiments._contract import resolve, Surface
 from skillz_experiments.evaluation import answer_schema, CheckResult, helper_failure, Reply, Transcript, usage
-from skillz_experiments._graders import CAPTURE_DIRECTORY
+from skillz_experiments._graders import CAPTURE_DIRECTORY, with_capture_files
 from skillz_experiments._budget import Budget, BudgetExhausted
 from skillz_experiments._runtime import live, model_call, process, sandboxed
 from skillz_experiments.harness._check import (
@@ -409,8 +409,7 @@ class ClaudeCode:
                 path.parent.mkdir(parents=True, exist_ok=True)
                 _ = path.write_bytes(data)
                 paths.append(str(path.resolve()))
-            if paths:
-                prompt += "\nCAPTURE FILES:\n" + "\n".join(paths)
+            prompt = with_capture_files(prompt, paths)
             expected = [] if candidate is None else [candidate.skill]
             self.budget.claim(holdout=holdout, role=self.role)
             self.checkpoint()
