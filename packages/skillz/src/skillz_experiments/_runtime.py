@@ -79,6 +79,20 @@ def reset_call_slots() -> None:
     _CHILDREN.reset()
 
 
+def kill_group(child: subprocess.Popen[str] | subprocess.Popen[bytes]) -> None:
+    """Send SIGKILL to the child's group. Ignore a gone group, and a refusal after the child exited.
+
+    macOS refuses `killpg` for the group of an exited leader. That group is gone (gh-568).
+    """
+    try:
+        os.killpg(child.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    except PermissionError:
+        if child.poll() is None:
+            raise
+
+
 def end_group(child: subprocess.Popen[str]) -> None:
     """Send SIGTERM to the child's group, wait `TERM_GRACE_SECONDS`, then SIGKILL whatever remains.
 
@@ -216,13 +230,7 @@ class Live:
         return "".join(self.errors)
 
     def kill(self) -> None:
-        try:
-            os.killpg(self.child.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except PermissionError:
-            if self.child.poll() is None:
-                raise
+        kill_group(self.child)
 
     def turn(self, message: str, timeout: float, ends: Callable[[str], bool]) -> tuple[list[str], bool]:
         """Send one line, then collect output lines until `ends` accepts one.
