@@ -1,0 +1,35 @@
+name: close linked issues
+
+# GitHub auto-closes linked issues only on pushes to the default branch (`dist`).
+# `main` is the source branch, so pushes to `main` (including Mergify squash
+# merges) close same-repo issues referenced by closing keywords or sidebar links.
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: close-linked-issues-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  close-issues:
+    name: close linked issues on main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - name: Checkout script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/scripts/close_linked_issues.py
+          sparse-checkout-cone-mode: false
+
+      - name: Close linked issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 .github/scripts/close_linked_issues.py
