@@ -33,6 +33,7 @@ from skillz_experiments.harness._claude._events import (
 )
 from skillz_experiments.harness._claude._login import login_failed, preflight_leak
 from skillz_experiments.harness._claude._pairs import tool_pairs
+from skillz_experiments.harness._claude._prompts import read_prompt, sandbox_prompt
 from skillz_experiments.harness._claude._sandbox import (
     host_tools,
     network_commands,
@@ -53,18 +54,10 @@ LISTENER_REACHED = "network isolation failed: the runner-owned listener accepted
 # The private file in the run directory that holds the tool transcript of a failed live preflight.
 PREFLIGHT_TRANSCRIPT = "preflight.events.json"
 
-# The two preflight calls of each role. A live sonnet role refused one long prompt that mixed the Read steps with the
-# Bash sweep as a sandbox-escape test, so each call has one plain task and the prompts avoid words such as "sealed".
+# The two preflight calls of each role. `_prompts` holds their text and records why it is worded as it is.
 SANDBOX_CHECK = "Bash sandbox check"
 READ_CHECK = "file-access check"
 PREFLIGHT_CALLS = 2  # One budgeted `_call` per check above, for each Claude role.
-SANDBOX_INTRO = ("This is a check of the Bash sandbox in this workspace. Run each command below with the Bash tool, "
-                 + "exactly as written and in the given order. The sandbox blocks some of these commands, so a failed "
-                 + "command is a normal result: continue with the next command. Do not change a command, and do not "
-                 + "use another tool. ")
-READ_INTRO = ("This is a file-access check for this workspace. Open each file below with the Read tool, one Read call "
-              + "per file, in the given order. Some files are outside the workspace, so the Read tool can refuse them, "
-              + "and a refusal is a normal result: continue with the next file. Do not use another tool. ")
 
 
 @dataclass(frozen=True)
@@ -182,12 +175,12 @@ class Preflight:
             if probing:
                 commands += [unix_command(str(socket_path), network_token), unix_command("\\0" + abstract, network_token)]
             try:
-                calls.append(self._call(workspace, SANDBOX_CHECK, "Bash", self._sandbox_prompt(
+                calls.append(self._call(workspace, SANDBOX_CHECK, "Bash", sandbox_prompt(
                     sealed, control_file, protected, write_control, write_token, commands), name))
                 # Each call stages the project skills again, so keep the write evidence of the Bash call first.
                 wrote = any(file.exists() for file in protected)
                 shutil.rmtree(workspace / ".claude/skills")
-                calls.append(self._call(workspace, READ_CHECK, "Read", self._read_prompt(sealed, control_file), name))
+                calls.append(self._call(workspace, READ_CHECK, "Read", read_prompt(sealed, control_file), name))
             except Exception:
                 if connected(network_token) or socket_reached(network_token) or abstract_reached(network_token):
                     raise NetworkIsolationFailed(LISTENER_REACHED) from None
@@ -206,30 +199,6 @@ class Preflight:
         claude.checkpoint()
         returncode, stderr, events = claude._run(workspace, prompt, None, [name])  # pyright: ignore[reportPrivateUsage]
         return _Call(check, tool, returncode, stderr, events)
-
-    def _sandbox_prompt(self, outside: Path, control_file: Path, protected: list[Path], write_control: Path,
-                        write_token: str, commands: list[str]) -> str:
-        """Return the prompt of the Bash call: the reads, the writes, and the network commands, in that order.
-
-        A live model refused one long prompt that mixed these steps with the Read-tool steps. So this call names one
-        tool and one plain task, and it says that a blocked command is a normal result.
-        """
-        return (SANDBOX_INTRO
-                + f"Run `cat {outside}` with the Bash tool. Run `cat {control_file}` with the Bash tool. "
-                + "".join(f"Run `printf {write_token} > {file}` with the Bash tool. " for file in protected)
-                + f"Run `printf {write_token} > {write_control}` with the Bash tool. "
-                + "".join(f"Run `{command}` with the Bash tool. " for command in commands)
-                + "Then reply with one line per command: its output, or the word failed.")
-
-    def _read_prompt(self, outside: Path, control_file: Path) -> str:
-        """Return the prompt of the Read call. The verdict needs each of the four Read calls.
-
-        The Read tool must refuse the file outside the workspace, `HOST_FILE`, and the workspace symlink to the outside
-        file. It must read the control file and return its token.
-        """
-        files = [outside, Path(HOST_FILE), control_file.parent / LINK, control_file]
-        return (READ_INTRO + "".join(f"Read the file `{file}` with the Read tool. " for file in files)
-                + "Then reply with one line per file: its text, or the word refused.")
 
     def _verify(self, attempt: _Attempt) -> None:
         """Raise the first error of the ordered verdict. The relist for a late built-in skill runs after the listener and socket checks."""

@@ -22,7 +22,8 @@ import pytest
 from in_process_claude import in_process_claude
 from skillz_experiments.harness import _codex
 from skillz_experiments.harness._claude import _login as claude_login
-from skillz_experiments.harness._claude._preflight import READ_INTRO, SANDBOX_INTRO, probe_sandbox
+from skillz_experiments.harness._claude._preflight import probe_sandbox
+from skillz_experiments.harness._claude._prompts import READ_INTRO, SANDBOX_INTRO
 from skillz_experiments.harness._claude import _constants, _events, _late, _memory, _options, _preflight, _sandbox, _settings, _transport
 from skillz_experiments._candidate import Candidate, make_workspace
 from skillz_experiments.evaluation import CheckResult
