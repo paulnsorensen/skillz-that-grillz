@@ -457,7 +457,11 @@ def _answer(call: Call) -> int:
     prompt = call.stdin.read()
     settings = Path(argv[argv.index("--settings") + 1]).read_text() if "--settings" in argv else None
     captured: dict[str, str | None] = {}
-    for line in prompt.split("\nCAPTURE FILES:\n", 1)[1].splitlines() if "\nCAPTURE FILES:\n" in prompt else []:
+    # The child cannot import the kernel, so it reads the trailing capture paths, not the `with_capture_files` label.
+    root = f"{call.cwd.resolve() / 'capture'}{os.sep}"
+    for line in reversed(prompt.splitlines()):
+        if not line.startswith(root):
+            break
         captured[line] = Path(line).read_bytes().hex() if Path(line).is_file() else None
     listing = "--input-format" in argv
     context = not listing and prompt.strip() == "/context"

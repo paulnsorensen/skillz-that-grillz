@@ -117,7 +117,7 @@ def test_a_failed_claude_call_books_its_seconds_under_failed(tmp_path: Path) -> 
 
 
 def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_paths(tmp_path: Path) -> None:
-    from skillz_experiments._graders import CAPTURE_INSTRUCTION, Viewer, judge_schema
+    from skillz_experiments._graders import CAPTURE_FILES_LABEL, CAPTURE_INSTRUCTION, Viewer, judge_schema
     executable = fake_claude(tmp_path)
     session = harness(tmp_path, executable)
     attachments = {"page.png": b"\x89PNG\r\n\x1a\nimage", "notes/page.txt": b"text"}
@@ -132,7 +132,7 @@ def test_view_writes_the_attachments_into_the_judge_workspace_and_lists_their_pa
     captured = cast(dict[str, str | None], call["captured"])
     assert captured == {str(workspace / "capture" / name): data.hex() for name, data in sorted(attachments.items())}
     paths = "\n".join(str(workspace / "capture" / name) for name in sorted(attachments))
-    assert call["prompt"] == "score it" + CAPTURE_INSTRUCTION + "\nCAPTURE FILES:\n" + paths
+    assert call["prompt"] == "score it" + CAPTURE_INSTRUCTION + CAPTURE_FILES_LABEL + paths
     assert "listed at the end of this prompt" in CAPTURE_INSTRUCTION
     assert result["answer"] == {"criteria": {"answer": {"level": 3, "reason": "fake judge"}}}
 
