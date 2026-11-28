@@ -55,6 +55,8 @@ of truth for repo-local skills (tooling for work on this repository only).
 - Scorecard intentionally scans `dist`: published results require the default branch.
 - The retarget job handles PRs targeting `dist` without running PR code.
   Retargeting does not repair unrelated history or remove built archives from a branch cut from `dist`.
+- The `close linked issues` workflow runs on pushes to `main` and closes referenced same-repo issues.
+  GitHub auto-closes linked issues only on merges to the default branch (`dist`).
 - Audit branch targets when adding bots, schedules, manual jobs, or release jobs.
   Do not replace event merge refs or release tags with `main` in validation or release checkouts.
 
