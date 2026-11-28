@@ -13,6 +13,7 @@ from skillz_experiments._new_cli import unused_helpers
 from skillz_experiments._redact import redact
 from skillz_experiments._records import open_record, write
 from skillz_experiments.harness import stop_kind
+from skillz_experiments.run._baseline import REPORT_NAME, baseline_finished
 from skillz_experiments.run._claims import claims
 from skillz_experiments.run._export_outcome import export_outcome
 from skillz_experiments.run._patch import build_patch
@@ -124,6 +125,7 @@ REPLAY_KEYS = ("status", "reasons", "patch_digest", "cases", "mean_delta", "se",
 def summary(record: dict[str, object], out: Path | None = None) -> dict[str, object]:
     """Return the run summary. With `out`, it reconciles the budget counter with the planned worst-case call count.
 
+    `baseline_finished` tells a run that stopped after its baseline from a completed run.
     A completed run with `out` also carries `claims`: the runner, export, and improvement claims, each with its own status.
     """
     keys = ("schema_version", "phase", "calls", "retries", "calls_by_role", "seconds_by_role", "model", "adapter", "edit",
@@ -132,6 +134,7 @@ def summary(record: dict[str, object], out: Path | None = None) -> dict[str, obj
             "statistics", "headroom", "budget")
     result = {key: record.get(key) for key in keys}
     result["search"] = _export_search(record.get("search"))
+    result["baseline_finished"] = baseline_finished(record)
     replay = record.get("replay")
     if isinstance(replay, dict):
         result["replay"] = {key: value for key, value in cast(dict[str, object], replay).items() if key in REPLAY_KEYS}
@@ -257,6 +260,8 @@ def export(out: Path, destination: Path) -> dict[str, object]:
     """
     record = open_record(out / "run.json")
     if record.get("phase") != "complete":
+        if baseline_finished(record):
+            raise ValueError(f"export requires a completed run; see {out / REPORT_NAME} for the baseline")
         raise ValueError("export requires a completed run")
     if "judge" in record:
         judge_model = text_field(record, "judge_model" if "judge_model" in record else "model")

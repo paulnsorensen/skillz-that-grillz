@@ -27,7 +27,7 @@ from skillz_experiments.run._holdout import holdout_tokens
 from skillz_experiments.run._leaderboard import Leaderboard
 from skillz_experiments.run._outcomes import mean_tokens
 from skillz_experiments.run._session import Session
-from fake_provider import FakeRunProvider
+from fake_provider import FakeRunProvider, approved_search
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -671,8 +671,7 @@ def _gate_of(tmp_path: Path, make_target: Callable[..., Path], write_draft: Call
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
     case_hash, calls = approvals(target, out, statistics=flags)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=provider,
-                 statistics=flags)
+    result = approved_search(target, out, MODEL, case_hash, calls, factory=provider, statistics=flags)
     return cast(dict[str, object], result["gate"])
 
 

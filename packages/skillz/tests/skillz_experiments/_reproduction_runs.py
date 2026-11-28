@@ -11,6 +11,7 @@ from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments._records import read
 from skillz_experiments.run import run
 
+from fake_provider import search_approval
 from test_run_search import MODEL, Search
 
 Maker = Callable[..., Path]
@@ -34,8 +35,14 @@ def start(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: A
     return target, out, Search(target), approved, calls
 
 
-def go(state: Search, target: Path, out: Path, approved: str, calls: int) -> dict[str, object]:
+def measure(state: Search, target: Path, out: Path, approved: str, calls: int) -> dict[str, object]:
     return run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=state.factory)
+
+
+def go(state: Search, target: Path, out: Path, approved: str, calls: int) -> dict[str, object]:
+    assert measure(state, target, out, approved, calls)["search"] == "not-run"
+    return run(target, out, MODEL, live=True, search=True, approve_budget=search_approval(target, out, MODEL),
+               factory=state.factory)
 
 
 def record(out: Path) -> dict[str, Any]:  # pyright: ignore[reportExplicitAny]

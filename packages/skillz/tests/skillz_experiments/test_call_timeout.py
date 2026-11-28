@@ -27,8 +27,9 @@ from skillz_experiments.harness._codex import Codex
 from skillz_experiments.harness._command import Command
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._export import summary
+from fake_provider import search_approval
 from test_codex_retry import _fake  # pyright: ignore[reportPrivateUsage]
-from test_run_search import MODEL, Provider, Search, _start, _validation_runs  # pyright: ignore[reportPrivateUsage]
+from test_run_search import MODEL, Provider, Search, _measure_for_search, _start, _validation_runs, run_search  # pyright: ignore[reportPrivateUsage]
 
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
@@ -148,7 +149,7 @@ def test_a_task_call_timeout_is_an_evaluation_failed_outcome_with_reason_timeout
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.evaluate_fault = lambda number: CallTimeout("the model call exceeded its per-call timeout") if number == 2 else None
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     rows = [row for row in cast(list[dict[str, object]], read(out / "run.json")["outcomes"]) if row.get("reason") == "timeout"]
     assert result["phase"] == "complete"
     assert len(rows) == 1 and rows[0]["status"] == "evaluation-failed" and rows[0]["score"] == 0.0
@@ -159,7 +160,7 @@ def test_a_reflection_timeout_ends_that_proposal_with_no_candidate(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda number: CallTimeout("the model call exceeded its per-call timeout") if number == 1 else None
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
     rows = [row for row in outcomes if row.get("split") == "reflection" and row.get("reason") == "timeout"]
     assert result["phase"] == "complete"
@@ -197,9 +198,10 @@ def test_failed_judge_and_reflection_calls_still_count_by_role(tmp_path: Path, m
 def test_a_run_records_calls_by_role_that_sum_to_calls_and_a_resume_keeps_them(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    _measure_for_search(target, out, state, case_hash, calls)
     state.abort_after_improved = _validation_runs(out)
     with pytest.raises(Exception, match="the process stopped"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     stopped = read(out / "run.json")
     before = cast(dict[str, int], stopped["calls_by_role"])
     assert before.get("reflection", 0) >= 1 and sum(before.values()) == stopped["calls"]
@@ -214,9 +216,10 @@ def test_a_run_records_calls_by_role_that_sum_to_calls_and_a_resume_keeps_them(
 def test_a_record_from_before_the_roles_resumes_with_its_calls_unattributed(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
+    _measure_for_search(target, out, state, case_hash, calls)
     state.abort_after_improved = _validation_runs(out)
     with pytest.raises(Exception, match="the process stopped"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     del record["calls_by_role"], record["seconds_by_role"]
     write(out / "run.json", record)
@@ -231,13 +234,16 @@ def _deadline_search(tmp_path: Path, make_target: Maker, write_draft: Drafter, a
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
-    with pytest.raises(Stop):
-        _ = run(target, out, MODEL, approve_cases=case_hash, approve_budget=calls)
+    state = Search(target)
+    assert run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
+               factory=state.factory)["search"] == "not-run"
+    with pytest.raises(Stop) as stopped:
+        _ = run(target, out, MODEL, search=True, approve_budget=search_approval(target, out, MODEL))
+    assert stopped.value.code == "live-required"
     record = read(out / "run.json")
     budget = cast(dict[str, object], record["budget"])
     budget["seconds"] = time.time() - cast(float, record["started"]) + cast(float, budget["reserve_seconds"]) + 0.5
     write(out / "run.json", record)
-    state = Search(target)
     state.search_delay = 0.2
     return target, out, state
 
@@ -271,8 +277,9 @@ def test_a_search_that_the_deadline_ends_early_reports_time_exhausted_with_secon
 def test_a_call_budget_stop_is_not_reported_as_time_exhausted(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
+    _measure_for_search(target, out, state, case_hash, calls)
     state.exhaust_after_improved = _validation_runs(out)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     search = cast(dict[str, object], result["search"])
     assert search["reason"] == "budget-exhausted-best-validated" and "seconds_by_role" not in search
     assert cast(dict[str, object], read(out / "run.json")["search"])["stop_trigger"] == "call-cap"

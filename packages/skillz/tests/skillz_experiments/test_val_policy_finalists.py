@@ -11,10 +11,9 @@ import pytest
 from skillz_experiments._budget import BudgetExhausted
 from skillz_experiments._intake import DRAFT_NAME
 from skillz_experiments._records import read
-from skillz_experiments.run import run
 from skillz_experiments.run._plan import VALIDATION_REPEATS
 from skillz_experiments.search import scored_runs, validation_complete
-from test_run_search import MODEL, Search, _allowance, _start, _validation  # pyright: ignore[reportPrivateUsage]
+from test_run_search import Search, _allowance, _start, _validation, run_search  # pyright: ignore[reportPrivateUsage]
 
 
 def _subset_done(out: Path) -> bool:
@@ -28,8 +27,7 @@ def test_qualifying_finalist_completes_full_validation_before_promotion(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.score_of = lambda text, _split: 0.8 if text.startswith("improved") else 0.2
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                 factory=state.factory, val_policy="subset")
+    result = run_search(target, out, state, case_hash, calls, val_policy="subset")
     record = read(out / "run.json")
     kept = cast(dict[str, object], record["best_validated"])
     outcomes = cast(list[dict[str, object]], record["outcomes"])
@@ -56,8 +54,7 @@ def test_finalist_provider_error_records_failed_attempt_and_completes_slots(
         return None
 
     state.evaluate_fault = fault
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                 factory=state.factory, val_policy="subset")
+    result = run_search(target, out, state, case_hash, calls, val_policy="subset")
     assert faulted and result["phase"] == "complete"
     record = read(out / "run.json")
     rows = cast(list[dict[str, object]], record["outcomes"])
@@ -71,7 +68,8 @@ def test_finalist_provider_error_records_failed_attempt_and_completes_slots(
     assert validation_complete(rows, identity, validation, VALIDATION_REPEATS)
     scored = scored_runs(rows)
     assert cast(int, failed["repeat"]) not in scored.get(identity, {}).get(cast(str, failed["case_id"]), {})
-    charged = [item for item in rows if item.get("arm") == "search" and item.get("split") in ("train", "validation")]
+    charged = [item for item in rows if item.get("arm") == "search" and item.get("split") in ("train", "validation")
+               and item.get("search_candidate") != record["seed_hash"]]
     assert len(charged) == state.search_calls <= _allowance(out)
 
 
@@ -91,8 +89,7 @@ def test_finalist_budget_stop_keeps_only_fully_validated_winner(
         return None
 
     state.evaluate_fault = fault
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                 factory=state.factory, val_policy="subset")
+    result = run_search(target, out, state, case_hash, calls, val_policy="subset")
     assert faulted and result["phase"] == "complete"
     record = read(out / "run.json")
     assert cast(dict[str, object], record["search"])["reason"] == "budget-exhausted-seed-retained"
@@ -112,8 +109,7 @@ def test_odd_validation_count_uses_rounded_up_subset(
     case_hash, calls = approvals(target, out)
     state = Search(target)
     state.score_of = lambda text, split: (0.3 if split == "validation" else 0.8) if text.startswith("improved") else 0.5
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-            factory=state.factory, val_policy="subset")
+    _ = run_search(target, out, state, case_hash, calls, val_policy="subset")
     record = read(out / "run.json")
     validation = _validation(out)
     assert len(validation) % 2 == 1

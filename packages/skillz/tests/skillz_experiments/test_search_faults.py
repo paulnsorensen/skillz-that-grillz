@@ -14,7 +14,7 @@ from skillz_experiments.run import _outcomes
 from skillz_experiments.run import run
 from skillz_experiments.run._export import export, summary
 from skillz_experiments.search import _engine, add_validation_scores, complete_means
-from test_run_search import MODEL, Search, _seed_pass, _start  # pyright: ignore[reportPrivateUsage]
+from test_run_search import MODEL, Search, _start, run_search  # pyright: ignore[reportPrivateUsage]
 
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
@@ -37,7 +37,10 @@ def _launch(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=families)
 
     def launch() -> dict[str, object]:
-        return run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        record = out / "run.json"
+        if record.exists() and read(record)["plan_mode"] == "search":
+            return run(target, out, MODEL, live=True, factory=state.factory)
+        return run_search(target, out, state, case_hash, calls)
 
     return out, state, launch
 
@@ -95,8 +98,7 @@ def test_more_than_half_failed_after_four_finished_stops_with_search_faulted(
 def test_five_consecutive_faults_stop_with_search_faulted_although_most_evaluations_scored(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     out, state, launch = _launch(tmp_path, make_target, write_draft, approvals)
-    searched = _seed_pass(out) + 8
-    state.evaluate_fault = lambda number: RuntimeError(RATE_LIMITED) if number > searched else None
+    state.evaluate_fault = lambda number: RuntimeError(RATE_LIMITED) if number > 8 else None
     with pytest.raises(CodedError) as caught:
         _ = launch()
     rows = _rows(out)
@@ -172,8 +174,8 @@ def test_a_candidate_with_no_scored_validation_outcome_is_not_selected_over_the_
     monkeypatch.setattr(_outcomes, "FAULT_STREAK", 10**6)
 
     def fault(number: int) -> Exception | None:
-        identity, split, _case = state.search_log[number - 1]
-        return RuntimeError(RATE_LIMITED) if split == "validation" and identity != state.search_log[0][0] else None
+        _identity, split, _case = state.search_log[number - 1]
+        return RuntimeError(RATE_LIMITED) if split == "validation" else None
 
     state.evaluate_fault = fault
     result = launch()
@@ -184,8 +186,7 @@ def test_a_candidate_with_no_scored_validation_outcome_is_not_selected_over_the_
 def _faulted_record(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> tuple[Path, Search, Launch, int]:
     """End a run `search-faulted`, then return it with the evaluation count at the stop."""
     out, state, launch = _launch(tmp_path, make_target, write_draft, approvals)
-    searched = _seed_pass(out) + 8
-    state.evaluate_fault = lambda number: RuntimeError(RATE_LIMITED) if number > searched else None
+    state.evaluate_fault = lambda number: RuntimeError(RATE_LIMITED) if number > 8 else None
     with pytest.raises(CodedError, match="rate-limited"):
         _ = launch()
     return out, state, launch, state.search_calls

@@ -32,14 +32,16 @@ Do not treat this as a published `/skillz` mode.
    Record each rejected claim and its reason under `## Rejected`.
 5. Run `/skillz audit skills/skillz/SKILL.md`, then `/skillz improve skills/skillz/SKILL.md`.
    Keep the published modes and the `/skillz wedge` and `autoimprove` boundaries unchanged.
-6. Run `/skillz autoimprove skills/skillz` after the improve fixes land.
-   Follow `skills/skillz/references/experiments.md` for the questions, the run, the gate, and the export.
-   Run the checkout's `skills/skillz/scripts/skillz-experiment.pyz`, not an installed copy.
+6. Run `/skillz autoimprove skills/skillz` after the improve fixes land. Request a candidate patch with `--search`.
+   Follow `skills/skillz/references/autoimprove-run.md` for approvals, execution, and reports.
+   In the example, set `SKILLZ="$PWD/skills/skillz"` at the repository root.
+   Run that checkout's `skills/skillz/scripts/skillz-experiment.pyz`, not an installed copy.
    `main` tracks no archive, so run `just build` first to build it.
-   Pass `--edit prose+cli` so the search can also change the `inspect-skill` sources in `packages/skillz/src/skillz_inspect`.
+   Pass `--edit prose+cli` on every run call. This lets search change the `inspect-skill` sources in `packages/skillz/src/skillz_inspect`.
    Draft `task` cases that each audit one skill fixture named `fixture.md`.
    Put the expected findings in `expected`. The shipped contract judges them with its `task` rubric.
-   Never skip the case or budget approval.
+   Show the cases, hash, and baseline estimate in one approval question.
+   After measurement, ask separately for approval of the search budget.
    When the user declines a question, skip this step and report the skip.
    Apply the patch only on a `promote` verdict and the user's approval. Then run the step 5 audit again.
    On a `promote-cheaper` verdict, do not apply the patch. Report the verdict, the delta, the SE, the token change, and the `max_quality_loss` margin.

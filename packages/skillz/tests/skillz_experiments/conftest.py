@@ -15,6 +15,7 @@ from typing import NamedTuple, cast
 
 import pytest
 
+from fake_provider import search_approval
 from in_process_claude import Spawn, route
 from skillz_experiments import _runtime
 from skillz_experiments._budget import Budget
@@ -282,29 +283,27 @@ def _write_draft(out: Path, families: int = 6, per_family: int = 2) -> list[str]
 
 
 def _approvals(target: Path, out: Path, model: str = "local-test", *, edit: Edit = "prose",
-               statistics: Mapping[str, float] | None = None) -> tuple[str, int]:
-    """Walk the two stops. Return the case hash and the call count that the user approves.
-
-    The approval covers the resolved statistics, so pass the flags that the later calls pass.
-    """
+               statistics: Mapping[str, float] | None = None,
+               configuration: Configuration | None = None) -> tuple[str, int]:
+    """Read the case hash and call count for the baseline approval."""
     with pytest.raises(Stop) as cases:
-        _ = run(target, out, model, live=True, edit=edit, statistics=statistics)
+        _ = run(target, out, model, edit=edit, statistics=statistics, configuration=configuration)
     assert cases.value.code == "cases-unapproved"
-    case_hash = cast(str, cases.value.data["case_hash"])
-    with pytest.raises(Stop) as budget:
-        _ = run(target, out, model, live=True, approve_cases=case_hash, edit=edit, statistics=statistics)
-    assert budget.value.code == "budget-unapproved"
-    estimate = cast(dict[str, int], budget.value.data["estimate"])
-    return case_hash, estimate["calls"]
+    estimate = cast(dict[str, int], cases.value.data["estimate"])
+    return cast(str, cases.value.data["case_hash"]), estimate["calls"]
 
 
 def _approved_run(target: Path, out: Path, *, model: str = "local-test", factory: Factory | None = None,
                  configuration: Configuration | None = None) -> dict[str, object]:
-    """Write a draft when none exists, give both approvals, then run to the end."""
+    """Write a draft when none exists. Approve the baseline and then approve search."""
     if not (out / DRAFT_NAME).exists():
         _ = _write_draft(out)
-    case_hash, calls = _approvals(target, out, model)
-    return run(target, out, model, live=True, approve_cases=case_hash, approve_budget=calls, factory=factory,
+    case_hash, calls = _approvals(target, out, model, configuration=configuration)
+    baseline = run(target, out, model, live=True, approve_cases=case_hash, approve_budget=calls, factory=factory,
+                   configuration=configuration)
+    assert baseline["search"] == "not-run"
+    search_calls = search_approval(target, out, model, configuration=configuration)
+    return run(target, out, model, search=True, live=True, approve_budget=search_calls, factory=factory,
                configuration=configuration)
 
 
@@ -346,10 +345,16 @@ class JudgedRun(NamedTuple):
     def log(self) -> Path:
         return self.settings.parent / "requests.jsonl"
 
-    def start(self, *, live: bool = True, judge_model: str | None = None) -> dict[str, object]:
-        """Call `run` with the approvals. The wrapper logs the model of every request."""
-        return run(self.target, self.out, "task-model", live=live, approve_cases=self.case_hash,
-                   approve_budget=self.calls, judge_model=judge_model)
+    def start(self, *, live: bool = True, judge_model: str | None = None,
+              search: bool = False) -> dict[str, object]:
+        """Run the baseline and, when requested, approve search separately."""
+        baseline = run(self.target, self.out, "task-model", live=live, approve_cases=self.case_hash,
+                       approve_budget=self.calls, judge_model=judge_model)
+        if not search:
+            return baseline
+        calls = search_approval(self.target, self.out, "task-model")
+        return run(self.target, self.out, "task-model", search=True, live=live, approve_budget=calls,
+                   judge_model=judge_model)
 
 
 @pytest.fixture

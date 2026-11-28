@@ -9,11 +9,10 @@ from typing import cast, final
 import pytest
 
 from skillz_experiments._records import read
-from skillz_experiments.run import run
 from skillz_experiments.run._history_store import Loaded
 from skillz_experiments.run._patch import Patch
 from skillz_experiments.run._ports import Ports
-from test_run_search import MODEL, _start  # pyright: ignore[reportPrivateUsage]
+from test_run_search import _start, run_search  # pyright: ignore[reportPrivateUsage]
 
 pytestmark = pytest.mark.usefixtures("host_login", "headroom_off")
 
@@ -53,8 +52,7 @@ def test_the_replay_applies_the_patches_through_the_injected_applier(
         calls_made.append(directory)
         return "fake: patch refused"
 
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
-                 ports=Ports(patches=refuse, history=MemoryHistory()))
+    result = run_search(target, out, state, case_hash, calls, ports=Ports(patches=refuse, history=MemoryHistory()))
     record = read(out / "run.json")
     assert result["phase"] == "complete" and calls_made == [out / "replay"]
     replay = cast(dict[str, object], record["replay"])
@@ -67,8 +65,7 @@ def test_the_search_loads_and_records_through_the_injected_history_store(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     history = MemoryHistory(warning="history-unreadable")
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
-            ports=Ports(history=history))
+    _ = run_search(target, out, state, case_hash, calls, ports=Ports(history=history))
     record = read(out / "run.json")
     run_id = cast(str, record["run_id"])
     assert history.loads == [(state.contract.skill, str(target.resolve()), run_id)]
@@ -84,7 +81,7 @@ def test_the_search_loads_and_records_through_the_injected_history_store(
 def test_run_without_an_override_uses_the_git_and_xdg_adapters(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     record = read(out / "run.json")
     assert result["phase"] == "complete" and cast(dict[str, object], record["replay"])["reasons"] == []
     assert (out / "replay" / "candidate.patch").is_file()

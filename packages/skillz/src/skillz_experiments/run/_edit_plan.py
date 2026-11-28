@@ -96,8 +96,12 @@ class ReflectionNotes:
     @classmethod
     def size(cls, seed: Candidate, edit: Edit, *, offer_prose: bool, emit: bool = True) -> ReflectionNotes:
         """Return the notes of `seed` with its size warning, if any."""
-        notes = cls(editable_chars(seed.files, seed.editable), edit, offer_prose, emit=emit)
-        notes._add("reflection_warning", reflection_warning(notes.chars, edit, offer_prose=offer_prose))
+        return cls.for_edit(editable_chars(seed.files, seed.editable), edit, offer_prose=offer_prose, emit=emit)
+
+    @classmethod
+    def for_edit(cls, chars: int, edit: Edit, *, offer_prose: bool, emit: bool = True) -> ReflectionNotes:
+        notes = cls(chars, edit, offer_prose, emit=emit)
+        notes._add("reflection_warning", reflection_warning(chars, edit, offer_prose=offer_prose))
         return notes
 
     def time(self, reflection_calls: int, sized: Estimate) -> dict[str, int]:

@@ -219,7 +219,11 @@ SOURCED: dict[str, object] = {"expected_output": "hello", "assertions": ["echoes
 def test_ac8_intake_freezes_the_source_fields_and_the_criteria_unchanged(tmp_path: Path, make_target: Callable[..., Path]) -> None:
     target, out = intake(tmp_path, make_target, copy.deepcopy(SOURCED))
     case_hash = cast(str, stop(target, out).data["case_hash"])
-    assert stop(target, out, approve_cases=case_hash).code == "budget-unapproved"
+    budget = stop(target, out, approve_cases=case_hash)
+    assert budget.code == "budget-unapproved"
+    estimate = cast(dict[str, int], budget.data["estimate"])
+    with pytest.raises(Stop, match="live model calls"):
+        _ = run(target, out, "local-test", approve_cases=case_hash, approve_budget=estimate["calls"])
     frozen = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
     assert next(case["expected"] for case in frozen if case["id"] == "t0-0") == SOURCED
 

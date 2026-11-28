@@ -27,10 +27,9 @@ from skillz_experiments.harness import Configuration
 from skillz_experiments.harness._claude import ClaudeCode
 from skillz_experiments.harness._command import Command
 from skillz_experiments._intake import intake_contract
-from skillz_experiments.run import run
 from skillz_experiments.run._plan import PREFLIGHT_CALLS
 from typing_extensions import override
-from fake_provider import PASSED, FakeRunProvider
+from fake_provider import PASSED, FakeRunProvider, approved_search
 from memo_fixtures import SKILL, cases as _cases, contract as _contract
 
 if TYPE_CHECKING:
@@ -168,10 +167,12 @@ def test_gepa_parallel_minibatches_check_each_new_identity_once(
     def factory(_model: str, budget: Budget, checkpoint: Callable[[], None]) -> Searcher:
         return Searcher(budget, checkpoint, counts, contract)
 
-    _ = run(target, out, "local-test", live=True, approve_cases=case_hash, approve_budget=calls, factory=factory)
+    _ = approved_search(target, out, "local-test", case_hash, calls, factory=factory)
     outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
     seed = next(iter(counts))
     proposed = Counter(str(item["candidate_hash"]) for item in outcomes
                        if item.get("arm") == "search" and item.get("candidate_hash") not in (None, seed))
     assert proposed and max(proposed.values()) > 1
-    assert {identity: count for identity, count in counts.items() if count != 1} == {}
+    assert counts[seed] == 2  # The baseline and search sessions each check the seed once.
+    assert set(proposed) <= counts.keys()
+    assert {identity: count for identity, count in counts.items() if identity != seed and count != 1} == {}

@@ -13,7 +13,7 @@ from skillz_experiments._cases import CodedError, mapping
 from skillz_experiments._contract import Contract
 from skillz_experiments.gate import DEFAULT_STATISTICS, Statistics
 from skillz_experiments.harness import CONFIGURED_SELECTIONS, NONO_REMOVED, ClaudeOptions, stop_kind
-from skillz_experiments.run._baseline import too_easy_stop
+from skillz_experiments.run._baseline import baseline_finished, too_easy_stop
 from skillz_experiments.run._record_fields import judge_flag, text_field
 from skillz_experiments.run._signals import unscorable_stop
 from skillz_experiments.run._state import HarnessName
@@ -81,8 +81,8 @@ def refuse_terminated(record: dict[str, object]) -> None:
 def refuse_too_easy(record: dict[str, object], out: Path) -> None:
     """Raise the `cases-too-easy` or `cases-unscorable` stop of the headroom pass again from the record. No model call runs.
 
-    The text and the baseline report come from the record, not from `failure`, so a run that died before it recorded
-    `failure` still resumes with the same stop.
+    The message comes from the recorded headroom block, and the baseline report comes from `report.json` in `out`.
+    A run that died before it recorded `failure` still resumes with the same stop.
     """
     headroom = record.get("headroom")
     if not isinstance(headroom, dict):
@@ -139,8 +139,10 @@ def check_resume(record: dict[str, object], target: Path, edit: Edit | None, rep
                          + "resume with the same --harness-config or --harness command --command, or create a new run")
     if recorded_adapter != adapter:
         raise _config_differs("--harness")
+    # A finished baseline that took no `--repeats` has not frozen them: `approve_search` records the repeats of a resume.
+    open_repeats = baseline_finished(record) and record.get("repeats_given") is not True
     for flag, value, field in ("--edit", edit, "edit"), ("--repeats", repeats, "repeats"), ("--seed", seed, "split_seed"):
-        if value is not None and value != record.get(field):
+        if value is not None and value != record.get(field) and not (open_repeats and flag == "--repeats"):
             raise _config_differs(flag)
     recorded = ClaudeOptions.parse(mapping(record.get("claude_options", {})))
     for flag, field in _OPTION_FLAGS:

@@ -36,12 +36,12 @@ from skillz_experiments._budget import (
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._plan import HOLDOUT_RETRIES_PER_ARM, PREFLIGHT_CALLS, VALIDATION_REPEATS
 from skillz_experiments.run._plan import (
-    _command_seconds as command_seconds,  # pyright: ignore[reportPrivateUsage]
+    command_seconds,
     _plan as plan_run,  # pyright: ignore[reportPrivateUsage]
     size_plan,
 )
 from typing_extensions import override
-from fake_provider import FakeProvider, FakeRunProvider
+from fake_provider import FakeProvider, FakeRunProvider, approved_search
 
 FIXTURES = Path(__file__).parent / "fixtures"
 FAKE = FIXTURES / "fake_claude.py"
@@ -335,8 +335,7 @@ def start(tmp_path: Path, max_turns: int) -> tuple[Path, Path, str, Callable[...
     return target, out, cast(str, cases.value.data["case_hash"]), factory, prompts
 
 
-def test_journey_budget_estimate_shows_a_separate_journey_line_and_asks_once(tmp_path: Path) -> None:
-    # Six turns, because the six preflight calls (gh-176) leave no search for seven turns under the journey cap.
+def test_journey_baseline_budget_estimate_has_its_own_journey_line(tmp_path: Path) -> None:
     target, out, approved, factory, _ = start(tmp_path, 6)
     with pytest.raises(Stop) as asked:
         _ = run(target, out, MODEL, live=True, approve_cases=approved)
@@ -348,8 +347,9 @@ def test_journey_budget_estimate_shows_a_separate_journey_line_and_asks_once(tmp
                     "ceiling_seconds": JOURNEY_SECONDS}
     calls = cast(int, estimate["calls"])
     result = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=factory)
-    assert result["phase"] == "complete"
+    assert result["search"] == "not-run"
     record = read(out / "run.json")
+    assert record["plan_mode"] == "baseline" and record["estimate"] == estimate
     budget = cast(dict[str, object], record["budget"])
     assert (budget["maximum"], budget["seconds"], budget["journey"]) == (calls, JOURNEY_SECONDS, True)
     assert cast(int, record["calls"]) <= calls
@@ -359,7 +359,8 @@ def test_journey_budget_run_stops_before_any_call_when_the_estimate_exceeds_the_
     target, out, approved, _, _ = start(tmp_path, 50)
     with pytest.raises(Stop) as asked:
         _ = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=5000)
-    assert asked.value.code == "budget-unapproved" and "the cap is 1000" in str(asked.value)
+    assert asked.value.code == "budget-unapproved" and "the cap of 1000 calls" in str(asked.value)
+    assert not (out / "run.json").exists()
 
 
 def test_journey_budget_single_turn_run_keeps_the_200_call_cap(tmp_path: Path, make_target: Callable[..., Path],
@@ -382,7 +383,7 @@ def test_journey_scored_in_validation_minibatches_and_the_holdout_gate_with_thre
     with pytest.raises(Stop) as asked:
         _ = run(target, out, MODEL, live=True, approve_cases=approved)
     calls = cast(int, cast(dict[str, object], asked.value.data["estimate"])["calls"])
-    result = run(target, out, MODEL, live=True, approve_cases=approved, approve_budget=calls, factory=factory)
+    result = approved_search(target, out, MODEL, approved, calls, factory=factory)
     assert result["phase"] == "complete"
     record = read(out / "run.json")
     cases = cast(list[dict[str, object]], read(out / "cases.json")["cases"])
@@ -430,19 +431,20 @@ def test_a_mixed_task_and_journey_plan_sizes_the_search_from_the_mean_case_cost_
     mean = -(-sum(searched) // len(searched))
     holdout = [journey_cost] + [task_cost] * 5
     retry = 2 * HOLDOUT_RETRIES_PER_ARM * max(holdout)
-    assert plan.retry_calls == retry and plan.holdout_calls == 2 * sum(holdout) + retry
+    gate_repeats = 2 * 1 - min(1, 2)
+    assert plan.retry_calls == retry and plan.holdout_calls == gate_repeats * sum(holdout) + retry
     assert plan.sized.journey
     sandbox = command_seconds(contract, cases, ClaudeOptions())
-    at_mean = plan_run(6, 6, 6, mean, 1, sandbox, journey=True, holdout_costs=holdout, headroom_costs=[task_cost] * 6)
+    at_mean = plan_run(6, 6, 6, mean, 1, sandbox, journey=True, holdout_costs=holdout)
     assert plan == at_mean and 1 < mean < journey_cost
-    # At the journey maximum, the plan spends the whole call cap on the gates and leaves a smaller search than the mean.
-    # At the 30 second plan rate the call cap binds first, so the plan no longer stops for want of search room (gh-571).
+    # At the journey maximum, the search grows until one more metric call no longer fits the call cap, and it is smaller
+    # than the mean-cost search. At the 30 second plan rate the call cap binds first (gh-571).
     at_maximum = plan_run(6, 6, 6, journey_cost, 1, sandbox, journey=True)
-    assert at_maximum.sized.calls == JOURNEY_CALLS
+    assert JOURNEY_CALLS - journey_cost < at_maximum.sized.calls <= JOURNEY_CALLS
     assert at_maximum.metric_calls < at_mean.metric_calls
 
 
-def test_at_three_repeats_the_mean_cost_plan_fits_while_the_journey_maximum_plan_has_too_few_calls(
+def test_at_four_repeats_the_mean_cost_plan_fits_while_the_journey_maximum_plan_has_too_few_calls(
         tmp_path: Path) -> None:
     contract = _mixed_contract(tmp_path)
     journey_cost, task_cost = contract.calls("journey", 8), contract.calls("task")
@@ -452,10 +454,10 @@ def test_at_three_repeats_the_mean_cost_plan_fits_while_the_journey_maximum_plan
     mean = -(-sum(searched) // len(searched))
     holdout = [journey_cost] + [task_cost] * 5
     sandbox = command_seconds(contract, cases, ClaudeOptions())
-    plan = size_plan(contract, cases, 3, ClaudeOptions())
-    assert plan == plan_run(6, 6, 6, mean, 3, sandbox, journey=True, holdout_costs=holdout, headroom_costs=[task_cost] * 6)
+    plan = size_plan(contract, cases, 4, ClaudeOptions())
+    assert plan == plan_run(6, 6, 6, mean, 4, sandbox, journey=True, holdout_costs=holdout)
     with pytest.raises(Stop, match="too few calls"):
-        _ = plan_run(6, 6, 6, journey_cost, 3, sandbox, journey=True)
+        _ = plan_run(6, 6, 6, journey_cost, 4, sandbox, journey=True)
 
 
 def test_the_mixed_holdout_reserve_covers_one_failed_attempt_of_the_costliest_case(tmp_path: Path) -> None:
@@ -464,7 +466,7 @@ def test_the_mixed_holdout_reserve_covers_one_failed_attempt_of_the_costliest_ca
     cases = [_mixed_case(split, f"{split}-{n}", journey=n == 0 and split != "train")
              for split in ("train", "validation", "holdout") for n in range(6)]
     plan = size_plan(contract, cases, 3, ClaudeOptions())
-    gate_pass = 2 * 3 * (journey_cost + 5)
+    gate_pass = (2 * 3 - min(3, 2)) * (journey_cost + 5)
     assert plan.holdout_calls - gate_pass >= 2 * HOLDOUT_RETRIES_PER_ARM * journey_cost
 
 

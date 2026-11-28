@@ -63,7 +63,7 @@ class Setup:
 
 @dataclass(frozen=True)
 class Scenario:
-    """One run scenario. `cap` is the largest run estimate that it approves. `bridge` needs Codex for the command bridge.
+    """One run scenario. `cap` limits total calls. `baseline_cap` limits the first plan. `bridge` needs Codex.
 
     `author` writes the case draft with a live agent on the scenario harness in place of `Setup.draft`; a dry run keeps
     `Setup.draft`. `check` adds record fields after the export. A scenario with `verdict` passes only by that rule.
@@ -71,6 +71,7 @@ class Scenario:
 
     build: Callable[[Path, str, str], Setup]
     cap: int
+    baseline_cap: int
     bridge: bool = False
     resume: bool = False
     author: Callable[[Path, Path, str, str], tuple[list[dict[str, object]] | None, dict[str, object]]] | None = None
@@ -265,21 +266,21 @@ def _changelog_proof(work: Path, harness: str, model: str) -> Setup:
 
 
 SCENARIOS: dict[str, Scenario] = {
-    "basic": Scenario(_basic, 126),
-    "command-harness": Scenario(_command_harness, 126, bridge=True),
-    "command-grader": Scenario(_command_grader, 70),
-    "hybrid-mixed": Scenario(_hybrid_mixed, 126, bridge=True),
-    "prose-cli": Scenario(_prose_cli, 70),
-    "journey": Scenario(_journey, 609),
-    "resume": Scenario(_basic, 126, resume=True),
-    "fromargs-benefit": Scenario(_fromargs_benefit, 170, author=_fromargs_author, check=check_cli,
+    "basic": Scenario(_basic, 126, 54),
+    "command-harness": Scenario(_command_harness, 126, 54, bridge=True),
+    "command-grader": Scenario(_command_grader, 70, 30),
+    "hybrid-mixed": Scenario(_hybrid_mixed, 126, 54, bridge=True),
+    "prose-cli": Scenario(_prose_cli, 70, 30),
+    "journey": Scenario(_journey, 609, 126),
+    "resume": Scenario(_basic, 126, 54, resume=True),
+    "fromargs-benefit": Scenario(_fromargs_benefit, 170, 54, author=_fromargs_author, check=check_cli,
                                  verdict=cli_verdict),
-    "changelog-proof": Scenario(_changelog_proof, 122, author=changelog_proof.author, check=changelog_proof.check,
+    "changelog-proof": Scenario(_changelog_proof, 122, 42, author=changelog_proof.author, check=changelog_proof.check,
                                 verdict=changelog_proof.proof_verdict),
 }
-"""Each cap is the measured estimate of its draft with `--repeats 1` (`SKILLZ_LIVE_DRY=1` reports it).
+"""Keep the aggregate spend limits. Dry runs measure each baseline cap with `--repeats 1`.
 
-The run estimate includes the run's own `PREFLIGHT_CALLS`, so the two-call preflight (gh-176) adds 3 to each cap.
+The first estimate includes the run preflight. The separate smoke preflight adds `PREFLIGHT_CALLS` to each cap.
 """
 NAMES = (*SCENARIOS, "analytics")
 
@@ -319,12 +320,13 @@ def _record(out: Path) -> dict[str, object]:
 
 
 def _interrupt(argv: tuple[str, ...], out: Path) -> dict[str, object]:
-    """Start the run in a child process. Stop it with SIGINT after `INTERRUPT_AFTER` outcomes. Report what it left."""
+    """Interrupt the search after `INTERRUPT_AFTER` new outcomes and report what it left."""
+    prior = len(cast(list[object], _record(out)["outcomes"]))
     child = subprocess.Popen([sys.executable, "-m", "skillz_experiments", *argv], stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
     outcomes, deadline = 0, time.monotonic() + 1800
     while child.poll() is None and time.monotonic() < deadline:
-        outcomes = len(cast(list[object], _record(out).get("outcomes") or []))
+        outcomes = len(cast(list[object], _record(out)["outcomes"])) - prior
         if outcomes >= INTERRUPT_AFTER:
             child.send_signal(signal.SIGINT)
             break
@@ -377,8 +379,19 @@ def _run(scenario: Scenario, harness: str, model: str, work: Path, capsys: pytes
     fields["estimate"] = estimate
     if dry:
         return fields | {"verdict": "dry", "stage": "budget"}
-    assert estimate <= scenario.cap, f"the run needs {estimate} calls; the stated cap is {scenario.cap}"
-    final = (*run, *approval, "--approve-budget", str(estimate))
+    assert estimate <= scenario.baseline_cap, f"the baseline needs {estimate} calls; the cap is {scenario.baseline_cap}"
+    search = (*run, "--search")
+    code, stop, error = _call(capsys, *search, *approval, "--approve-budget", str(estimate))
+    spent = cast(int, _record(out).get("calls", 0))
+    fields["calls"] = spent
+    if code != 1 or error.get("code") != "budget-unapproved":
+        return fields | _stopped("run", error)
+    search_calls = cast(int, cast(dict[str, object], stop["estimate"])["calls"])
+    fields["search_estimate"] = search_calls
+    if spent + search_calls > scenario.cap:
+        return fields | _stopped("budget", {"code": "budget-over-cap",
+                                            "error": f"baseline and search need {spent + search_calls} calls"})
+    final = (*search, "--approve-budget", str(search_calls))
     if scenario.resume:
         fields |= _interrupt(final, out)
     code, result, error = _call(capsys, *final)
@@ -449,9 +462,9 @@ def _dry_verdict(entry: dict[str, object], scenario: Scenario) -> tuple[bool, st
         return True, f"the run stopped with the expected code {expect}"
     if entry.get("verdict") != "dry":
         return False, f"the dry run stopped at stage {entry.get('stage')} with code {code} before the budget question"
-    if not isinstance(estimate, int) or estimate > scenario.cap:
-        return False, f"the run needs {estimate} calls; the stated cap is {scenario.cap}"
-    return True, f"the estimate of {estimate} calls is at most the cap of {scenario.cap}"
+    if not isinstance(estimate, int) or estimate > scenario.baseline_cap:
+        return False, f"the baseline needs {estimate} calls; the stated cap is {scenario.baseline_cap}"
+    return True, f"the estimate of {estimate} calls is at most the cap of {scenario.baseline_cap}"
 
 
 def _verdict(entry: dict[str, object], scenario: Scenario) -> tuple[bool, str]:
@@ -542,7 +555,7 @@ def _preflight_stop(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixtu
         del harness, model
         return Setup(target, [], {"schema_version": 1}, (), expect=expect)
     monkeypatch.setattr(sys.modules[__name__], "_call", call)
-    return _run(Scenario(build, 97), "codex", "model", work, capsys, dry=False)
+    return _run(Scenario(build, 97, 54), "codex", "model", work, capsys, dry=False)
 
 
 def _complete(work: Path, holdout: int) -> dict[str, object]:
@@ -627,8 +640,8 @@ def test_the_fromargs_benefit_scenario_fails_a_record_that_the_shared_rule_passe
 
 
 @pytest.mark.parametrize(("entry", "passes", "phrase"), [
-    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 126}, True, "at most the cap"),
-    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 127}, False, "the stated cap is 126"),
+    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 54}, True, "at most the cap"),
+    ({"verdict": "dry", "stage": "budget", "expect": None, "estimate": 55}, False, "the stated cap is 54"),
     ({"verdict": "stopped", "stage": "cases", "expect": None, "code": "case-criteria-missing"}, False,
      "stage cases with code case-criteria-missing"),
     ({"verdict": "stopped", "stage": "cases", "expect": "journey-unsupported", "code": "journey-unsupported"}, True,
@@ -665,7 +678,7 @@ def test_every_scenario_with_a_record_check_has_its_own_pass_rule() -> None:
 
 @pytest.mark.ac("gh-300:AC-5")
 @pytest.mark.parametrize("name", list(SCENARIOS))
-def test_each_scenario_splits_its_draft_and_its_cap_equals_the_dry_estimate(
+def test_each_scenario_splits_its_draft_and_its_baseline_cap_equals_the_dry_estimate(
         name: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
     """Run the dry path offline. A stub host report and stub `claude` and `codex` paths stand in for the host checks only."""
     def ready(selections: list[tuple[str, str | None]]) -> dict[str, object]:
@@ -683,4 +696,4 @@ def test_each_scenario_splits_its_draft_and_its_cap_equals_the_dry_estimate(
     work.mkdir()
     entry = _run(scenario, "codex" if scenario.bridge else "claude", "sonnet", work, capsys, dry=True)
     assert entry.get("code") != "cases-too-few", entry
-    assert entry.get("estimate") == scenario.cap, entry
+    assert entry.get("estimate") == scenario.baseline_cap, entry

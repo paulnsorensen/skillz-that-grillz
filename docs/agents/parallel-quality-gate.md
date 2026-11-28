@@ -84,6 +84,11 @@ Local `just build` and `just ci` print the same per-file report from the committ
 (`docs/agents/decisions/quality-ratchets.md` ADR-006).
 The first committed file gives each test the same value, so that split balances by test count
 (`docs/agents/decisions/quality-ratchets.md` ADR-004).
+A new or renamed test file has no committed duration, so only the CI `Check test times` step measures it.
+Local `-n0` time underestimates CI time: in PR #758, one e2e test took 2.16 s locally and 15.29 s on CI (about 7x).
+A packaged-CLI test took 5.1 s locally and 21.7 s on CI (about 4x).
+Keep a new skillz test file at about 2.5 s of local `-n0` time to stay below the 20 s default ceiling.
+Split a slow parametrized test into one file for each row, because the ceiling applies to each file.
 The `refresh test durations` workflow refreshes the committed file each Monday and on `workflow_dispatch`.
 It reads the `test-durations` artifacts of the last three green `validate` push runs on main.
 `refresh_durations.py` gives each test of the newest run its maximum seconds over these runs.

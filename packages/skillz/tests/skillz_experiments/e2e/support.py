@@ -175,9 +175,9 @@ def command_adapter(scenario: Scenario, **settings: object) -> list[str]:
 
 
 def cli_error(stderr: str) -> dict[str, object]:
-    """Parse the coded error the CLI prints on stderr; fail readably when it is not coded."""
+    """Parse the final coded error after any human-readable warnings."""
     try:
-        parsed = cast(object, json.loads(stderr))
+        parsed = cast(object, json.loads(stderr.rstrip().rpartition("\n")[2]))
     except json.JSONDecodeError:
         parsed = None
     assert isinstance(parsed, dict) and "code" in parsed, f"stderr is not a coded CLI error: {stderr!r}"
@@ -188,7 +188,7 @@ def approve_and_run(args: list[str], home: Path, scenario: Scenario, *, cli: Pat
                     bin_dirs: Sequence[Path] = (), env_overrides: Mapping[str, str] | None = None,
                     on_first: Callable[[dict[str, object]], None] | None = None,
                     ) -> tuple[int, dict[str, object], str]:
-    """Walk cases-missing, cases-unapproved, budget-unapproved, then run; return the final call."""
+    """Approve the baseline and, when requested, the separate search plan."""
     def call(extra: list[str]) -> tuple[int, dict[str, object], str]:
         return call_cli([*args, *extra], home, cli=cli, bin_dirs=bin_dirs, env_overrides=env_overrides)
 
@@ -201,18 +201,20 @@ def approve_and_run(args: list[str], home: Path, scenario: Scenario, *, cli: Pat
     if on_first is not None:
         on_first(first)
     _ = (scenario.out / DRAFT_NAME).write_text(json.dumps(scenario.draft))
-    case_hash = cast(str, refused([], "cases-unapproved")["case_hash"])
-    approved = ["--approve-cases", case_hash]
-    budget = refused(approved, "budget-unapproved")
-    calls = cast(dict[str, int], budget["estimate"])["calls"]
-    return call([*approved, "--approve-budget", str(calls)])
+    cases = refused([], "cases-unapproved")
+    calls = cast(dict[str, int], cases["estimate"])["calls"]
+    status, data, error = call(["--approve-cases", str(cases["case_hash"]), "--approve-budget", str(calls)])
+    if "--search" not in args or status != 1 or cli_error(error)["code"] != "budget-unapproved":
+        return status, data, error
+    assert (scenario.out / "report.json").is_file(), (data, error)
+    return call(["--approve-budget", str(cast(dict[str, int], data["estimate"])["calls"])])
 
 
 def run_scenario(scenario: Scenario, home: Path, *, helper: bool = False, harness: str = "command",
                  mode: str = "normal", cli: Path = CLI, extra_flags: tuple[str, ...] = (),
                  bin_dir: Path | None = None, env_overrides: Mapping[str, str] | None = None) -> dict[str, object]:
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out),
-            "--model", "offline-test", "--harness", harness, "--live",
+            "--model", "offline-test", "--harness", harness, "--live", "--search",
             "--edit", "prose+cli" if helper else "prose", *extra_flags]
     path_dirs = [] if bin_dir is None else [bin_dir]
     if harness == "command":

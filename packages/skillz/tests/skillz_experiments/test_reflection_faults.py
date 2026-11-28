@@ -9,9 +9,8 @@ import pytest
 
 from skillz_experiments._cases import CodedError
 from skillz_experiments._records import read
-from skillz_experiments.run import run
 from skillz_experiments.run import _outcomes
-from test_run_search import MODEL, _start  # pyright: ignore[reportPrivateUsage]
+from test_run_search import _start, run_search  # pyright: ignore[reportPrivateUsage]
 
 Maker = Callable[..., Path]
 Drafter = Callable[..., list[str]]
@@ -27,7 +26,7 @@ def test_a_failed_reflection_call_is_recorded_with_its_reason_and_proposes_nothi
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda number: RuntimeError(API_REJECTED) if number == 1 else None
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     failed = [row for row in _reflections(out) if row.get("status") == "failed"]
     assert result["phase"] == "complete"
     assert len(failed) == 1 and failed[0]["reason"] == "api-rejected" and "proposed" not in failed[0]
@@ -39,7 +38,7 @@ def test_a_failed_reflection_is_no_attempt_and_does_not_count_as_a_proposal(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda number: RuntimeError(API_REJECTED) if number == 1 else None
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+    result = run_search(target, out, state, case_hash, calls)
     attempts = cast(list[dict[str, object]], cast(dict[str, object], result["search"])["attempts"])
     proposed = [row for row in _reflections(out) if "proposed" in row]
     assert len(attempts) == len(proposed) and state.prompts[1].count("proposal 1.") == 1
@@ -52,7 +51,7 @@ def test_reflection_calls_that_keep_failing_stop_the_search_with_search_faulted(
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals)
     state.invoke_fault = lambda _number: RuntimeError(API_REJECTED)
     with pytest.raises(CodedError) as caught:
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory)
+        _ = run_search(target, out, state, case_hash, calls)
     assert caught.value.code == "search-faulted" and "api-rejected" in str(caught.value)
     assert state.invokes == 2
     assert [row["status"] for row in _reflections(out)] == ["failed", "failed"]

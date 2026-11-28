@@ -41,7 +41,7 @@ from skillz_experiments.search import request as reflection_request
 from skillz_experiments.run._wedge_targets import BuildFailed, plan_targets, settle
 from skillz_experiments.run import Stop, export, run
 from typing_extensions import override
-from fake_provider import FakeRunProvider
+from fake_provider import FakeRunProvider, search_approval
 
 pytestmark = pytest.mark.usefixtures("host_login")
 
@@ -799,7 +799,9 @@ def test_a_search_that_prefers_the_component_gates_with_the_built_target_and_exp
         world: World, tmp_path: Path, write_draft: Callable[..., list[str]], approvals: Callable[..., tuple[str, int]]) -> None:
     out = prepared(world, tmp_path, write_draft, approvals)
     state = Preferring(world.skill, cast(dict[str, str], read(out / "run.json")["seed"]))
-    result = run(world.skill, out, MODEL, live=True, factory=state.factory)
+    assert run(world.skill, out, MODEL, live=True, factory=state.factory)["search"] == "not-run"
+    result = run(world.skill, out, MODEL, live=True, search=True, factory=state.factory,
+                 approve_budget=search_approval(world.skill, out, MODEL))
     assert result["phase"] == "complete"
     record = read(out / "run.json")
     assert cast(dict[str, str], record["winner"])[NEW_CLI] == VALUE
@@ -864,7 +866,9 @@ def _prompts(world: World, out: Path, cli: str = "") -> list[str]:
     def factory(_model: str, budget: Budget, checkpoint: Callable[[], None]) -> _ProseOnly:
         return _ProseOnly(seed, budget, checkpoint, prompts, cli)
 
-    _ = run(world.skill, out, MODEL, live=True, factory=factory)
+    assert run(world.skill, out, MODEL, live=True, factory=factory)["search"] == "not-run"
+    _ = run(world.skill, out, MODEL, live=True, search=True, factory=factory,
+            approve_budget=search_approval(world.skill, out, MODEL))
     assert prompts, "the search made no reflection call"
     return prompts
 

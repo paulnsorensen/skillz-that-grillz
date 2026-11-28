@@ -17,7 +17,7 @@ from skillz_experiments.gate import Statistics, verdict
 from skillz_experiments._budget import Budget
 from skillz_experiments.run import Stop, run
 from skillz_experiments.run._resume import resolve_statistics
-from fake_provider import FakeRunProvider
+from fake_provider import FakeRunProvider, approved_search, search_approval
 
 MODEL = "local-test"
 
@@ -297,7 +297,9 @@ def test_run_resumeWithFlagOmitted_keepsTheFrozenBudget(
         approvals: Callable[..., tuple[str, int]]) -> None:
     target, out = make_target(tmp_path), tmp_path / "run"
     _prepare_only(target, out, write_draft, approvals, {"family_budget": 0.0})
-    result = run(target, out, MODEL, live=True, factory=_Provider)
+    assert run(target, out, MODEL, live=True, factory=_Provider)["search"] == "not-run"
+    result = run(target, out, MODEL, live=True, search=True, factory=_Provider,
+                 approve_budget=search_approval(target, out, MODEL))
     assert _gate(result)["verdict"] == "reject"
 
 
@@ -309,7 +311,9 @@ def test_run_frozenBudgetDroppedFromRecord_isNotSilentlyDisabled(
     _prepare_only(target, out, write_draft, approvals, {"family_budget": 0.0})
     _tamper(out, lambda stats: stats.pop("family_budget"))
     try:
-        result = run(target, out, MODEL, live=True, factory=_Provider)
+        assert run(target, out, MODEL, live=True, factory=_Provider)["search"] == "not-run"
+        result = run(target, out, MODEL, live=True, search=True, factory=_Provider,
+                     approve_budget=search_approval(target, out, MODEL))
     except CodedError as stop:
         assert stop.code == "run-schema-old"
         return
@@ -328,7 +332,9 @@ def test_run_frozenMapDroppedFromRecord_isNotSilentlyDisabled(
     _prepare_only(target, out, write_draft, approvals, None)
     _tamper(out, lambda stats: stats.pop("family_budgets"))
     try:
-        result = run(target, out, MODEL, live=True, factory=_Provider)
+        assert run(target, out, MODEL, live=True, factory=_Provider)["search"] == "not-run"
+        result = run(target, out, MODEL, live=True, search=True, factory=_Provider,
+                     approve_budget=search_approval(target, out, MODEL))
     except CodedError as stop:
         assert stop.code == "run-schema-old"
         return
@@ -364,8 +370,8 @@ def test_run_zeroFlagBudget_isNotTreatedAsOff(
     _ = write_draft(out)
     target = make_target(tmp_path)
     case_hash, calls = approvals(target, out, statistics={"family_budget": 0.0})
-    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=_Provider,
-                 statistics={"family_budget": 0.0})
+    result = approved_search(target, out, MODEL, case_hash, calls, factory=_Provider,
+                             statistics={"family_budget": 0.0})
     assert _gate(result)["verdict"] == "reject"
 
 

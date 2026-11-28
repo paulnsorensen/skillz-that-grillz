@@ -22,6 +22,7 @@ from skillz_experiments.run import run
 from skillz_experiments.run._stop import Stop
 from skillz_experiments._records import read
 from skillz_experiments._budget import Budget, BudgetExhausted
+from fake_provider import search_approval
 
 if TYPE_CHECKING:
     from .conftest import JudgedRun
@@ -181,7 +182,7 @@ def test_selected_judge_model_reaches_the_judge_calls_of_an_intake_run(tmp_path:
             _ = approved_run(target, out, model="task-model", configuration=configuration)
         assert unscorable.value.code == "cases-unscorable"
     else:
-        _ = approved_run(target, out, model="task-model", configuration=configuration)
+        assert approved_run(target, out, model="task-model", configuration=configuration)["phase"] == "complete"
     record = read(out / "run.json")
     assert record["judge_model"] == "judge-model"
     inferred = {str(item["model"]) for item in requests(log) if item["operation"] == "infer"}
@@ -209,7 +210,7 @@ def test_judge_model_routes_the_judge_calls_and_only_those(judged: JudgedRun, fl
     result = judged.start(judge_model=flag)
     record = read(judged.out / "run.json")
     roles = cast(dict[str, dict[str, str]], record["harness"])
-    assert result["phase"] == "complete"
+    assert result["search"] == "not-run"
     assert models_by_schema(judged.log) == {"judge": {judge}, "task": {"task-model"}, "reflection": set()}
     assert {name: role["model"] for name, role in roles.items()} == {
         "task": "task-model", "reflection": "task-model", "judge": judge}
@@ -218,7 +219,10 @@ def test_judge_model_routes_the_judge_calls_and_only_those(judged: JudgedRun, fl
 
 def test_reflection_calls_stay_on_the_task_model(judged: JudgedRun) -> None:
     _ = judged.settings.write_text(json.dumps({"mode": "low-score", "log": str(judged.log)}))
-    _ = judged.start(judge_model="judge-model")
+    assert judged.start(judge_model="judge-model")["search"] == "not-run"
+    result = run(judged.target, judged.out, "task-model", live=True, search=True,
+                 approve_budget=search_approval(judged.target, judged.out, "task-model"))
+    assert result["phase"] == "complete"
     assert models_by_schema(judged.log) == {
         "judge": {"judge-model"}, "task": {"task-model"}, "reflection": {"task-model"}}
 
@@ -247,7 +251,7 @@ def test_resume_judge_model_must_match_the_first_run(
             _ = judged.start(judge_model=resume)
         assert refused.value.code == "run-config-differs" and not judged.log.exists()
         return
-    assert judged.start(judge_model=resume)["phase"] == "complete"
+    assert judged.start(judge_model=resume)["search"] == "not-run"
     kept = first or "task-model"
     assert models_by_schema(judged.log) == {"judge": {kept}, "task": {"task-model"}, "reflection": set()}
     assert read(judged.out / "run.json")["judge_model"] == kept

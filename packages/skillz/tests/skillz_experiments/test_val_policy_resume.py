@@ -10,7 +10,7 @@ import pytest
 from skillz_experiments._cases import CodedError
 from skillz_experiments._records import read
 from skillz_experiments.run import run
-from test_run_search import MODEL, _allowance, _start  # pyright: ignore[reportPrivateUsage]
+from test_run_search import MODEL, _allowance, _start, run_search  # pyright: ignore[reportPrivateUsage]
 from test_val_policy_finalists import _subset_done  # pyright: ignore[reportPrivateUsage]
 
 
@@ -32,11 +32,12 @@ def test_interrupted_finalist_resumes_without_new_proposals(
 
     state.evaluate_fault = fault
     with pytest.raises(CodedError, match="finalist interrupted"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                factory=state.factory, val_policy="subset")
+        _ = run_search(target, out, state, case_hash, calls, val_policy="subset")
     assert interrupted
-    charged = [item for item in cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
-               if item.get("arm") == "search" and item.get("split") in ("train", "validation")]
+    interrupted_record = read(out / "run.json")
+    charged = [item for item in cast(list[dict[str, object]], interrupted_record["outcomes"])
+               if item.get("arm") == "search" and item.get("split") in ("train", "validation")
+               and item.get("search_candidate") != interrupted_record["seed_hash"]]
     assert len(charged) == state.search_calls
     failed = next(item for item in charged if item.get("status") == "evaluation-failed")
     proposals = state.proposals
@@ -68,13 +69,12 @@ def test_charged_search_error_is_accounted_before_resume(
 
     state.evaluate_fault = fault
     with pytest.raises(CodedError, match="search interrupted"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                factory=state.factory, val_policy="subset")
+        _ = run_search(target, out, state, case_hash, calls, val_policy="subset")
     assert interrupted
     record = read(out / "run.json")
     rows = cast(list[dict[str, object]], record["outcomes"])
-    charged = [item for item in rows if item.get("arm") == "search" and
-               item.get("split") in ("train", "validation")]
+    charged = [item for item in rows if item.get("arm") == "search" and item.get("split") in ("train", "validation")
+               and item.get("search_candidate") != record["seed_hash"]]
     assert len(charged) == state.search_calls
     _ = run(target, out, MODEL, live=True, factory=state.factory)
     assert state.search_calls <= _allowance(out)
@@ -92,16 +92,22 @@ def test_repeated_charged_interruptions_stop_at_search_ceiling(
 
     state.evaluate_fault = fault
     with pytest.raises(CodedError, match="charged interruption"):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls,
-                factory=state.factory, val_policy="subset")
+        _ = run_search(target, out, state, case_hash, calls, val_policy="subset")
     ceiling = _allowance(out)
     assert state.search_calls < ceiling
     proposals = state.proposals
-    while state.search_calls < ceiling:
-        with pytest.raises(CodedError, match="charged interruption"):
-            _ = run(target, out, MODEL, live=True, factory=state.factory)
-    result = run(target, out, MODEL, live=True, factory=state.factory)
+    while True:
+        previous = state.search_calls
+        try:
+            result = run(target, out, MODEL, live=True, factory=state.factory)
+        except CodedError as stopped:
+            assert str(stopped) == "charged interruption" and previous < state.search_calls <= ceiling
+        else:
+            assert state.search_calls == previous
+            break
     assert result["phase"] == "complete" and state.proposals == proposals
-    assert state.search_calls == ceiling
-    rows = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
-    assert sum(item.get("arm") == "search" and item.get("split") in ("train", "validation") for item in rows) == ceiling
+    record = read(out / "run.json")
+    rows = cast(list[dict[str, object]], record["outcomes"])
+    assert sum(item.get("arm") == "search" and item.get("split") in ("train", "validation")
+               and item.get("search_candidate") != record["seed_hash"] for item in rows) == state.search_calls
+    assert state.search_calls <= ceiling

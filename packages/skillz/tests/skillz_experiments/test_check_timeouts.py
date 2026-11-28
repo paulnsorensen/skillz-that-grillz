@@ -31,7 +31,7 @@ from skillz_experiments.run import Stop, run
 from skillz_experiments.run._export import _frozen, calls_upper_bound  # pyright: ignore[reportPrivateUsage]
 from skillz_experiments.run._outcomes import holdout_scores
 from skillz_experiments.run._session import Session
-from fake_provider import PASSED, FakeProvider, FakeRunProvider, ProviderCrash
+from fake_provider import PASSED, FakeProvider, FakeRunProvider, ProviderCrash, approved_search, search_approval
 from memo_fixtures import SKILL, cases as _cases, contract as _contract
 
 pytestmark = pytest.mark.usefixtures("host_login", "headroom_off")
@@ -463,9 +463,12 @@ def _at_gate(tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
+    assert run(target, out, MODEL, live=True, repeats=3, approve_cases=case_hash, approve_budget=calls,
+               factory=plan.factory())["search"] == "not-run"
+    budget = search_approval(target, out, MODEL)
     plan.crash_holdout = True
     with pytest.raises(ProviderCrash):
-        _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=plan.factory())
+        _ = run(target, out, MODEL, live=True, search=True, approve_budget=budget, factory=plan.factory())
     plan.crash_holdout = False
     assert read(out / "run.json")["phase"] == "searched"
     return target, out
@@ -484,8 +487,8 @@ def test_a_final_seed_check_timeout_stops_resumably_and_a_resume_checks_again(
     assert caught.value.data["detail"] == TIMEOUT.reason
     record = read(out / "run.json")
     assert (record["phase"], record["failure_code"], plan.checks["seed"]) == ("prepared", "baseline-check-timeout", 2)
-    _ = run(target, out, MODEL, live=True, factory=plan.factory())
-    assert read(out / "run.json")["phase"] == "complete"
+    result = run(target, out, MODEL, live=True, factory=plan.factory())
+    assert result["search"] == "not-run" and _outcomes(out) and plan.checks["seed"] == 3
 
 
 @pytest.mark.ac("gh-460:AC-1")
@@ -504,9 +507,9 @@ def test_a_preflight_call_timeout_stops_resumably_and_a_resume_passes_the_prefli
     record = read(out / "run.json")
     assert (record["phase"], record["failure_code"], "preflight" in record) == ("prepared", "preflight-timeout", False)
     plan.preflight_error = None
-    _ = run(target, out, MODEL, live=True, factory=plan.factory())
-    resumed = read(out / "run.json")
-    assert resumed["phase"] == "complete" and "preflight" in resumed
+    result = run(target, out, MODEL, live=True, factory=plan.factory())
+    assert result["search"] == "not-run" and _outcomes(out)
+    assert "preflight" in read(out / "run.json")
 
 
 @pytest.mark.ac("gh-460:AC-4")
@@ -527,8 +530,8 @@ def test_one_seed_check_timeout_is_retried_inside_the_check_and_never_stops_the_
     target, out, plan = make_target(tmp_path), tmp_path / "run", Plan(timeouts={"seed": 1})
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=plan.factory())
-    assert read(out / "run.json")["phase"] == "complete"
+    result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=plan.factory())
+    assert result["search"] == "not-run" and _outcomes(out) and plan.checks["seed"] == 2
     assert not any(item.get("rejection_kind") == "timeout" for item in _outcomes(out))
 
 
@@ -573,7 +576,7 @@ def test_a_search_candidate_with_a_final_timeout_is_recorded_rejected_and_adds_n
     target, out, plan = make_target(tmp_path), tmp_path / "run", Plan(timeouts={"winner": 10**6})
     _ = write_draft(out)
     case_hash, calls = approvals(target, out)
-    _ = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=plan.factory())
+    _ = approved_search(target, out, MODEL, case_hash, calls, factory=plan.factory())
     record = read(out / "run.json")
     timed_out = [item for item in _outcomes(out) if item.get("rejection_kind") == "timeout"]
     assert timed_out and all(item["arm"] == "search" and item["status"] == "candidate-contract-rejected"

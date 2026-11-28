@@ -110,7 +110,7 @@ class _Provider(FakeRunProvider):
 @pytest.mark.ac("skillz-pragmatic-autoimprove:AC-17")
 def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_path: Path, capsys: pytest.CaptureFixture[str],
                                                                           monkeypatch: pytest.MonkeyPatch) -> None:
-    """Drive `main(["run", ...])` through its three stops to `complete`. Only the harness `create` step is faked."""
+    """Approve the baseline and search separately. Only the harness creation step is faked."""
     def create(_self: Configuration, _model: str, budget: Budget, checkpoint: Callable[[], None],
                _out: Path | None = None, *_surface: object) -> _Provider:
         return _Provider(budget, checkpoint)
@@ -128,10 +128,10 @@ def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_pa
 
     def call(*approvals: str) -> tuple[int, dict[str, object]]:
         code = main(["run", "--target", str(target), "--out", str(out), "--model", "local-test", "--edit", "prose", "--harness", "claude",
-                     "--live", *approvals])
+                     "--live", "--search", *approvals])
         captured = capsys.readouterr()
         if code:
-            error = cast(dict[str, object], json.loads(captured.err))
+            error = cast(dict[str, object], json.loads(captured.err.rstrip().rpartition("\n")[2]))
             assert "code" in error, error
             stops.append(cast(str, error["code"]))
         return code, cast(dict[str, object], json.loads(captured.out))
@@ -143,11 +143,18 @@ def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_pa
              for family in range(6) for index in range(2)]
     _ = Path(cast(str, missing["draft"])).write_text(json.dumps(draft))
     _, cases = call()
+    assert "estimate" in cases, cases
     case_hash = cast(str, cases["case_hash"])
     _, budget = call("--approve-cases", case_hash)
+    assert budget["estimate"] == cases["estimate"]
     calls = cast(dict[str, int], budget["estimate"])["calls"]
-    code, result = call("--approve-cases", case_hash, "--approve-budget", str(calls))
-    assert code == 0 and stops == ["cases-missing", "cases-unapproved", "budget-unapproved"]
+    code, search = call("--approve-cases", case_hash, "--approve-budget", str(calls))
+    assert code == 1
+    assert stops == ["cases-missing", "cases-unapproved", "budget-unapproved", "budget-unapproved"]
+    assert read(out / "run.json")["plan_mode"] == "baseline"
+    search_calls = cast(dict[str, int], search["estimate"])["calls"]
+    code, result = call("--approve-budget", str(search_calls))
+    assert code == 0
     assert result["phase"] == "complete"
     assert read(out / "run.json")["contract_source"] == "intake"
     exported = main(["export", str(out), "--out", str(tmp_path / "export")])
