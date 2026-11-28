@@ -44,7 +44,11 @@ def saturated(mean: float) -> bool:
 
 def seed_headroom(cases: Sequence[Case], found: Mapping[tuple[object, object, object], Mapping[str, object]],
                   reproduction: dict[str, dict[str, object]], expects_saturation: bool) -> dict[str, object]:
-    """Apply the search headroom rule only to its train and validation seed slots."""
+    """Apply the search headroom rule only to its train and validation seed slots.
+
+    The `too-easy` verdict holds the quality-objective rule. `approve_search` skips it for the token objective.
+    `expects_saturation` (a contract `min_token_saving`) only drops the saturation warning.
+    """
     floor = floor_cases(reproduction)
     by_family: dict[str, list[float]] = {}
     splits: dict[str, str] = {}
@@ -59,7 +63,7 @@ def seed_headroom(cases: Sequence[Case], found: Mapping[tuple[object, object, ob
     easy = any(saturated(mean) for mean in means.values())
     signals = seed_signals(cases, found, reproduction, floor, expects_saturation)
     unscorable = bool(signals["unscorable"])
-    stop = easy and not expects_saturation and not unscorable
+    stop = easy and not unscorable
     verdict = "unscorable" if unscorable else "too-easy" if stop else "ok"
     block: dict[str, object] = {"ceiling": HEADROOM_CEILING, "families": families, "verdict": verdict} | signals
     if reproduction:

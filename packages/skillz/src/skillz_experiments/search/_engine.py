@@ -7,13 +7,15 @@ import math
 import os
 import threading
 from collections.abc import Callable, Mapping, Sequence
+from concurrent.futures import Future
 from typing import Literal, Protocol, cast, final, get_args
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS
 from skillz_experiments._cases import CodedError
 from skillz_experiments.search._policy import FixedSubset
 
-REFLECTION_MINIBATCH = 2
+REFLECTION_MINIBATCH = 3
+"""The train cases of one reflection minibatch: the GEPA and DSPy default (gh-757)."""
 Edit = Literal["prose", "prose+cli"]
 Evaluate = Callable[[dict[str, str], object], tuple[float, dict[str, object]]]
 Propose = Callable[[dict[str, str], Mapping[str, Sequence[Mapping[str, object]]], list[str]], dict[str, str]]
@@ -105,7 +107,7 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
     GEPA scores the parent again on each minibatch, and the caller serves that repeat from its record, so a repeat
     costs 0. A result whose feedback holds `rejected` makes no live call and costs 0 too. GEPA skips reflection when the parent scores perfectly on
     the minibatch. `skip_limit` consecutive iterations without a new evaluation end the search.
-    `cheaper` is set while the token rule is on. Then GEPA reflects on a perfect minibatch too, and a child whose minibatch
+    `cheaper` is set for the token objective. Then GEPA reflects on a perfect minibatch too, and a child whose minibatch
     score sum equals its parent's enters the pool when `cheaper` returns true. Else a child must score a higher sum.
     GEPA calls `stalled` and `spent` before each iteration and stops when either returns true.
     Return the first stop condition that held: `stall` when `stalled` returned true, `metric-count` when the runs reach
@@ -137,6 +139,7 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
     evaluated: set[tuple[tuple[tuple[str, str], ...], str]] = set()
     scored: set[tuple[tuple[tuple[str, str], ...], str]] = set()
     validation_keys = {repr(example) for example in validation}
+    running: dict[tuple[tuple[tuple[str, str], ...], str], Future[tuple[float, dict[str, object]]]] = {}
     runs = 0
 
     def score(candidate: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
@@ -144,9 +147,23 @@ def search(seed: dict[str, str], edit: Edit, train: list[object], validation: li
         if set(candidate) != set(seed):
             raise ValueError("proposal components differ from the frozen set")
         key = (tuple(sorted(candidate.items())), repr(example))
+        # GEPA can hold one case twice in a minibatch. The second request waits for the first, so a repeat stays free.
         with lock:
             evaluated.add(key)
-        result = evaluate(candidate, example)
+            pending, first = running.get(key), key not in running
+            if pending is None:
+                pending = running[key] = Future()
+        if not first:
+            return pending.result()
+        try:
+            result = evaluate(candidate, example)
+            pending.set_result(result)
+        except BaseException as error:
+            pending.set_exception(error)
+            raise
+        finally:
+            with lock:
+                _ = running.pop(key, None)
         if "rejected" not in result[1]:
             with lock:
                 if key not in scored:

@@ -13,6 +13,7 @@ from skillz_experiments._records import read, write
 from skillz_experiments.run import run
 from skillz_experiments.run._export import export
 from skillz_experiments.run._signals import seed_signals
+from skillz_experiments.search import REFLECTION_MINIBATCH
 
 from test_headroom import _cases, _go, _grants, _headroom, _saturate_train  # pyright: ignore[reportPrivateUsage]
 from test_run_search import MODEL, Search, _start  # pyright: ignore[reportPrivateUsage]
@@ -182,12 +183,15 @@ def test_fewer_than_two_train_cases_with_headroom_warn_before_the_search(
 
 
 @pytest.mark.ac("gh-658:AC-1")
-def test_the_saturation_warning_needs_fewer_than_two_open_train_cases_and_skips_a_min_token_saving_run() -> None:
-    saturated, open_a, open_b, floor = _case("s"), _case("a"), _case("b"), _case("f")
+def test_the_saturation_warning_needs_fewer_open_train_cases_than_the_minibatch_and_skips_a_min_token_saving_run() -> None:
+    saturated, open_a, open_b, open_c, floor = _case("s"), _case("a"), _case("b"), _case("c"), _case("f")
     found = (_found(saturated, _item(1.0)) | _found(open_a, _item(0.5)) | _found(open_b, _item(0.5))
-             | _found(floor, _item(1.0)))
+             | _found(open_c, _item(0.5)) | _found(floor, _item(1.0)))
+    assert REFLECTION_MINIBATCH == 3
+    three = seed_signals([saturated, open_a, open_b, open_c], found, {}, set(), False)
+    assert three["warnings"] == []
     two = seed_signals([saturated, open_a, open_b], found, {}, set(), False)
-    assert two["warnings"] == []
+    assert len(cast(list[str], two["warnings"])) == 1 and "2 of 3 train cases" in cast(list[str], two["warnings"])[0]
     one = seed_signals([saturated, open_a, floor], found, {"f": {"state": "pass-to-pass"}}, {"f"}, False)
     assert len(cast(list[str], one["warnings"])) == 1 and "1 of 3 train cases" in cast(list[str], one["warnings"])[0]
     assert seed_signals([saturated, open_a, floor], found, {}, {"f"}, True)["warnings"] == []

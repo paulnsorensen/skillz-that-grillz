@@ -168,6 +168,7 @@ A ticket's pull request adds `gh-<n>.md` and its markers together. The decision 
 - [gh-719](./gh-719.md) — gh-719: Codex fixture commits exclude runtime directories
 - [gh-721](./gh-721.md) — gh-721: run-matched edit validation
 - [gh-756](./gh-756.md) — gh-756: measure the baseline before search
+- [gh-757](./gh-757.md) — gh-757: the search objective and the candidate floor
 - [judge-criteria-verdicts](./judge-criteria-verdicts.md) — judge-criteria-verdicts: the judge grades typed case criteria, and code computes the score
 - [kit-harder-journeys](./kit-harder-journeys.md) — kit-harder-journeys: harder journeys for the self-autoimprove kit
 - [proposer-cli-early](./proposer-cli-early.md) — proposer-cli-early: the reflection prompt offers @new-cli early and keeps room for its two edits

@@ -7,7 +7,7 @@ from typing import cast
 
 import pytest
 
-from skillz_experiments._budget import CallTimeout
+from skillz_experiments._budget import MAX_CONCURRENT_CALLS, CallTimeout
 from skillz_experiments._cases import CodedError
 from skillz_experiments._records import read
 from skillz_experiments.run import _outcomes
@@ -210,4 +210,5 @@ def test_a_resumed_session_that_crosses_the_threshold_stops_with_search_faulted(
     with pytest.raises(CodedError) as caught:
         _ = launch()
     assert caught.value.code == "search-faulted"
-    assert state.search_calls - base == 4
+    # The fourth new failure trips the rule. A 3-case minibatch can hold one more call in flight on the other worker.
+    assert 4 <= state.search_calls - base < 4 + MAX_CONCURRENT_CALLS

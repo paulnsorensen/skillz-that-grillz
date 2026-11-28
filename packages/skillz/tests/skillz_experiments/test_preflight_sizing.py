@@ -99,9 +99,11 @@ def test_a_preview_with_four_claude_roles_sizes_the_eight_call_preflight_that_se
     _ = roles.write_text(json.dumps({"schema_version": 1, "adapter": "claude", "roles": {"simulator": {}}}), encoding="utf-8")
     three = tmp_path / "three.json"
     _ = three.write_text(json.dumps({"schema_version": 1, "adapter": "claude"}), encoding="utf-8")
-    default = _preview_calls(capsys, target, draft)
-    assert _preview_calls(capsys, target, draft, "--harness-config", str(three)) == default
-    configured = _preview_calls(capsys, target, draft, "--harness-config", str(roles))
+    # A raised cap keeps the search below it, so the preflight difference shows in the calls.
+    cap = ("--planning-call-cap", "400")
+    default = _preview_calls(capsys, target, draft, *cap)
+    assert _preview_calls(capsys, target, draft, *cap, "--harness-config", str(three)) == default
+    configured = _preview_calls(capsys, target, draft, *cap, "--harness-config", str(roles))
     base = Configuration.single("claude", MODEL)
     four = Configuration(base.roles | {"simulator": base.roles["judge"]})
     assert Configuration.identity_from_file(roles) == {name: {"adapter": "claude"} for name in four.roles}

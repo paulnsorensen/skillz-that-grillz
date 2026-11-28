@@ -248,13 +248,13 @@ def test_the_gate_reserve_charges_the_slow_call_rate_while_the_estimate_charges_
 
 @pytest.mark.ac("gh-571-calibrate:AC-2")
 def test_a_gate_heavy_plan_reserve_is_not_cut_to_the_estimate_seconds() -> None:
-    # 3 train, 3 validation, and 40 holdout cases: the gate calls cost more at 60 seconds each than the whole plan at 30.
-    plan = plan_run(3, 3, 40, 1, 1, 20)
-    assert plan.sandbox_gate == 820 and plan.reserve == 82
-    assert plan.reserve_seconds == gate_seconds(plan.reserve) + plan.sandbox_gate == 3280
-    assert plan.reserve_seconds > plan.sized.seconds == 3025
+    # 3 train, 3 validation, and 60 holdout cases: the gate calls cost more at 60 seconds each than the whole plan at 30.
+    plan = plan_run(3, 3, 60, 1, 1, 20)
+    assert plan.sandbox_gate == 1220 and plan.reserve == 122
+    assert plan.reserve_seconds == gate_seconds(plan.reserve) + plan.sandbox_gate == 4880
+    assert plan.reserve_seconds > plan.sized.seconds == 4805
     budget = approve(plan.sized, plan.sized.calls, reserve=plan.reserve, reserve_time=plan.reserve_seconds)
-    assert budget.reserve_seconds == 3280 <= budget.seconds
+    assert budget.reserve_seconds == 4880 <= budget.seconds
 
 
 @pytest.mark.ac("gh-571-calibrate:AC-2")

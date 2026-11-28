@@ -250,7 +250,7 @@ class Session:
                                         stalled=searching.stalled,
                                         spent=lambda: searching.share_spent(allowance - (0 if finalists is None else
                                             finalists.reserved() + overshoot(VALIDATION_REPEATS * len(validation)))),
-                                        cheaper=searching.cheaper if self.statistics.token_rule else None,
+                                        cheaper=searching.cheaper if self.record.get("objective") == "tokens" else None,
                                         validation_repeats=VALIDATION_REPEATS,
                                         val_policy=cast(str, self.record.get("val_policy", "full")),
                                         val_subset=() if finalists is None else finalists.indices)

@@ -78,8 +78,10 @@ def refuse_terminated(record: dict[str, object]) -> None:
                    {"next": "start a new run in a new directory", "failure_code": stopped})
 
 
-def refuse_too_easy(record: dict[str, object], out: Path) -> None:
+def refuse_too_easy(record: dict[str, object], out: Path, *, tokens: bool = False) -> None:
     """Raise the `cases-too-easy` or `cases-unscorable` stop of the headroom pass again from the record. No model call runs.
+
+    With `tokens`, the token objective, a saturated family does not stop the run; an unscorable case still does.
 
     The message comes from the recorded headroom block, and the baseline report comes from `report.json` in `out`.
     A run that died before it recorded `failure` still resumes with the same stop.
@@ -88,7 +90,7 @@ def refuse_too_easy(record: dict[str, object], out: Path) -> None:
     if not isinstance(headroom, dict):
         return
     block = cast(dict[str, object], headroom)
-    if block.get("verdict") == "too-easy":
+    if block.get("verdict") == "too-easy" and not tokens:
         raise too_easy_stop(record, out)
     if block.get("verdict") == "unscorable":
         raise unscorable_stop(block)

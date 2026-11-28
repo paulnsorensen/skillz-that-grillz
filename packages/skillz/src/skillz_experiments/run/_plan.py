@@ -24,7 +24,7 @@ from skillz_experiments._intake import IntakeCase
 from skillz_experiments.run._wedge_targets import TargetPlan, mcp_text, never_editable
 from skillz_experiments.harness import ClaudeOptions, Configuration
 from skillz_experiments.run._stop import Stop
-from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, search_allowance
+from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, overshoot, search_allowance
 
 PREFLIGHT_CALLS = 6
 """Three roles, each with two preflight calls: the Bash sandbox check and the Read file-access check (gh-176)."""
@@ -56,6 +56,9 @@ CALLS_PER_REFLECTION = 2 * REFLECTION_MINIBATCH
 
 MINIMUM_SEARCH_MARGIN = 4
 
+MINIMUM_CANDIDATES = 6
+"""The fewest proposals a search plan must buy: the smallest GEPA and DSPy preset (gh-757)."""
+
 HOLDOUT_RETRIES_PER_ARM = 1
 
 
@@ -71,6 +74,8 @@ class Plan:
     sandbox_total: int = 0
     sandbox_seconds: int = 0
     headroom_outcomes: int = 0
+    candidates: int = 0
+    """The whole proposals that the search allowance buys: one reflection minibatch pair and one validation pass each."""
 
     @property
     def reserve(self) -> int:
@@ -96,6 +101,15 @@ def command_seconds(contract: Contract, cases: Sequence[Case | IntakeCase], opti
 def case_calls(contract: Contract, case: Case | IntakeCase) -> int:
     """Return the worst-case invocation count of one evaluation of `case`. A journey case counts its `max_turns`."""
     return contract.calls(case.kind, case.journey.max_turns if case.journey is not None else 1)
+
+
+def candidate_metric(validation_runs: int) -> int:
+    """Return the metric calls whose search allowance buys `MINIMUM_CANDIDATES` proposals (gh-757).
+
+    `validation_runs` counts the validation runs of one candidate. The plan sizes the search for at least this many
+    calls, so the cap, not the case count, decides whether a search reaches the candidate floor.
+    """
+    return MINIMUM_CANDIDATES * (CALLS_PER_REFLECTION + validation_runs) + overshoot(validation_runs) + validation_runs
 
 
 def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeats: int, sandbox_seconds: int = 0,
@@ -140,7 +154,7 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
                    + f"time alone need {bare.seconds + sandbox_total(0) + slow_gate_extra} seconds; the cap is {max_seconds}"
                    + "; lower --repeats, the holdout size, or --sandbox-seconds", {})
     validation_runs = VALIDATION_REPEATS * validation
-    metric = SEARCH_CASE_FACTOR * (train + validation_runs)
+    metric = max(SEARCH_CASE_FACTOR * (train + validation_runs), candidate_metric(validation_runs))
     if journey:
         metric = max(metric, JOURNEY_SEARCH_CALLS // per_evaluation)
     while metric > 0 and not fits(metric):
@@ -156,7 +170,7 @@ def _plan(train: int, validation: int, holdout: int, per_evaluation: int, repeat
     return Plan(metric_calls=metric, reflection_calls=math.ceil(metric / CALLS_PER_REFLECTION), holdout_calls=holdout_calls,
                 retry_calls=retry_calls, sized=Estimate(sized.calls, sized.seconds + total, journey, cap),
                 replay_calls=holdout_pass, sandbox_gate=sandbox_gate, sandbox_total=total, sandbox_seconds=sandbox_seconds,
-                headroom_outcomes=train)
+                headroom_outcomes=train, candidates=allowance // (CALLS_PER_REFLECTION + validation_runs))
 
 
 def size_plan(contract: Contract, cases: Sequence[Case], repeats: int, options: ClaudeOptions, cap: int = 0,

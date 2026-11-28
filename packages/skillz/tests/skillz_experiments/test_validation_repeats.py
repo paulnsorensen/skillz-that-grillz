@@ -47,9 +47,10 @@ def test_the_plan_metric_and_its_admission_count_each_validation_repeat(monkeypa
 
     monkeypatch.setattr(_plan, "search_allowance", spy)
     plan = _plan._plan(3, 2, 2, 1, 1)  # pyright: ignore[reportPrivateUsage]
-    assert plan.metric_calls == _plan.SEARCH_CASE_FACTOR * (3 + 2 * 2) == 28
+    # The candidate floor (gh-757) outweighs the case factor: 6 x (6 + 4) + (6 + 4) + 4 = 74 > 4 x (3 + 2 x 2) = 28.
+    assert plan.metric_calls == max(_plan.SEARCH_CASE_FACTOR * (3 + 2 * 2), _plan.candidate_metric(4)) == 74
     # The admission check and the overshoot margin inside `search_allowance` see 2 runs for each of the 2 cases.
-    assert seen == [(28, 4)]
+    assert seen == [(74, 4)]
 
 
 @pytest.mark.ac("gh-500:AC-5")
@@ -63,7 +64,7 @@ def test_the_search_ceiling_adds_back_every_seed_validation_repeat(monkeypatch: 
     state = SimpleNamespace(record={"estimate": {"metric_calls": 40, "headroom": {"outcomes": 5}}}, cases_for=cases_for)
     ceiling = SearchPhase.search_ceiling(cast(SearchPhase, cast(object, SimpleNamespace(_state=state))))
     # The allowance and its overshoot count 6 validation runs; the seed term adds the 5 train and 6 validation outcomes.
-    assert ceiling == search_allowance(40, 6) + 5 + 6 == 35
+    assert ceiling == search_allowance(40, 6) + 5 + 6 == 33
 
 
 def _no_gain(proposals: list[str]) -> tuple[Callable[[dict[str, str], object], tuple[float, dict[str, object]]],

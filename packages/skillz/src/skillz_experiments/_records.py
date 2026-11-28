@@ -14,7 +14,7 @@ from typing import cast
 
 from skillz_experiments._cases import CodedError, Fixture, image_type, mapping, relative
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 
 def proof_problem(value: object) -> tuple[str, str] | None:

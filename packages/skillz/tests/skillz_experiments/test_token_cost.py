@@ -506,11 +506,12 @@ def _priced(**attributes: object) -> type[_Priced]:
 
 def _finish(tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
             approvals: Callable[..., tuple[str, int]], provider: type[_Priced],
-            statistics: dict[str, float] | None, name: str = "run") -> dict[str, object]:
+            statistics: dict[str, float] | None, name: str = "run", objective: str | None = None) -> dict[str, object]:
     target, out = make_target(tmp_path) if not (tmp_path / "echo-skill").exists() else tmp_path / "echo-skill", tmp_path / name
     _ = write_draft(out)
     case_hash, calls = approvals(target, out, statistics=statistics)
-    return approved_search(target, out, MODEL, case_hash, calls, factory=provider, statistics=statistics)
+    return approved_search(target, out, MODEL, case_hash, calls, factory=provider, statistics=statistics,
+                           objective=objective)
 
 
 def _gate(result: dict[str, object]) -> dict[str, object]:
@@ -588,6 +589,7 @@ def test_the_incumbent_rule_keeps_a_costly_or_unmetered_challenger_out(
         assert (_gate(result)["verdict"], _gate(result)["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
 
 
+@pytest.mark.ac("gh-757:AC-1")
 def test_a_cheaper_winner_without_a_holdout_gain_promotes_cheaper_only_with_min_token_saving(
         tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
@@ -621,11 +623,11 @@ def test_a_saturated_seed_loses_to_a_cheaper_tie_under_the_token_rule(
         approvals: Callable[..., tuple[str, int]]) -> None:
     """The seed scores 1.0 everywhere. Before the fix, GEPA skipped every perfect minibatch, so no proposal ran.
 
-    Without `min_token_saving`, the headroom pass stops such a run with `cases-too-easy` before the search.
+    Without `--objective tokens`, the headroom pass stops such a run with `cases-too-easy` before the search (gh-757).
     """
     provider = _priced(BASE_SCORE=1.0, IMPROVED=50)
     result = _finish(tmp_path, make_target, write_draft, approvals, provider,
-                     {"min_token_saving": 0.3, "max_quality_loss": 0.05})
+                     {"min_token_saving": 0.3, "max_quality_loss": 0.05}, objective="tokens")
     assert provider.prompts
     assert (_gate(result)["verdict"], _gate(result)["reasons"]) == ("promote-cheaper", [])
     assert _gate(result)["token_delta"] == pytest.approx(-0.5)
@@ -637,7 +639,7 @@ def test_a_costlier_tie_on_a_saturated_seed_keeps_the_seed(
         approvals: Callable[..., tuple[str, int]]) -> None:
     provider = _priced(BASE_SCORE=1.0, IMPROVED=150)
     result = _finish(tmp_path, make_target, write_draft, approvals, provider,
-                     {"min_token_saving": 0.3, "max_quality_loss": 0.05})
+                     {"min_token_saving": 0.3, "max_quality_loss": 0.05}, objective="tokens")
     assert provider.prompts
     assert (_gate(result)["verdict"], _gate(result)["reasons"]) == ("inconclusive", ["winner-equals-baseline"])
 

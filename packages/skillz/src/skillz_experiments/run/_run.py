@@ -42,7 +42,7 @@ from skillz_experiments.harness import (
 )
 from skillz_experiments.run._baseline import REPORT_NAME, baseline_finished
 from skillz_experiments.run._baseline_pass import measure_baseline
-from skillz_experiments.run._continuation import approve_search, close_provider
+from skillz_experiments.run._continuation import approve_search, close_provider, search_objective
 from skillz_experiments.run._export import is_inside, summary
 from skillz_experiments.run._history_store import Loaded
 from skillz_experiments.run._edit_plan import plan_edit, seed_or_prose
@@ -303,11 +303,11 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
         effort: str | None = None, sandbox_read: Sequence[str] | None = None, sandbox_seconds: int | None = None,
         factory: Factory | None = None, configuration: Configuration | None = None,
         statistics: Mapping[str, float] | None = None,
-        judge_model: str | None = None, history: bool | None = None, kinds: Sequence[str] = (),
+        judge_model: str | None = None, history: bool | None = None, kinds: Sequence[str] = (), objective: str | None = None,
         val_policy: str | None = None, search: bool = False, ports: Ports | None = None) -> dict[str, object]:
     """Run or resume one autoimprove run. Each stop raises a `Stop` that carries the question data.
 
-    An explicit resume option must match its frozen value. `ports` replaces replay and history adapters.
+    An explicit resume option must match its frozen value; `search_objective` rules `objective`. `ports` replaces adapters.
     """
     requested, given = _check_arguments(
         adapter, configuration, factory, edit, repeats,
@@ -316,8 +316,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
     if judge_model is not None and not judge_model.strip():
         raise ValueError("--judge-model must name a model")
     if judge_model is not None and (configuration is not None or factory is not None):
-        raise ValueError("--judge-model applies only to the built-in harness; set the judge model in the supplied "
-                         + "configuration")
+        raise ValueError("--judge-model applies only to the built-in harness; set the judge model in the supplied configuration")
     if val_policy is not None and val_policy not in ("full", "subset"):
         raise ValueError("--val-policy must be full or subset")
     statistics_given = _check_statistics_flags(statistics)
@@ -339,6 +338,7 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
                 refuse_nono(record)
             check_engine(record)
             refuse_terminated(record)
+            objective = search_objective(record, objective, search)
             if complete or (finished and not search):
                 check_val_policy(record, val_policy)
                 if statistics_given:
@@ -349,19 +349,19 @@ def run(target: Path, out: Path, model: str, *, adapter: HarnessName = "claude",
             check_resume(record, target, edit, repeats, seed, model, adapter, given, configuration is not None,
                          judge_model, history, val_policy)
             if finished:
-                approve_search(record, out, approve_budget, configuration, repeats)
+                approve_search(record, out, approve_budget, configuration, repeats, objective)
         else:
             frozen = _prepare(target, out, model, adapter, edit, repeats or DEFAULT_REPEATS, seed,
                               approve_cases, approve_budget, resolve_harness=factory is None and configuration is None,
-                              options=requested, configuration=configuration,
+                              options=requested, configuration=configuration, history=True if history is None else history,
                               statistics_given=statistics_given, judge_model=judge_model, repeats_given=repeats is not None,
-                              history=True if history is None else history, requested_kinds=kinds,
-                              val_policy="full" if val_policy is None else val_policy)
+                              requested_kinds=kinds, val_policy="full" if val_policy is None else val_policy)
+            objective = search_objective({}, objective, search, frozen)
         if not live:
             raise Stop("live-required", "live model calls require --live", {"next": "call run again with --live"})
         session = Session(out, model, adapter, factory, configuration, statistics=frozen)
         measuring = session.record.get("plan_mode") == "baseline"
         result = _drive(session, ports or Ports())
         if measuring and search:
-            approve_search(session.record, out, None, configuration)
+            approve_search(session.record, out, None, configuration, objective=objective)
         return result

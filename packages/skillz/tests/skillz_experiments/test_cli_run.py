@@ -150,9 +150,10 @@ def test_first_run_needs_only_run_and_export_without_contract_or_manifest(tmp_pa
     calls = cast(dict[str, int], budget["estimate"])["calls"]
     code, search = call("--approve-cases", case_hash, "--approve-budget", str(calls))
     assert code == 1
-    assert stops == ["cases-missing", "cases-unapproved", "budget-unapproved", "budget-unapproved"]
-    assert read(out / "run.json")["plan_mode"] == "baseline"
-    search_calls = cast(dict[str, int], search["estimate"])["calls"]
+    # The default cap buys fewer than 6 candidates, so the stop names the smallest approval that buys them (gh-757).
+    assert stops == ["cases-missing", "cases-unapproved", "budget-unapproved", "search-underpowered"]
+    assert read(out / "run.json")["plan_mode"] == "baseline" and (out / "report.json").is_file()
+    search_calls = cast(int, search["smallest_approval"])
     code, result = call("--approve-budget", str(search_calls))
     assert code == 0
     assert result["phase"] == "complete"

@@ -72,11 +72,17 @@ class FakeRunProvider:
         return PASSED
 
 
-def search_approval(target: Path, out: Path, model: str, *, configuration: Configuration | None = None) -> int:
-    """Read the separate search estimate without making a provider call."""
+def search_approval(target: Path, out: Path, model: str, *, configuration: Configuration | None = None,
+                    objective: str | None = None) -> int:
+    """Read the separate search estimate without making a provider call.
+
+    A plan under the candidate floor returns the smallest approval that buys the floor (gh-757).
+    """
     try:
-        _ = run(target, out, model, search=True, configuration=configuration)
+        _ = run(target, out, model, search=True, configuration=configuration, objective=objective)
     except Stop as stopped:
+        if stopped.code == "search-underpowered" and stopped.data["smallest_approval"] is not None:
+            return cast(int, stopped.data["smallest_approval"])
         if stopped.code != "budget-unapproved":
             raise
         return cast(dict[str, int], stopped.data["estimate"])["calls"]
@@ -84,10 +90,11 @@ def search_approval(target: Path, out: Path, model: str, *, configuration: Confi
 
 
 def approved_search(target: Path, out: Path, model: str, case_hash: str, baseline_calls: int, *,
-                    factory: Factory | None = None, statistics: Mapping[str, float] | None = None) -> dict[str, object]:
+                    factory: Factory | None = None, statistics: Mapping[str, float] | None = None,
+                    objective: str | None = None) -> dict[str, object]:
     """Measure a new baseline, then request and approve search with the same fake provider."""
     baseline = run(target, out, model, live=True, approve_cases=case_hash, approve_budget=baseline_calls,
                    factory=factory, statistics=statistics)
     assert baseline["search"] == "not-run"
-    return run(target, out, model, live=True, search=True, approve_budget=search_approval(target, out, model),
-               factory=factory)
+    approval = search_approval(target, out, model, objective=objective)
+    return run(target, out, model, live=True, search=True, approve_budget=approval, factory=factory, objective=objective)

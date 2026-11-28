@@ -66,10 +66,11 @@ The exported patch uses the same paths as `skills/skillz`.
 
 Each family sets the agent turns that its flow needs: 3 for `unsafe-out`, `just-run`, and `decline-cases`, 5 for `ask-harness`, 4 for the others.
 A journey costs at most `max_turns * 2 + 1` calls: agent turns, simulator replies, and one judge call.
-At `--repeats 2`, the estimate for the 21 journeys alone (the `write` contract) is 894 calls and about 4 hours.
-The estimate includes 96 search metric calls (enough for 8 proposals), 114 holdout calls, and 48 replay calls.
+At `--repeats 2`, the estimate for the 21 journeys alone (the `write` contract) is 996 calls and about 4.5 hours.
+The estimate includes 108 search metric calls, 114 holdout calls, and 48 replay calls.
 The estimate has no headroom calls. The run stops with `cases-too-easy` when the seed already scores 0.9 on a family.
-`test_skillz_autoimprove_journeys.py` pins the call count of 894. The 1000-call cap no longer binds.
+`test_skillz_autoimprove_journeys.py` pins the call count of 996. The 1000-call cap binds and leaves 2 expected candidates.
+So a kit `--search` stops with `search-underpowered` (gh-757), and no approval lifts it. Fewer validation or holdout journeys leave room for 6 candidates.
 
 ## Known gaps
 

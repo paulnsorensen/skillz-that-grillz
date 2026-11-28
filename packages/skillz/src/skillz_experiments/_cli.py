@@ -88,8 +88,7 @@ def _run_harness(model: str, target: Path, harness: RunHarness | None, harness_c
 
 
 @app.command(name="run")
-def run_command(*, target: Path, out: Path, model: str, judge_model: str | None = None,
-                harness: RunHarness | None = None,
+def run_command(*, target: Path, out: Path, model: str, judge_model: str | None = None, harness: RunHarness | None = None,
                 harness_config: Path | None = None, command: list[str] | None = None,
                 live: bool = False, edit: Edit | None = None, repeats: int | None = None, seed: int | None = None,
                 approve_cases: str | None = None, approve_budget: int | None = None,
@@ -100,7 +99,7 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
                 min_token_saving: float | None = None, min_coverage: float | None = None,
                 max_quality_loss: float | None = None, history: bool | None = None,
                 kind: list[str] | None = None, val_policy: Literal["full", "subset"] | None = None,
-                search: bool = False) -> dict[str, object]:
+                search: bool = False, objective: Literal["quality", "tokens"] | None = None) -> dict[str, object]:
     """Measure the baseline, or continue into search with separate approval.
 
     Parameters
@@ -137,6 +136,8 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
         Maximum plausible quality loss per case. `--min-token-saving` needs it.
     search
         Continue from the baseline into search, gate, and replay.
+    objective
+        With --search: quality (default) or tokens, which needs min_token_saving. Repeat it until the search approval.
     kind
         Contract kind to score. Repeat for more. Default: task drives the split and journey kinds are still evaluated, else all journey kinds.
         With --kind, a drafted case of another kind stays out of the run. The first run freezes the choice.
@@ -149,11 +150,10 @@ def run_command(*, target: Path, out: Path, model: str, judge_model: str | None 
         from skillz_experiments.run import run
         adapter, configuration = _run_harness(model, target, harness, harness_config, command, out, search)
         return run(target, out, model, adapter=cast(RunHarness, adapter), configuration=configuration, live=live, edit=edit,
-                            repeats=repeats, seed=seed,
-                            approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
-                            sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read],
-                            sandbox_seconds=sandbox_seconds, statistics=statistics or None,
-                            judge_model=judge_model, history=history, kinds=kind or (), val_policy=val_policy, search=search)
+                   repeats=repeats, seed=seed, approve_cases=approve_cases, approve_budget=approve_budget, effort=effort,
+                   sandbox_read=None if sandbox_read is None else [str(path) for path in sandbox_read], objective=objective,
+                   sandbox_seconds=sandbox_seconds, statistics=statistics or None, judge_model=judge_model, history=history,
+                   kinds=kind or (), val_policy=val_policy, search=search)
 
 
 @app.command(name="doctor")
