@@ -53,22 +53,23 @@ def test_search_validates_the_winner_and_reuses_a_completed_run(tmp_path: Path, 
     shown = cast(list[dict[str, object]], cast(dict[str, object], feedback["feedback"])["SKILL.md"])
     assert set(cast(dict[str, object], feedback["feedback"])) == {"SKILL.md"}
     train = {cast(str, case["id"]) for case in read_cases(scenario.out) if case["split"] == "train"}
-    assert len(shown) == 2 and len({item["case_id"] for item in shown}) == 2 and {item["case_id"] for item in shown} <= train
+    # The reflection minibatch holds 3 train cases (gh-757).
+    assert len(shown) == 3 and len({item["case_id"] for item in shown}) == 3 and {item["case_id"] for item in shown} <= train
     assert [{key: value for key, value in item.items() if key != "case_id"} for item in shown] == [
         {"task_correct": 0.0, "request": "Transform fixture.md according to this skill.",
          "grader_scores": {"command": 0.0}, "gate_feedback": 'the gate scored 0\nstdout: {"score": 0.0}'}
-    ] * 2
+    ] * 3
     estimate = cast(dict[str, object], record["estimate"])
     headroom = cast(dict[str, int], estimate["headroom"])
     # The overshoot margin and the seed pass count each validation case once per repeat (gh-500).
-    planned = cast(int, estimate["metric_calls"]) + headroom["outcomes"] - (4 + 2 * len(validation_ids))
+    planned = cast(int, estimate["metric_calls"]) + headroom["outcomes"] - (6 + 2 * len(validation_ids))
     first_reflection = next(index for index, item in enumerate(outcomes)
                             if item.get("split") == "reflection")
     spent = sum(1 for item in outcomes[:first_reflection]
                 if item.get("arm") == "search" and item.get("split") in ("train", "validation"))
     percent = 100 * spent // planned
     edit_budget = math.floor(1 + 2.5 * (1 + math.cos(math.pi * spent / planned)))
-    assert (headroom["outcomes"], spent, planned, percent, edit_budget) == (4, 8, 28, 28, 5)
+    assert (headroom["outcomes"], spent, planned, percent, edit_budget) == (4, 8, 68, 11, 5)
     assert f"Make at most {edit_budget} edits across all components." in first_prompt
     assert f"Run status: this is proposal 1. Search calls spent: {spent} of {planned} ({percent}%)." in first_prompt
     assert edit_budget < 6

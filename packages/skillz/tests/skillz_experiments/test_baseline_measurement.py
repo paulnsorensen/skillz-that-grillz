@@ -102,7 +102,7 @@ class MeasurementProvider(FakeRunProvider):
 
 
 @pytest.mark.usefixtures("host_login")
-@pytest.mark.parametrize(("saving", "train_score", "verdict"), [(None, 1.0, "too-easy"), (0.1, 1.0, "ok"),
+@pytest.mark.parametrize(("saving", "train_score", "verdict"), [(None, 1.0, "too-easy"), (0.1, 1.0, "too-easy"),
                                                                (None, 0.5, "ok")])
 def test_measurement_resumes_only_missing_slots_and_reports_all_splits(
         tmp_path: Path, make_target: Maker, write_draft: Drafter,
@@ -187,6 +187,7 @@ def test_measurement_resumes_only_missing_slots_and_reports_all_splits(
         with pytest.raises(Stop, match="the seed already scores") as stopped_search:
             refuse_too_easy(record, out)
         assert stopped_search.value.data["baseline"] == report
+        refuse_too_easy(record, out, tokens=True)  # The token objective skips the stop (gh-757).
     else:
         refuse_too_easy(record, out)
 

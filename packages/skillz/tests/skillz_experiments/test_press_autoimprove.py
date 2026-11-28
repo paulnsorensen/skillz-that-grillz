@@ -345,7 +345,7 @@ def test_resume_inside_the_budget_completes_when_the_clocks_agree_or_the_monoton
 def test_repeats_never_silently_exceed_the_cap(
         repeats: int, tmp_path: Path, make_target: Callable[..., Path], write_draft: Callable[..., list[str]],
         approvals: Callable[..., tuple[str, int]]) -> None:
-    """PA-3: any repeats value stops as budget-unapproved or runs inside 200 calls and 7200 s."""
+    """PA-3: any repeats value stops as budget-unapproved or search-underpowered, or runs inside 200 calls and 7200 s."""
     target, out = make_target(tmp_path), tmp_path / "run"
     _ = write_draft(out)
     approved_hash, _calls = approvals(target, out)
@@ -359,7 +359,7 @@ def test_repeats_never_silently_exceed_the_cap(
     try:
         result = run(target, out, MODEL, live=True, search=True, approve_budget=200, factory=spy.factory)
     except Stop as stopped:
-        assert stopped.code == "budget-unapproved" and spy.created == 1
+        assert stopped.code in ("budget-unapproved", "search-underpowered") and spy.created == 1
         assert len(spy.evaluated) == count and not spy.prompts
         return
     assert result["phase"] == "complete" and {"retries", "calls_by_role", "claims", "replay"} <= set(result)

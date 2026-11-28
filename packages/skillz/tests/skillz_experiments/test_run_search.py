@@ -256,13 +256,15 @@ def _measure_for_search(target: Path, out: Path, state: Search, case_hash: str, 
 def run_search(target: Path, out: Path, state: Search, case_hash: str, baseline_calls: int, *,
                statistics: Mapping[str, float] | None = None, history: bool | None = None,
                ports: Ports | None = None, val_policy: str | None = None,
-               factory: Callable[[str, Budget, Callable[[], None]], Provider] | None = None) -> dict[str, object]:
+               factory: Callable[[str, Budget, Callable[[], None]], Provider] | None = None,
+               objective: str | None = None) -> dict[str, object]:
     record = out / "run.json"
     if not record.exists() or "headroom" not in read(record):
         _measure_for_search(target, out, state, case_hash, baseline_calls, statistics=statistics, history=history,
                             val_policy=val_policy)
-    return run(target, out, MODEL, live=True, search=True, approve_budget=search_approval(target, out, MODEL),
-               factory=factory or state.factory, ports=ports)
+    approval = search_approval(target, out, MODEL, objective=objective)
+    return run(target, out, MODEL, live=True, search=True, approve_budget=approval,
+               factory=factory or state.factory, ports=ports, objective=objective)
 
 
 def _within_approval(out: Path, baseline_calls: int) -> bool:
@@ -283,7 +285,8 @@ def test_a_run_at_the_planned_budget_never_ends_budget_exhausted_seed_retained(
         approvals: Callable[..., tuple[str, int]], noise: int) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, noise)
     result = run_search(target, out, state, case_hash, calls)
-    assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
+    # The plan buys 6 candidates (gh-757), so the stall rule ends a search that finds no gain before the metric count.
+    assert cast(dict[str, object], result["search"])["reason"] == "converged-stalled"
     assert result["phase"] == "complete" and _within_approval(out, calls)
     # The summary joins the fault accounting and the three claims.
     assert {"retries", "calls_by_role", "seconds_by_role", "claims", "replay"} <= set(result)
@@ -380,7 +383,7 @@ def test_only_a_proposal_with_more_edits_than_the_budget_is_counted(
     assert state.improved_calls > 0 and state.proposals >= 3
     assert over == (state.proposals if counted else 0)
     assert "proposal_over_budget" not in read(out / "run.json")
-    assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
+    assert cast(dict[str, object], result["search"])["reason"] == "converged-stalled"
 
 
 @pytest.mark.ac("gh-239:AC-2")
@@ -419,7 +422,7 @@ def test_one_failed_evaluation_scores_zero_and_does_not_abort_the_search(
     state.evaluate_fault = lambda number: RuntimeError("provider fell over") if number == fault_at else None
     result = run_search(target, out, state, case_hash, calls)
     assert result["phase"] == "complete"
-    assert cast(dict[str, object], result["search"])["reason"] == "validation-mean"
+    assert cast(dict[str, object], result["search"])["reason"] == "converged-stalled"
     outcomes = cast(list[dict[str, object]], read(out / "run.json")["outcomes"])
     failed = [item for item in outcomes if item.get("status") == "evaluation-failed"]
     assert len(failed) == 1 and failed[0]["score"] == 0.0 and failed[0]["failure"] == "provider fell over"
@@ -705,7 +708,7 @@ def test_a_validated_candidate_below_the_seed_leaves_the_seed_as_the_winner(
     # The seed stays the incumbent: each comparison rejects the challenger, so no `best_validated` is written.
     comparisons = cast(list[dict[str, object]], cast(dict[str, object], record["search"])["comparisons"])
     assert "best_validated" not in record and comparisons and {item["verdict"] for item in comparisons} == {"reject"}
-    assert _core(result) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _core(result) == {"reason": "converged-stalled", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
     assert "reason" not in cast(dict[str, object], record["gate"])
 
 
@@ -720,7 +723,7 @@ def test_a_validated_candidate_that_ties_the_seed_leaves_the_seed_as_the_winner(
     comparisons = cast(list[dict[str, object]], cast(dict[str, object], record["search"])["comparisons"])
     assert "best_validated" not in record and comparisons
     assert {(item["verdict"], item["delta"]) for item in comparisons} == {("inconclusive", 0.0)}
-    assert _core(result) == {"reason": "validation-mean", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
+    assert _core(result) == {"reason": "converged-stalled", "retained_seed": True, "leakage_rejections": {}, "proposal_over_budget": 0}
 
 
 def test_an_earlier_validated_candidate_stays_best_over_a_later_worse_one(
@@ -1803,7 +1806,8 @@ def test_a_clean_proposal_after_the_history_is_shown_leaves_leakage_rejections_u
     state.hypothesis_of = lambda number: f"shorter wording {number}"
     result = run_search(target, out, state, case_hash, calls)
     assert state.proposals >= 3 and state.improved_calls > 0
-    assert "Attempt 1: hypothesis shorter wording 1;" in state.prompts[-1] and "No attempt yet." in state.prompts[0]
+    # The history shows the newest attempts, so the second prompt is the one that shows attempt 1.
+    assert "Attempt 1: hypothesis shorter wording 1;" in state.prompts[1] and "No attempt yet." in state.prompts[0]
     search = cast(dict[str, object], result["search"])
     assert search["leakage_rejections"] == {} and search["text_dropped"] == {}
 
@@ -2043,12 +2047,14 @@ def test_the_export_keeps_a_coded_rejection_and_maps_a_one_word_uncoded_text_to_
         approvals: Callable[..., tuple[str, int]], monkeypatch: pytest.MonkeyPatch) -> None:
     target, out, state, case_hash, calls = _start(tmp_path, make_target, write_draft, approvals, families=12)
     real = Candidate.changed
-    seen: list[int] = []
+    seen: list[str] = []
 
     def failing(self: Candidate, components: dict[str, str]) -> Candidate:
         if any("improved" in text for text in components.values()):
-            seen.append(1)
-            raise CodedError("hidden-file", "coded text") if len(seen) % 2 else ValueError("sentinelword")
+            # Alternate by proposal, not by call: the session can build one proposal more than once.
+            if (key := repr(sorted(components.items()))) not in seen:
+                seen.append(key)
+            raise CodedError("hidden-file", "coded text") if (seen.index(key) % 2 == 0) else ValueError("sentinelword")
         return real(self, components)
 
     monkeypatch.setattr(Candidate, "changed", failing)

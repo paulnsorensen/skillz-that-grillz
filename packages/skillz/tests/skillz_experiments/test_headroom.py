@@ -62,11 +62,11 @@ def _saturate_train(state: Search) -> None:
 
 
 def _go(state: Search, target: Path, out: Path, case_hash: str, calls: int,
-        statistics: Mapping[str, float] | None = None) -> dict[str, object]:
+        statistics: Mapping[str, float] | None = None, objective: str | None = None) -> dict[str, object]:
     result = run(target, out, MODEL, live=True, approve_cases=case_hash, approve_budget=calls, factory=state.factory,
                  statistics=statistics)
     assert result["search"] == "not-run"
-    return run_search(target, out, state, case_hash, calls)
+    return run_search(target, out, state, case_hash, calls, objective=objective)
 
 
 def _grants(monkeypatch: pytest.MonkeyPatch, out: Path) -> list[tuple[int, bool]]:
@@ -152,7 +152,8 @@ def test_a_run_with_headroom_continues_to_the_search_with_the_planned_metric_cal
 
 
 @pytest.mark.ac("autoimprove-authoring-headroom:AC-4")
-def test_a_run_with_min_token_saving_records_saturated_scores_and_does_not_stop(
+@pytest.mark.ac("gh-757:AC-3")
+def test_a_token_objective_run_records_saturated_scores_and_does_not_stop(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
     statistics = {"min_token_saving": 0.3, "max_quality_loss": 0.5}
     target, out = make_target(tmp_path), tmp_path / "run"
@@ -160,10 +161,11 @@ def test_a_run_with_min_token_saving_records_saturated_scores_and_does_not_stop(
     case_hash, calls = approvals(target, out, statistics=statistics)
     state = Search(target)
     _saturate_train(state)
-    result = _go(state, target, out, case_hash, calls, statistics)
-    assert result["phase"] == "complete"
+    result = _go(state, target, out, case_hash, calls, statistics, objective="tokens")
+    assert result["phase"] == "complete" and _record(out)["objective"] == "tokens"
+    # The block keeps the quality verdict (gh-757); the token objective skips that stop.
     headroom = _headroom(out)
-    assert headroom["verdict"] == "ok"
+    assert headroom["verdict"] == "too-easy"
     train = {str(case["family"]) for case in _cases(out, "train")}
     assert {name for name, mean in _means(out).items() if mean == 1.0} == train
 

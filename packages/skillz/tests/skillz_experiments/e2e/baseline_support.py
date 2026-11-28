@@ -10,8 +10,12 @@ from skillz_experiments._intake import DRAFT_NAME
 from support import call_cli, cli_error, command_adapter, make_scenario, read_events, read_record
 
 
-def check_first_approval_search(tmp_path: Path, *, saturated: bool, token_rule: bool, expected: str) -> None:
-    """Drive `run --search` on a new run directory and check where its first approval stops."""
+def check_first_approval_search(tmp_path: Path, *, saturated: bool, token_rule: bool, expected: str,
+                                objective: str | None = None) -> None:
+    """Drive `run --search` on a new run directory and check where its first approval stops.
+
+    `objective` adds `--objective` to each `--search` call, as the procedure says until the search approval.
+    """
     scenario = make_scenario(tmp_path)
     if saturated:
         for case in scenario.draft:
@@ -23,7 +27,8 @@ def check_first_approval_search(tmp_path: Path, *, saturated: bool, token_rule: 
         _ = path.write_text(json.dumps(contract))
     _ = (scenario.out / DRAFT_NAME).write_text(json.dumps(scenario.draft))
     args = ["run", "--target", str(scenario.target), "--out", str(scenario.out), "--search",
-            "--model", "offline-test", "--harness", "command", "--live", "--edit", "prose", *command_adapter(scenario)]
+            "--model", "offline-test", "--harness", "command", "--live", "--edit", "prose", *command_adapter(scenario),
+            *(["--objective", objective] if objective is not None else [])]
     status, cases, error = call_cli(args, tmp_path)
     assert status == 1 and cli_error(error)["code"] == "cases-unapproved"
     assert read_events(scenario.out) == []
@@ -43,7 +48,7 @@ def check_first_approval_search(tmp_path: Path, *, saturated: bool, token_rule: 
     status, again, error = call_cli(args, tmp_path)
     assert status == 1 and cli_error(error)["code"] == expected and again == stop
     assert read_events(scenario.out) == log
-    if saturated and not token_rule:
+    if saturated and expected == "cases-too-easy" and not token_rule:
         record = read_record(scenario.out)
         _ = (scenario.out / "run.json").write_text(json.dumps(record | {"engine_hash": "0" * 64}))
         status, _, error = call_cli(args, tmp_path)

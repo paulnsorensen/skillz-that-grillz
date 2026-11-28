@@ -786,8 +786,10 @@ def test_a_tie_run_exports_no_patch_file_and_names_the_reason(
 @pytest.mark.ac("skillz-autoimprove-claims:AC-2")
 def test_a_winner_with_crlf_line_endings_replays_to_the_same_identity(
         tmp_path: Path, make_target: Maker, write_draft: Drafter, approvals: Approver) -> None:
+    # Fixed scores make the search pick the suffixed winner, whatever the split.
     _target, out, _state, _calls, record = _finished(tmp_path, make_target, write_draft, approvals,
-                                                      suffix="\r\nsecond line\r\n")
+                                                      suffix="\r\nsecond line\r\n",
+                                                      scores=lambda text, _split: 0.9 if "improved" in text else 0.2)
     winner = cast(dict[str, str], record["winner"])
     assert record["winner_hash"] != record["seed_hash"] and "\r\n" in winner["SKILL.md"]
     assert _replay_of(record)["reasons"] == [] and _export_status(record, out) == "supported"

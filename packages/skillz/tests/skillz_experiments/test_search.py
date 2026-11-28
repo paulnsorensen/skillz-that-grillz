@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import math
 import threading
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import cast, final
 
@@ -10,7 +11,9 @@ import pytest
 
 from skillz_experiments._budget import MAX_CONCURRENT_CALLS
 from skillz_experiments._cases import CodedError
-from skillz_experiments.search import Edit, search
+from skillz_experiments.run._plan import CALLS_PER_REFLECTION
+from skillz_experiments.run._plan import _plan  # pyright: ignore[reportPrivateUsage]
+from skillz_experiments.search import REFLECTION_MINIBATCH, Edit, search
 from skillz_experiments.search._engine import CheaperTie, overshoot, skip_limit
 
 
@@ -159,6 +162,51 @@ def test_without_the_token_rule_the_search_passes_gepa_the_strict_rule_and_the_p
     assert [cast(object, getattr(item, "skip_perfect_score")) for item in reflections] == [True, False]
 
 
+@pytest.mark.ac("gh-757:AC-8")
+def test_the_search_passes_gepa_a_three_case_minibatch_and_the_plan_follows_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    api = importlib.import_module("gepa.optimize_anything")
+    seen: list[object] = []
+    def capture(*_args: object, **kwargs: object) -> None:
+        seen.append(kwargs["config"])
+
+    monkeypatch.setattr(api, "optimize_anything", capture)
+    assert search({"SKILL.md": "v0"}, "prose", ["t1"], ["val1"], lambda _c, _e: (0.0, {}),
+                  lambda _c, _f, components: {key: "x" for key in components}, metric_calls=4) != "stall"
+    reflection = cast(object, getattr(seen[0], "reflection"))
+    assert cast(object, getattr(reflection, "reflection_minibatch_size")) == REFLECTION_MINIBATCH == 3
+    assert CALLS_PER_REFLECTION == 6 and overshoot(4) == 6 + 4
+    plan = _plan(4, 2, 6, 1, 3)
+    assert plan.reflection_calls == math.ceil(plan.metric_calls / 6)
+
+
+@pytest.mark.ac("gh-757:AC-8")
+def test_a_pair_that_gepa_asks_for_twice_at_once_runs_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GEPA pads a minibatch with a case it already holds. The two workers then ask for the same pair at once."""
+    api = importlib.import_module("gepa.optimize_anything")
+    calls: list[object] = []
+    results: list[tuple[float, dict[str, object]]] = []
+    started = threading.Event()
+
+    def evaluate(_candidate: dict[str, str], example: object) -> tuple[float, dict[str, object]]:
+        calls.append(example)
+        started.set()
+        _ = threading.Event().wait(0.2)
+        return 0.5, {"task_correct": 0.5}
+
+    def twice(seed: dict[str, str], **kwargs: object) -> None:
+        evaluator = cast(Callable[[dict[str, str], object], tuple[float, dict[str, object]]], kwargs["evaluator"])
+        first = threading.Thread(target=lambda: results.append(evaluator(seed, "t1")))
+        first.start()
+        assert started.wait(5)
+        results.append(evaluator(seed, "t1"))
+        first.join()
+
+    monkeypatch.setattr(api, "optimize_anything", twice)
+    _ = search({"SKILL.md": "v0"}, "prose", ["t1"], ["val1"], evaluate,
+               lambda _c, _f, components: {key: "x" for key in components}, metric_calls=4)
+    assert calls == ["t1"] and results == [(0.5, {"task_correct": 0.5})] * 2
+
+
 @final
 class _Recorded:
     """Score each candidate and case once, as the session does: a repeat of a scored pair makes no live call.
@@ -205,7 +253,7 @@ def test_free_repeats_of_a_mostly_perfect_parent_do_not_end_the_search_before_it
     """Kit-like: 3 train and 3 validation cases, 43 metric calls. The seed scores 1.0 on two train cases.
 
     GEPA counts each repeat of the parent and each skipped minibatch. Before the fix, those free repeats ended the
-    search after 7 proposals with 19 scored pairs. Each rejected proposal scores 2 new pairs.
+    search after 7 proposals with 19 scored pairs. Each rejected proposal scores 3 new pairs: one minibatch (gh-757).
     """
     run = _Recorded({"t1": 1.0, "t2": 1.0, "t3": 0.8}, 0.7)
     validation: list[object] = ["val1", "val2", "val3"]
@@ -213,7 +261,7 @@ def test_free_repeats_of_a_mostly_perfect_parent_do_not_end_the_search_before_it
                   metric_calls=43, stalled=run.stalled) != "stall"
     assert run.repeats > 0
     assert 43 <= len(run.scored) <= 43 + overshoot(len(validation))
-    assert run.proposals >= 18
+    assert run.proposals >= 13
 
 
 @pytest.mark.ac("skillz-search-free-repeats:AC-2")
@@ -223,8 +271,8 @@ def test_a_search_with_only_perfect_minibatches_ends_after_the_skip_limit() -> N
     assert search({"SKILL.md": "v0"}, "prose", ["t1", "t2", "t3"], ["val1", "val2", "val3"], run.evaluate,
                   run.propose, metric_calls=10**6, stalled=run.stalled) == "idle"
     assert run.proposals == 0
-    # One check before the first iteration, 2 iterations that score the train cases, then the idle limit.
-    assert run.checks == 1 + 2 + skip_limit(3) == 7
+    # One check before the first iteration, 1 iteration that scores the 3 train cases, then the idle limit.
+    assert run.checks == 1 + 1 + skip_limit(3) == 4
     assert len(run.scored) == 6
 
 

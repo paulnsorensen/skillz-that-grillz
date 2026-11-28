@@ -266,7 +266,7 @@ def stall_observations(outcomes: Sequence[Mapping[str, object]], validation: set
     A mean needs `validation_complete` with `repeats` runs per case, and a case scores the mean of its scored repeats.
     It is None when an evaluation of the candidate failed or the host build of the proposal failed. It is 0.0 when the
     proposal has no identity or its candidate does not complete the validation set.
-    `cheaper` is True when the run sets a token field. Then a proposal with a validation mean equal to the best earlier
+    `cheaper` is True for the token objective. Then a proposal with a validation mean equal to the best earlier
     mean and known mean validation task tokens below those of the cheapest best earlier candidate has the observation
     `inf`, a rise above every band, so it counts as progress.
     """

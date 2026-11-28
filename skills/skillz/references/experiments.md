@@ -15,7 +15,7 @@ It needs no source checkout or runtime package installation.
 - **Run**: one resumable `run` directory that holds the cases, one search, and one holdout gate.
   Before the search, the run scores the seed once on every train case and twice on every validation case.
   It stops with `cases-too-easy` when the seed already scores 0.9 or more on a family.
-  A run that sets `min_token_saving` records these scores and does not stop.
+  A `--search --objective tokens` call records these scores and does not stop. A contract `min_token_saving` alone does not skip the stop.
   The search scores each candidate twice on each validation case, and GEPA gets the mean of the scored repeats.
   A failed repeat still counts as run. A case with no scored repeat has no score.
   `run.json` records `validation_policy: {"repeats": 2}`. A resume with another policy, or none, stops with `validation-policy-differs`.
@@ -179,9 +179,10 @@ Map each coded stop to its next step:
 | `host-not-ready` | `ok`, `harness`, `checks` (each with `check`, `status`, `detail`, and `fix` on a failure) | Show the user each failed check and its fix. Run again after the fix. No model call ran. |
 | `cases-missing` | `draft` (path), `facts` (skill name, description, files), `seed_file` (the path of `RUN/cases.seed.json`) and `seed_summary` (`cases`, `journeys` (the journey case count), and the case count of each kind and each family; a task case with no family is in no family count; both only when `evals/evals.json` or `evals/journeys.json` exists), `doctor` (the host checks) | Write the case draft. Start from the `seed_file` when it is present. Then run again. |
 | `cases-unapproved` | `question`, `case_hash`, `seed`, `statistics` | Ask question 2. Run again with `--approve-cases HASH`. Keep any threshold flag in the command. |
-| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey; `reflection` with `calls`, `editable_chars`, and `seconds`), `statistics`, `reflection_warning` (only when the editable text exceeds 200000 characters), `reflection_time_warning` (only when the reflection time takes the run past its seconds cap), `repeats_table` (only without `--repeats`: one row each for repeats 1, 2, and 3, with `fits`, and either the plan's calls and seconds or the stop text), `smallest_approval` (only when the plan does not fit the cap: the smallest `--approve-budget` up to 1000 that fits; `estimate` then shows the plan at that number) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
+| `budget-unapproved` | `estimate` (calls, seconds, search calls, repeats, holdout cases, holdout retry calls, `replay_calls`, `headroom` with `calls` and `outcomes`; `journey` with `calls`, `seconds`, `ceiling_calls`, `ceiling_seconds` when a case is a journey; `reflection` with `calls`, `editable_chars`, and `seconds`; for a search, `expected_candidates` and the gate `reserve`), `statistics`, `objective` and `objective_warning` (only for the token objective with the prose edit mode) for a search, `reflection_warning` (only when the editable text exceeds 200000 characters), `reflection_time_warning` (only when the reflection time takes the run past its seconds cap), `repeats_table` (only without `--repeats`: one row each for repeats 1, 2, and 3, with `fits`, and either the plan's calls and seconds or the stop text), `smallest_approval` (only when the plan does not fit the cap: the smallest `--approve-budget` up to 1000 that fits; `estimate` then shows the plan at that number) | Ask question 3. Run again with `--approve-budget CALLS`. Keep `--approve-cases HASH` and any threshold flag in the command. |
 | `cases-unscorable` | `next`, and `cases` (each case id, its split, its family, and the cause of the setup fault) | Report each case and its cause. Fix the setup (the gate, the activation, or the capture) in a new run directory. No search call ran. A resume of this run returns the same stop. |
 | `cases-too-easy` | `next`, and `baseline` with `headroom` (each family, its split, and its mean), `failing` (each seed outcome below 1 with its unmet criteria), `scored`, `unscored` (the holdout and pending cases), `spent`, `approved_calls`, `estimate`, `search`, `holdout_gate`, and `replay` as `not-run`, and `export` as `unavailable` | Report the baseline. Do not call `export`. Do not ask a new question. When the user asks to optimize, draft harder cases in a new run directory. Then ask question 2 again. No search call ran. A resume of this run returns the same stop. |
+| `search-underpowered` | `expected_candidates`, `minimum_candidates` (6), `smallest_approval` (the smallest `--approve-budget` up to 1000 whose plan buys 6 candidates, or `null`), `estimate`, `next`, `statistics`, `objective` | Report `expected_candidates`. When `smallest_approval` is a number, ask for that search budget. Else lower `--repeats`, or draft fewer validation and holdout cases in a new run directory. No search call ran. The baseline report stays. |
 | `baseline-contract-rejected` | `next`, and optional `detail` | The original skill fails the contract check. Fix the skill or the contract, then start a new run directory. |
 | `baseline-check-timeout` | `next`, and optional `detail` | The contract check of the original skill reached the sandbox time limit twice, before the search or in the holdout gate. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
 | `winner-check-timeout` | `next`, and optional `detail` | The contract check of the winner reached the sandbox time limit twice in the holdout gate or the replay. Find out why the helper fixture is slow. Then resume the run in the same directory. A resume retries the check. |
@@ -489,7 +490,7 @@ Give each family one trap:
 - A change in the middle of the flow, such as a new constraint from the user.
 
 The run stops with `cases-too-easy` when the seed already scores 0.9 or more on a family.
-A run that sets `min_token_saving` does not stop, because a token-saving run expects saturated cases.
+A `--search --objective tokens` call does not stop, because a token-saving search expects saturated cases. The default quality objective stops.
 The stop data holds `baseline`: `search`, `holdout_gate`, and `replay` are `not-run`, and `export` is `unavailable`.
 `baseline.failing` lists each seed outcome below 1, with its family and the redacted reason of each unmet criterion. Another family can fail while one family saturates.
 `baseline.spent` holds the spent calls. `approved_calls` and `estimate` are the approved ceiling and the plan, not spending. `baseline.unscored` counts the holdout and pending cases that did not run.
@@ -621,10 +622,11 @@ With a token field set, the reflection prompt also says: "Prefer fewer tokens wh
 It then names the two token counts of the feedback. A scored search feedback record adds `task_tokens`, the mean task tokens of its scored repeats.
 It also adds `incumbent_task_tokens`, the mean task tokens of the scored search outcomes of the incumbent on the same case.
 A field with an unknown count stays out. Without a token field, the feedback record has neither field.
-The search then also reflects on a train minibatch that the parent scores perfectly.
+With `--search --objective tokens`, the search also reflects on a train minibatch that the parent scores perfectly.
 A child can tie the minibatch score sum of its parent.
 Such a child enters the candidate pool only when its mean task tokens on that minibatch are known and lower.
-Without a token field, the search skips a perfect minibatch, and a child must score a higher sum.
+With the default `--objective quality`, the search skips a perfect minibatch, and a child must score a higher sum.
+A token field alone does not change the search. `--objective tokens` needs `min_token_saving`.
 
 ### Incumbent
 
@@ -1090,7 +1092,7 @@ The object accepts these fields:
 - `family_budget`: the regression budget of every holdout family. The default is `null`, which turns the family rule off.
 - `family_budgets`: an object that maps a family name to its own budget. It overrides `family_budget` for that family. A flag cannot set it.
 - `max_token_increase_per_gain`: the largest token change that one unit of score gain can buy. The default is `null`, which turns this check off.
-- `min_token_saving`: the smallest token saving, as a share of the baseline task tokens, that can promote a winner with a mean delta of at least 0. The default is `null`, which turns `promote-cheaper` off. A run with this field set records the headroom scores. It does not stop with `cases-too-easy`, because a cheaper winner expects solved cases.
+- `min_token_saving`: the smallest token saving, as a share of the baseline task tokens, that can promote a winner with a mean delta of at least 0. The default is `null`, which turns `promote-cheaper` off. `--search --objective tokens` needs this field. Only that objective skips the `cases-too-easy` stop, because a cheaper winner expects solved cases.
 - `min_coverage`: the least share of planned holdout cases that must be scored on both arms, from 0 to 1. The default is 0.6. Below it the verdict is `inconclusive` with reason `low-coverage`. 0 turns the rule off.
 - `max_quality_loss`: the largest plausible quality loss, as a score per case, that `promote-cheaper` accepts. The verdict needs `delta - 2·SE_loss >= -max_quality_loss`. The default is `null`, which turns `promote-cheaper` off.
 

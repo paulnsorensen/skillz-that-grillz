@@ -42,9 +42,15 @@ Do not treat this as a published `/skillz` mode.
    Put the expected findings in `expected`. The shipped contract judges them with its `task` rubric.
    Show the cases, hash, and baseline estimate in one approval question.
    After measurement, ask separately for approval of the search budget.
+   On `search-underpowered`, report `expected_candidates` and `smallest_approval`. Ask for that budget, or skip the step.
    When the user declines a question, skip this step and report the skip.
    Apply the patch only on a `promote` verdict and the user's approval. Then run the step 5 audit again.
    On a `promote-cheaper` verdict, do not apply the patch. Report the verdict, the delta, the SE, the token change, and the `max_quality_loss` margin.
+   Run two passes in this order, as `autoimprove-run.md` `## Improve in two passes` says.
+   The first pass is the quality search above, with no `--objective`.
+   When the contract sets `min_token_saving`, the second pass is a token search in a new run directory.
+   Run it on the result of the first pass, with `--search --objective tokens` and `--edit prose+cli`.
+   Give `--objective tokens` on each `--search` call of that pass until its search budget approval.
 7. This repository has no deploy step. Do not install or sync the result to any installed copy.
 8. Run `just build` and fix any failure.
 

@@ -44,8 +44,11 @@ def test_a_plan_over_the_standard_cap_names_the_smallest_approval_that_fits(
     estimate = cast(dict[str, object], stop.data["estimate"])
     assert APPROVED_CALLS < cast(int, estimate["calls"]) <= smallest and estimate["repeats"] == 3
     assert set(estimate) >= {"seconds", "search_calls", "holdout_cases", "reflection"}
-    below = refused(target, out, case_hash, repeats=3, approve_budget=smallest - 1)
-    assert below.data["smallest_approval"] == smallest
+    # One call below fits the cap but buys fewer than 6 candidates, so the floor names the same number (gh-757).
+    with pytest.raises(Stop) as below_stop:
+        _ = run(target, out, MODEL, search=True, approve_budget=smallest - 1)
+    below = below_stop.value
+    assert (below.code, below.data["smallest_approval"]) == ("search-underpowered", smallest)
     assert "statistics" in stop.data and "statistics" in below.data
 
 

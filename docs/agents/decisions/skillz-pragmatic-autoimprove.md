@@ -80,7 +80,18 @@ Evidence lives in `research/gepa-skill-optimizers-headless-cli/` in the same cor
     The record keeps prior calls separately. Resume checks the estimate and budget for the recorded `plan_mode`.
     Search keeps its repeats table, reflection warnings, time and call reserves, and resume clock checks.
     Use `skills/skillz/references/autoimprove-run.md` for the current procedure, not the earlier questions in `experiments.md`.
+  - **Amendment 2026-11-28 (gh-757, candidate floor):** The search estimate shows `expected_candidates` and `reserve`, the gate reserve.
+    `expected_candidates` is `search_allowance(metric_calls)` divided by `CALLS_PER_REFLECTION` plus the validation runs of one candidate.
+    The reflection minibatch holds 3 train cases, so `CALLS_PER_REFLECTION` is 6.
+    A plan that buys fewer than 6 candidates (`MINIMUM_CANDIDATES`) stops with `search-underpowered` before the search budget question.
+    The stop holds `expected_candidates` and `smallest_approval`, the smallest number up to 1000 whose plan buys 6, or null and a `next` text.
+    A `budget-unapproved` stop names the smallest approval that fits and buys 6 when one exists.
+    Before this amendment the plan capped the search at 4 x (train + 2 x validation) metric calls.
+    Intake splits the families after the holdout evenly between train and validation, so no task run reached 6 candidates at any budget.
+    The maintainer decided on 2026-11-28 that the plan sizes the search for at least the metric calls that buy 6 candidates.
+    The cap then trims it. So a larger approval buys candidates, and the stop can name it. Default search plans are larger.
+    The criteria are in `criteria/gh-757.md`.
 
-_Source: Mold session 2026-10-06 · Updated: 2026-11-26 (gh-756 baseline and search plans; previous amendments above)_
+_Source: Mold session 2026-10-06 · Updated: 2026-11-28 (gh-757 candidate floor; previous amendments above)_
 
 [^1]: packages/skillz/src/skillz_experiments/run/_open.py:30-32,58-83; packages/skillz/src/skillz_experiments/run/_session.py:90-105; packages/skillz/tests/skillz_experiments/test_run_restore.py:1046-1088.
